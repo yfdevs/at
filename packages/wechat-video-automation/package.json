@@ -1,0 +1,28 @@
+{
+  "name": "@drama/wechat-video-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    "./runtime": {
+      "types": "./src/app/runtime.ts",
+      "default": "./dist/app/runtime.js"
+    }
+  },
+  "scripts": {
+    "build": "tsc",
+    "check": "tsc --noEmit"
+  },
+  "dependencies": {
+    "axios": "^1.17.0",
+    "fast-glob": "^3.3.3",
+    "fs-extra": "^11.3.2",
+    "playwright": "latest"
+  },
+  "devDependencies": {
+    "@types/fs-extra": "^11.0.4",
+    "@types/node": "latest",
+    "tsx": "latest",
+    "typescript": "latest"
+  }
+}

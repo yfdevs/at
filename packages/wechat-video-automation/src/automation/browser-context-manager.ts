@@ -1,0 +1,383 @@
+import path from "node:path";
+import { mkdir, writeFile } from "node:fs/promises";
+import { chromium, type BrowserContext, type Page } from "playwright";
+import { resolveFromRoot, type ServiceConfig } from "../shared/config.js";
+import type { UpdateCredentialsRequest } from "../shared/types.js";
+import { FeishuNotifier } from "../shared/feishu-notifier.js";
+import type { VideoAccount } from "../api/video-accounts.js";
+import { playletUrl } from "./constants.js";
+import { waitForLoginIfNeeded } from "./browser-session.js";
+import { runWithLogContext } from "../shared/logger.js";
+
+interface ManagedChannel {
+  context: BrowserContext;
+  userDataDir: string;
+  accountDir: string;
+  stateFile: string;
+}
+
+export interface VideoAccountSyncChanges {
+  added: VideoAccount[];
+  removed: VideoAccount[];
+  renamed: Array<{
+    previous: VideoAccount;
+    next: VideoAccount;
+  }>;
+}
+
+export class BrowserContextManager {
+  private readonly channels = new Map<string, ManagedChannel>();
+  private readonly videoAccountsById = new Map<string, VideoAccount>();
+  private readonly loginRequiredNotifiedChannelIds = new Set<string>();
+
+  constructor(
+    private readonly config: ServiceConfig,
+    private readonly notifier = new FeishuNotifier(),
+  ) {
+    this.syncVideoAccounts(config.videoAccounts);
+  }
+
+  async initialize(): Promise<void> {
+    await mkdir(resolveFromRoot(this.config.authRoot), { recursive: true });
+    console.log(`[browser] video accounts loaded: ${this.config.videoAccounts.length}`);
+    for (const account of this.config.videoAccounts) {
+      console.log(`[browser] account id=${account.id} name=${account.name} contractSubject=${account.contractSubject ?? "-"}`);
+    }
+  }
+
+  list(): Array<{ channelId: string; videoAccountId: string; videoAccountName: string; contractSubject?: string; userDataDir: string }> {
+    return Array.from(this.videoAccountsById.values()).map((account) => {
+      const channel = this.channels.get(account.id);
+      return {
+        channelId: account.id,
+        videoAccountId: account.id,
+        videoAccountName: account.name,
+        contractSubject: account.contractSubject,
+        userDataDir: channel?.userDataDir ?? this.getUserDataDir(account.id),
+      };
+    });
+  }
+
+  get(channelId: string): BrowserContext {
+    const channel = this.channels.get(channelId);
+    if (!channel) {
+      if (this.has(channelId)) {
+        throw new Error(`Channel is not launched yet: ${channelId}`);
+      }
+      throw new Error(`Unknown channelId: ${channelId}`);
+    }
+    return channel.context;
+  }
+
+  has(channelId: string): boolean {
+    return this.videoAccountsById.has(channelId);
+  }
+
+  async getOrLaunch(channelId: string): Promise<BrowserContext> {
+    const channel = this.channels.get(channelId);
+    if (channel) return channel.context;
+    return runWithLogContext({
+      videoAccountId: channelId,
+      videoAccountName: this.getVideoAccountName(channelId),
+    }, () => this.launch(channelId));
+  }
+
+  getDefaultChannelId(): string {
+    const firstAccount = this.videoAccountsById.values().next().value as VideoAccount | undefined;
+    if (!firstAccount) throw new Error("Video account list must contain at least one account.");
+    return firstAccount.id;
+  }
+
+  getVideoAccountName(channelId: string): string {
+    return this.videoAccountsById.get(channelId)?.name ?? channelId;
+  }
+
+  syncVideoAccounts(videoAccounts: VideoAccount[]): VideoAccountSyncChanges {
+    const nextAccountsById = new Map(videoAccounts.map((account) => [account.id, account]));
+    const added: VideoAccount[] = [];
+    const removed: VideoAccount[] = [];
+    const renamed: VideoAccountSyncChanges["renamed"] = [];
+
+    for (const account of videoAccounts) {
+      const previous = this.videoAccountsById.get(account.id);
+      if (!previous) {
+        added.push(account);
+      } else if (previous.name !== account.name) {
+        renamed.push({ previous, next: account });
+      }
+    }
+
+    for (const previous of this.videoAccountsById.values()) {
+      if (!nextAccountsById.has(previous.id)) {
+        removed.push(previous);
+        this.loginRequiredNotifiedChannelIds.delete(previous.id);
+      }
+    }
+
+    this.videoAccountsById.clear();
+    for (const account of videoAccounts) {
+      this.videoAccountsById.set(account.id, account);
+    }
+    for (const { next } of renamed) {
+      this.refreshPageTitles(next.id);
+    }
+
+    return { added, removed, renamed };
+  }
+
+  async updateCredentials(channelId: string, credentials: UpdateCredentialsRequest): Promise<void> {
+    await this.getOrLaunch(channelId);
+    const channel = this.channels.get(channelId);
+    if (!channel) throw new Error(`Unknown channelId: ${channelId}`);
+    if (!Array.isArray(credentials.cookies)) {
+      throw new Error("credentials.cookies must be an array.");
+    }
+
+    await channel.context.clearCookies();
+    if (credentials.cookies.length > 0) {
+      await channel.context.addCookies(credentials.cookies);
+    }
+
+    for (const originState of credentials.origins ?? []) {
+      const page = await channel.context.newPage();
+      try {
+        await page.goto(originState.origin, { waitUntil: "domcontentloaded" });
+        await page.evaluate((items) => {
+          localStorage.clear();
+          for (const item of items) localStorage.setItem(item.name, item.value);
+        }, originState.localStorage);
+      } finally {
+        await page.close();
+      }
+    }
+
+    await this.writeStorageState(channel);
+  }
+
+  async save(channelId: string): Promise<void> {
+    const channel = this.channels.get(channelId);
+    if (!channel) throw new Error(`Unknown channelId: ${channelId}`);
+    await this.writeStorageState(channel);
+  }
+
+  async saveAll(): Promise<void> {
+    await Promise.all(Array.from(this.channels.values(), (channel) => this.writeStorageState(channel)));
+  }
+
+  async ensureLoggedIn(channelId: string): Promise<void> {
+    const context = await this.getOrLaunch(channelId);
+    const pages = context.pages();
+    const page = pages.find((candidate) => !candidate.url().includes("/login") && candidate.url() !== "about:blank")
+      ?? pages[0]
+      ?? await context.newPage();
+    await page.goto(playletUrl, { waitUntil: "domcontentloaded" });
+
+    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
+    const loggedIn = await waitForLoginIfNeeded(page, accountLabel, this.getPageTitle(channelId), () =>
+      this.notifyLoginRequired(channelId));
+    if (loggedIn) {
+      this.loginRequiredNotifiedChannelIds.delete(channelId);
+      console.log(`[login] persisted ${accountLabel}`);
+      await this.save(channelId);
+    } else {
+      console.log(`[login] already logged in ${accountLabel}`);
+    }
+  }
+
+  async waitForLoginPageIfOpen(channelId: string): Promise<boolean> {
+    const channel = this.channels.get(channelId);
+    if (!channel) return false;
+
+    const loginPage = channel.context.pages().find((page) => page.url().includes("/login"));
+    if (!loginPage) return false;
+
+    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
+    console.log(`[login] detected open login page before claim ${accountLabel}`);
+    const loggedIn = await waitForLoginIfNeeded(loginPage, accountLabel, this.getPageTitle(channelId), () =>
+      this.notifyLoginRequired(channelId));
+    if (loggedIn) {
+      this.loginRequiredNotifiedChannelIds.delete(channelId);
+      await this.save(channelId);
+    }
+    return loggedIn;
+  }
+
+  async refreshLoginStateInTemporaryPage(channelId: string, timeoutMs: number): Promise<boolean> {
+    const context = await this.getOrLaunch(channelId);
+    const page = await context.newPage();
+    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
+    const loginCheckTimeoutMs = Math.min(10000, Math.max(1000, timeoutMs));
+
+    try {
+      console.log(`[idle-refresh] open temporary page ${accountLabel}`);
+      await page.goto(playletUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
+
+      const loginState = await Promise.race([
+        page.waitForURL((url) => url.href.includes("/login") || url.href.includes("login"), {
+          timeout: loginCheckTimeoutMs,
+        }).then(() => "login" as const),
+        page.locator("wujie-app").first().waitFor({
+          state: "attached",
+          timeout: loginCheckTimeoutMs,
+        }).then(() => "logged-in" as const),
+      ]).catch(() => (page.url().includes("login") ? "login" as const : "unknown" as const));
+
+      if (loginState === "login") {
+        await this.setPageTitle(page, this.getPageTitle(channelId));
+        this.notifyLoginRequired(channelId);
+        console.warn(`[idle-refresh] login required ${accountLabel}`);
+        return false;
+      }
+
+      this.loginRequiredNotifiedChannelIds.delete(channelId);
+      await this.save(channelId);
+      console.log(`[idle-refresh] persisted ${accountLabel} state=${loginState}`);
+      return true;
+    } finally {
+      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+    }
+  }
+
+  async close(): Promise<void> {
+    await this.saveAll().catch(() => undefined);
+    await Promise.all(Array.from(this.channels.values(), ({ context }) => context.close()));
+    this.channels.clear();
+  }
+
+  private async launch(channelId: string, initialUrl?: string): Promise<BrowserContext> {
+    if (!this.has(channelId)) {
+      throw new Error(`Unknown channelId: ${channelId}`);
+    }
+
+    const accountDir = this.getAccountDir(channelId);
+    const userDataDir = this.getUserDataDir(channelId);
+    const stateFile = path.join(accountDir, "storage-state.json");
+    await mkdir(accountDir, { recursive: true });
+    await mkdir(userDataDir, { recursive: true });
+    console.log(`[browser] launching videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)} profile=${userDataDir}`);
+
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      headless: this.config.browser.headless,
+      slowMo: this.config.browser.slowMo, // 让每一步操作人为变慢
+      viewport: { width: 1440, height: 900 },
+      acceptDownloads: true, // 控制浏览器是否允许下载文件
+      ignoreDefaultArgs: ["--enable-automation"],
+    });
+
+    const channel = { context, userDataDir, accountDir, stateFile };
+    context.once("close", () => {
+      if (this.channels.get(channelId)?.context === context) {
+        this.channels.delete(channelId);
+      }
+    });
+    await this.installFixedPageTitle(context, channelId);
+
+    this.channels.set(channelId, channel);
+    if (initialUrl) {
+      const page = context.pages()[0] ?? await context.newPage();
+      await page.goto(initialUrl, { waitUntil: "domcontentloaded" }).catch(() => undefined);
+      await this.setPageTitle(page, this.getPageTitle(channelId));
+    }
+    return context;
+  }
+
+  private notifyLoginRequired(channelId: string): void {
+    if (this.loginRequiredNotifiedChannelIds.has(channelId)) return;
+
+    this.loginRequiredNotifiedChannelIds.add(channelId);
+    void this.notifier.notifyLoginRequired(channelId, this.getVideoAccountName(channelId));
+  }
+
+  private getPageTitle(channelId: string): string {
+    return this.getVideoAccountName(channelId);
+  }
+
+  private async installFixedPageTitle(context: BrowserContext, channelId: string): Promise<void> {
+    const title = this.getPageTitle(channelId);
+    await context.addInitScript((fixedTitle) => {
+      const windowState = window as unknown as {
+        __videoAccountFixedTitle?: string;
+        __videoAccountFixedTitleInstalled?: boolean;
+      };
+      windowState.__videoAccountFixedTitle = fixedTitle;
+      const applyTitle = () => {
+        const title = windowState.__videoAccountFixedTitle ?? fixedTitle;
+        if (document.title !== title) {
+          document.title = title;
+        }
+      };
+      const watchTitle = () => {
+        applyTitle();
+        const titleElement = document.querySelector("title") ?? document.head?.appendChild(document.createElement("title"));
+        if (!titleElement || titleElement.dataset.fixedVideoAccountTitle === "true") return;
+
+        titleElement.dataset.fixedVideoAccountTitle = "true";
+        new MutationObserver(applyTitle).observe(titleElement, {
+          characterData: true,
+          childList: true,
+          subtree: true,
+        });
+      };
+
+      if (windowState.__videoAccountFixedTitleInstalled) {
+        applyTitle();
+        return;
+      }
+
+      windowState.__videoAccountFixedTitleInstalled = true;
+      watchTitle();
+      window.addEventListener("DOMContentLoaded", watchTitle);
+      window.addEventListener("load", watchTitle);
+      window.setInterval(applyTitle, 1000);
+    }, title);
+
+    context.on("page", (page) => {
+      this.keepPageTitle(page, channelId);
+    });
+    for (const page of context.pages()) {
+      this.keepPageTitle(page, channelId);
+    }
+  }
+
+  private keepPageTitle(page: Page, channelId: string): void {
+    const applyTitle = () => {
+      void this.setPageTitle(page, this.getPageTitle(channelId));
+    };
+    page.on("domcontentloaded", applyTitle);
+    page.on("load", applyTitle);
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) applyTitle();
+    });
+    applyTitle();
+  }
+
+  private refreshPageTitles(channelId: string): void {
+    const channel = this.channels.get(channelId);
+    if (!channel) return;
+
+    for (const page of channel.context.pages()) {
+      void this.setPageTitle(page, this.getPageTitle(channelId));
+    }
+  }
+
+  private async setPageTitle(page: Page, title: string): Promise<void> {
+    await page.evaluate((value) => {
+      const windowState = window as unknown as { __videoAccountFixedTitle?: string };
+      windowState.__videoAccountFixedTitle = value;
+      document.title = value;
+    }, title).catch(() => undefined);
+  }
+
+  private getAccountDir(channelId: string): string {
+    return resolveFromRoot(path.join(this.config.authRoot, encodeURIComponent(channelId)));
+  }
+
+  private getUserDataDir(channelId: string): string {
+    return path.join(this.getAccountDir(channelId), "chromium-profile");
+  }
+
+  private async writeStorageState(channel: ManagedChannel): Promise<void> {
+    const state = await channel.context.storageState();
+    await writeFile(channel.stateFile, JSON.stringify(state, null, 2), "utf8");
+  }
+}

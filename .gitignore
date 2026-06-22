@@ -10,6 +10,12 @@ lerna-debug.log*
 node_modules
 dist
 dist-ssr
+dist-electron
+.cache
+.env
+.auth
+.runs
+.playwright-mcp
 *.local
 
 # Editor directories and files

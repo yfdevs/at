@@ -1,30 +1,53 @@
-import { app as n, BrowserWindow as i } from "electron";
-import { fileURLToPath as l } from "node:url";
-import o from "node:path";
-const t = o.dirname(l(import.meta.url));
-process.env.APP_ROOT = o.join(t, "..");
-const s = process.env.VITE_DEV_SERVER_URL, R = o.join(process.env.APP_ROOT, "dist-electron"), r = o.join(process.env.APP_ROOT, "dist");
-process.env.VITE_PUBLIC = s ? o.join(process.env.APP_ROOT, "public") : r;
-let e;
-function a() {
-  e = new i({
-    icon: o.join(process.env.VITE_PUBLIC, "auto.svg"),
-    webPreferences: {
-      preload: o.join(t, "preload.mjs")
-    }
-  }), e.webContents.on("did-finish-load", () => {
-    e == null || e.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
-  }), s ? e.loadURL(s) : e.loadFile(o.join(r, "index.html"));
+import { app, BrowserWindow, nativeImage } from "electron";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
+const __dirname$1 = path.dirname(fileURLToPath(import.meta.url));
+process.env.APP_ROOT = path.join(__dirname$1, "..");
+const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, "public") : RENDERER_DIST;
+let win;
+function getAppIconPath() {
+  return path.join(process.env.VITE_PUBLIC, "icon.png");
 }
-n.on("window-all-closed", () => {
-  process.platform !== "darwin" && (n.quit(), e = null);
+function createWindow() {
+  const appIcon = nativeImage.createFromPath(getAppIconPath());
+  win = new BrowserWindow({
+    icon: appIcon,
+    webPreferences: {
+      preload: path.join(__dirname$1, "preload.mjs")
+    }
+  });
+  win.webContents.on("did-finish-load", () => {
+    win == null ? void 0 : win.webContents.send("main-process-message", (/* @__PURE__ */ new Date()).toLocaleString());
+  });
+  if (VITE_DEV_SERVER_URL) {
+    win.loadURL(VITE_DEV_SERVER_URL);
+  } else {
+    win.loadFile(path.join(RENDERER_DIST, "index.html"));
+  }
+}
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+    win = null;
+  }
 });
-n.on("activate", () => {
-  i.getAllWindows().length === 0 && a();
+app.on("activate", () => {
+  if (BrowserWindow.getAllWindows().length === 0) {
+    createWindow();
+  }
 });
-n.whenReady().then(a);
+app.whenReady().then(() => {
+  var _a;
+  if (process.platform === "darwin" && VITE_DEV_SERVER_URL) {
+    (_a = app.dock) == null ? void 0 : _a.setIcon(getAppIconPath());
+  }
+  createWindow();
+});
 export {
-  R as MAIN_DIST,
-  r as RENDERER_DIST,
-  s as VITE_DEV_SERVER_URL
+  MAIN_DIST,
+  RENDERER_DIST,
+  VITE_DEV_SERVER_URL
 };
