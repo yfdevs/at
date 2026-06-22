@@ -456,7 +456,7 @@ function ConfigFieldControl({
     const checked = value === "true"
 
     return (
-      <Field className="gap-2.5 py-4 md:grid md:grid-cols-[minmax(220px,1fr)_320px] md:items-center">
+      <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-center">
         <FieldContent>
           <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
           {field.description ? (
@@ -478,7 +478,7 @@ function ConfigFieldControl({
   }
 
   return (
-    <Field className="gap-2.5 py-4 md:grid md:grid-cols-[minmax(220px,1fr)_320px] md:items-start">
+    <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
       <FieldContent>
         <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
         {field.description ? (
@@ -488,7 +488,7 @@ function ConfigFieldControl({
       <div className="w-full min-w-0">
         {field.kind === "select" ? (
           <Select value={value} onValueChange={(nextValue) => onChange(field.key, String(nextValue ?? ""))}>
-            <SelectTrigger id={field.key} className="h-10 w-full bg-background">
+            <SelectTrigger id={field.key} className="w-full bg-background" size="default">
               <SelectValue placeholder="请选择">
                 {field.options.find((option) => option.value === value)?.label ?? "请选择"}
               </SelectValue>
@@ -502,10 +502,9 @@ function ConfigFieldControl({
             </SelectContent>
           </Select>
         ) : (
-          <InputGroup className="h-10">
+          <InputGroup>
             <InputGroupInput
               id={field.key}
-              className="h-10"
               min={field.type === "number" ? 0 : undefined}
               type={field.type ?? "text"}
               value={value}
