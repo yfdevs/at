@@ -1,0 +1,44 @@
+{
+  "name": "@drama/axios",
+  "version": "0.0.0",
+  "description": "A typed axios wrapper with response unwrapping and reusable interceptors.",
+  "keywords": [
+    "api-client",
+    "axios",
+    "interceptor",
+    "typescript"
+  ],
+  "license": "MIT",
+  "files": [
+    "dist",
+    "README.md"
+  ],
+  "type": "module",
+  "sideEffects": false,
+  "types": "./src/index.ts",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "dev": "vp pack --watch",
+    "test": "vp test",
+    "check": "vp check",
+    "typecheck": "tsc --noEmit",
+    "prepublishOnly": "pnpm build"
+  },
+  "dependencies": {
+    "axios": "catalog:"
+  },
+  "devDependencies": {
+    "@types/node": "^25.9.3",
+    "@typescript/native-preview": "7.0.0-dev.20260309.1",
+    "typescript": "^5.9.3",
+    "vite-plus": "catalog:"
+  }
+}

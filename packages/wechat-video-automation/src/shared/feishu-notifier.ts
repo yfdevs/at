@@ -1,9 +1,12 @@
-import axios from "axios";
+import { ApiClient } from "@drama/axios";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
 import { createLogger } from "./logger.js";
 import { classifyError, ErrorType } from "./errors.js";
 
 const logger = createLogger("feishu");
+const feishuClient = new ApiClient({
+  timeout: 10000,
+});
 
 export interface TaskNotificationPayload {
   accountTaskId?: number;
@@ -80,10 +83,10 @@ export class FeishuNotifier {
     if (!this.webhookUrl) return;
 
     try {
-      await axios.post(this.webhookUrl, {
+      await feishuClient.post(this.webhookUrl, {
         msg_type: "text",
         content: { text },
-      }, { timeout: 10000 });
+      });
     } catch (error) {
       const errorInfo = classifyError(error);
       logger.warn("send failed", {

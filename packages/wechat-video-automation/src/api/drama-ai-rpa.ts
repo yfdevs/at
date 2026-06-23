@@ -7,8 +7,7 @@ export interface DramaAiRpaDetailResponse {
 }
 
 export async function fetchDramaAiRpaDetailApi(id: string): Promise<DramaAiRpaDetailResponse> {
-  const response = await httpClient.get<DramaAiRpaDetailResponse>(
+  return httpClient.get<DramaAiRpaDetailResponse>(
     `/dramaAiRpa/detail/${encodeURIComponent(id)}`,
   );
-  return response.data;
 }

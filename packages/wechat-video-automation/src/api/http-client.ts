@@ -1,11 +1,11 @@
-import axios, { AxiosError } from "axios";
+import { ApiClient, AxiosError } from "@drama/axios";
 import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 
-export const httpClient = axios.create({
+export const httpClient = new ApiClient({
   timeout: 30000,
 });
 
-httpClient.interceptors.request.use((config) => {
+httpClient.addRequestInterceptor((config) => {
   const apiBaseUrl = getWechatVideoRuntimeSettings().apiBaseUrl.trim();
   if (!config.baseURL && !apiBaseUrl) {
     throw new Error("apiBaseUrl is required.");
@@ -15,7 +15,7 @@ httpClient.interceptors.request.use((config) => {
   return config;
 });
 
-httpClient.interceptors.response.use(
+httpClient.addResponseInterceptor(
   (response) => response,
   (error: AxiosError) => {
     const method = error.config?.method?.toUpperCase() ?? "REQUEST";

@@ -32,7 +32,7 @@ interface VideoAccountPageResponse {
 }
 
 export async function fetchVideoAccountsApi(): Promise<VideoAccount[]> {
-  const response = await httpClient.post<VideoAccountPageResponse>(
+  const payload = await httpClient.post<VideoAccountPageResponse>(
     "/dramaAiRpa/videoAccountConfig/page",
     {
       page: 1,
@@ -40,7 +40,6 @@ export async function fetchVideoAccountsApi(): Promise<VideoAccount[]> {
       status: "ON",
     },
   );
-  const payload = response.data;
 
   if (payload.code !== 0) {
     throw new Error(`Failed to fetch video accounts: ${payload.msg || `code=${payload.code}`}`);

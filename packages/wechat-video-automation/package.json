@@ -16,7 +16,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "axios": "^1.17.0",
+    "@drama/axios": "workspace:*",
     "fast-glob": "^3.3.3",
     "fs-extra": "^11.3.2",
     "pino": "^10.3.1",

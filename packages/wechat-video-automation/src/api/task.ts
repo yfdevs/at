@@ -83,8 +83,7 @@ async function findNextUnclaimedAccountTaskId(
     pageSize: requestPayload.pageSize,
     rpaStatus: requestPayload.rpaStatus,
   });
-  const response = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
-  const payload = response.data;
+  const payload = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
   if (payload.code !== 0) {
     throw new Error(`Failed to query account task page: ${payload.msg || `code=${payload.code}`}`);
   }
@@ -146,10 +145,9 @@ export async function claimNextTaskForVideoAccountApi(
     accountTaskId,
     videoAccountId: videoAccount.id,
   });
-  const response = await httpClient.post<ClaimTaskResponse>(url, {
+  const payload = await httpClient.post<ClaimTaskResponse>(url, {
     accountTaskId,
   });
-  const payload = response.data;
   logger.info("claim response", {
     accountTaskId,
     code: payload.code,
@@ -199,8 +197,7 @@ export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSucc
     url,
     accountTaskId: successReport.accountTaskId,
   });
-  const response = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
-  const payload = response.data;
+  const payload = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
   logger.info("success callback response", {
     accountTaskId: successReport.accountTaskId,
     code: payload.code,
@@ -229,8 +226,7 @@ export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorRep
     errorMessage: errorReport.errorMessage,
     resultJson: requestPayload.resultJson,
   });
-  const response = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
-  const payload = response.data;
+  const payload = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
   logger.info("fail callback response", {
     accountTaskId: errorReport.accountTaskId,
     code: payload.code,
