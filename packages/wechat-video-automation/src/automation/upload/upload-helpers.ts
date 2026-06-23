@@ -20,6 +20,7 @@ interface BizmediaUploadResponse {
 const remoteFilePromises = new Map<string, Promise<string>>();
 const defaultRemoteFileDirectoryName = "ungrouped";
 const remoteFileDownloadTimeoutMs = readRemoteFileDownloadTimeoutMs();
+const invalidRemoteDirectoryNameChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
 function readRemoteFileDownloadTimeoutMs(): number {
   return secondsSettingToMs(getWechatVideoRuntimeSettings().remoteFileDownloadTimeoutSeconds, 120);
@@ -56,7 +57,11 @@ function remoteFileName(url: URL, contentType: string | null): string {
 }
 
 function remoteFileDirectoryName(value?: string): string {
-  const directoryName = value?.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim();
+  const directoryName = value
+    ? Array.from(value, (char) => (
+      invalidRemoteDirectoryNameChars.has(char) || char.charCodeAt(0) <= 0x1f ? " " : char
+    )).join("").replace(/\s+/g, " ").trim()
+    : undefined;
   return directoryName || defaultRemoteFileDirectoryName;
 }
 
@@ -93,11 +98,11 @@ async function downloadRemoteFile(fileUrl: string, directoryName?: string): Prom
       return target;
     } catch (error) {
       if (abortController.signal.aborted) {
-        throw new Error(
+        throw Object.assign(new Error(
           `[remote-file-download-failed] timed out after ${remoteFileDownloadTimeoutMs}ms: ${fileUrl}; cause=${
             error instanceof Error ? error.message : String(error)
           }`,
-        );
+        ), { cause: error });
       }
       throw error;
     } finally {

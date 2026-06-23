@@ -37,6 +37,7 @@ const originalConsole = {
   warn: console.warn.bind(console),
   error: console.error.bind(console),
 };
+const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
 let lastCleanupDate = "";
 let consoleFileLoggingInstalled = false;
@@ -62,7 +63,9 @@ function dateFromKey(dateKey: string): Date {
 }
 
 function sanitizeFileSegment(value: string): string {
-  const sanitized = value.trim().replace(/[<>:"/\\|?*\x00-\x1F]/g, "_");
+  const sanitized = Array.from(value.trim(), (char) => (
+    invalidLogFileSegmentChars.has(char) || char.charCodeAt(0) <= 0x1f ? "_" : char
+  )).join("");
   return sanitized || "unknown";
 }
 

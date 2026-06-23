@@ -202,7 +202,7 @@ function playwrightBrowsersPath() {
 async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath()
 
-  const runtimePackage = '@drama/wechat-video-automation/runtime'
+  const runtimePackage = '@drama/wechat-video-automation'
   const { startWechatVideoRuntime } = await import(/* @vite-ignore */ runtimePackage)
   return startWechatVideoRuntime({
     settings: readConfig(),

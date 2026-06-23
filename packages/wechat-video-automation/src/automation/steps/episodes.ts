@@ -17,9 +17,12 @@ interface EpisodeUploadStepOptions {
 }
 
 const uploadLogger = createLogger("upload");
+const invalidUploadFileNameChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
 
 function safeUploadBaseName(value: string): string {
-  return value.replace(/[<>:"/\\|?*\u0000-\u001F]/g, " ").replace(/\s+/g, " ").trim();
+  return Array.from(value, (char) => (
+    invalidUploadFileNameChars.has(char) || char.charCodeAt(0) <= 0x1f ? " " : char
+  )).join("").replace(/\s+/g, " ").trim();
 }
 
 interface PreparedEpisodeUploadFiles {
@@ -70,11 +73,11 @@ async function createEpisodeUploadHardLink(source: string, target: string): Prom
   } catch (error: unknown) {
     const nodeError = error as NodeJS.ErrnoException;
     if (nodeError.code === "EXDEV") {
-      throw new Error(
+      throw Object.assign(new Error(
         `[local-video-invalid] 无法为剧集视频创建硬链接，源文件和临时上传目录不在同一磁盘分区: ${source} -> ${target}; cause=${
           error instanceof Error ? error.message : String(error)
         }`,
-      );
+      ), { cause: error });
     }
 
     throw error;

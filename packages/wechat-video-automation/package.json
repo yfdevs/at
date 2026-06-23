@@ -4,13 +4,15 @@
   "private": true,
   "type": "module",
   "exports": {
-    "./runtime": {
-      "types": "./src/app/runtime.ts",
-      "default": "./dist/app/runtime.js"
-    }
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "tsc",
+    "build": "vp pack",
     "check": "tsc --noEmit"
   },
   "dependencies": {
@@ -24,6 +26,7 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "latest",
     "tsx": "latest",
-    "typescript": "latest"
+    "typescript": "latest",
+    "vite": "catalog:"
   }
 }
