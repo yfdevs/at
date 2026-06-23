@@ -1,5 +1,6 @@
-import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import Store from 'electron-store'
+import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
 import { mem } from 'systeminformation'
 
@@ -93,6 +94,8 @@ const contractSubjectOptions = [
   { label: '米苏', value: 'MISU' },
   { label: '微淘', value: 'WEITAO' },
 ]
+
+const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
 let runtime: WechatVideoRuntime | null = null
 let runtimeStarting: Promise<WechatVideoRuntime> | null = null
@@ -227,6 +230,50 @@ function normalizeConfig(
   }
 }
 
+function resolveFromAppRoot(value: string) {
+  return path.isAbsolute(value) ? value : path.join(process.env.APP_ROOT, value)
+}
+
+function sanitizeLogFileSegment(value: string) {
+  const sanitized = Array.from(value.trim(), (char) => (
+    invalidLogFileSegmentChars.has(char) || char.charCodeAt(0) <= 0x1f ? '_' : char
+  )).join('')
+  return sanitized || 'unknown'
+}
+
+function logDirPath(config = readConfig()) {
+  return path.join(resolveFromAppRoot(config.runDataDir), 'logs')
+}
+
+function findLatestVideoAccountLogFile(videoAccountId: string) {
+  const logsDir = logDirPath()
+  mkdirSync(logsDir, { recursive: true })
+
+  const accountLogPrefix = `app-${sanitizeLogFileSegment(videoAccountId)}-`
+  const latestLogFile = readdirSync(logsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && entry.name.startsWith(accountLogPrefix) && /\.(jsonl|log)$/i.test(entry.name))
+    .map((entry) => path.join(logsDir, entry.name))
+    .sort((left, right) => {
+      const leftMtime = statSync(left).mtimeMs
+      const rightMtime = statSync(right).mtimeMs
+      return rightMtime - leftMtime
+    })[0]
+
+  return latestLogFile ?? logsDir
+}
+
+async function openPath(targetPath: string) {
+  const errorMessage = existsSync(targetPath)
+    ? await shell.openPath(targetPath)
+    : `路径不存在：${targetPath}`
+
+  if (errorMessage) {
+    throw new Error(errorMessage)
+  }
+
+  return targetPath
+}
+
 function playwrightBrowsersPath() {
   if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
     return process.env.PLAYWRIGHT_BROWSERS_PATH
@@ -339,6 +386,10 @@ export function registerWechatVideoPlatformHandlers() {
 
     await currentRuntime.focusVideoAccount(videoAccountId)
     return status()
+  })
+
+  ipcMain.handle('wechat-video:service:video-account:open-log', async (_event, videoAccountId: string) => {
+    return openPath(findLatestVideoAccountLogFile(videoAccountId))
   })
 }
 

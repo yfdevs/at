@@ -1,16 +1,30 @@
-import { useEffect, useState } from "react"
-import { Activity, BadgeCheck, CirclePower, Cpu, Ellipsis, MonitorUp, RefreshCw, UserRoundCheck } from "lucide-react"
-
-import { Button } from "@/components/ui/button"
+import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  Card,
-  CardContent,
-} from "@/components/ui/card"
+  IconActivityHeartbeat,
+  IconCircleCheck,
+  IconCpu,
+  IconDotsVertical,
+  IconFileText,
+  IconPower,
+  IconRefresh,
+  IconUsersGroup,
+} from "@tabler/icons-react";
+
+import { Button, buttonVariants } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import {
+  DropdownMenu,
+  DropdownMenuContent,
+  DropdownMenuItem,
+  DropdownMenuTrigger,
+} from "@/components/ui/dropdown-menu";
+import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   wechatVideoService,
   type WechatVideoAccountStatus,
   type WechatVideoServiceStatus,
-} from "@/platforms/wechat-video/service"
+} from "@/platforms/wechat-video/service";
+import { cn } from "@/lib/utils";
 
 const initialStatus: WechatVideoServiceStatus = {
   running: false,
@@ -23,115 +37,178 @@ const initialStatus: WechatVideoServiceStatus = {
     systemTotalBytes: 0,
     systemUsedPercent: 0,
   },
-}
+};
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "-"
+    return "-";
   }
 
-  const units = ["B", "KB", "MB", "GB", "TB"]
-  let value = bytes
-  let unitIndex = 0
+  const units = ["B", "KB", "MB", "GB", "TB"];
+  let value = bytes;
+  let unitIndex = 0;
 
   while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024
-    unitIndex += 1
+    value /= 1024;
+    unitIndex += 1;
   }
 
-  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
+  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
 }
 
 function formatPercent(value: number) {
   if (!Number.isFinite(value)) {
-    return "-"
+    return "-";
   }
 
-  return `${value.toFixed(1)}%`
+  return `${value.toFixed(1)}%`;
 }
 
 function formatTime(value: Date | null) {
   if (!value) {
-    return "-"
+    return "-";
   }
 
   return value.toLocaleTimeString("zh-CN", {
     hour: "2-digit",
     minute: "2-digit",
     second: "2-digit",
-  })
+  });
 }
 
 function loginStateMeta(loginState: WechatVideoAccountStatus["loginState"]) {
   if (loginState === "logged-in") {
     return {
       label: "已登录",
-      className: "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200",
-    }
+      className:
+        "border-emerald-300 bg-emerald-50 text-emerald-700 dark:border-emerald-500/30 dark:bg-emerald-500/10 dark:text-emerald-200",
+    };
   }
 
   if (loginState === "login-required") {
     return {
       label: "需登录",
-      className: "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200",
-    }
+      className:
+        "border-amber-300 bg-amber-50 text-amber-800 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200",
+    };
   }
 
   if (loginState === "not-launched") {
     return {
       label: "未启动",
       className: "border-border bg-muted/40 text-muted-foreground",
-    }
+    };
   }
 
   return {
     label: "检测中",
-    className: "border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
-  }
+    className:
+      "border-sky-300 bg-sky-50 text-sky-800 dark:border-sky-500/30 dark:bg-sky-500/10 dark:text-sky-200",
+  };
 }
 
 export function WechatServiceControlPage() {
-  const [status, setStatus] = useState<WechatVideoServiceStatus>(initialStatus)
-  const [message, setMessage] = useState<string>("")
-  const [loading, setLoading] = useState(false)
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
-  const [openAccountMenuId, setOpenAccountMenuId] = useState<string | null>(null)
+  const [status, setStatus] = useState<WechatVideoServiceStatus>(initialStatus);
+  const [message, setMessage] = useState<string>("");
+  const [loading, setLoading] = useState(false);
+  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
+  const statusRefreshInFlightRef = useRef(false);
+  const serviceActionTooltip = status.running
+    ? "停止微信视频号自动化服务"
+    : "启动微信视频号自动化服务";
+
+  const applyStatus = (nextStatus: WechatVideoServiceStatus) => {
+    setStatus(nextStatus);
+    setLastRefreshedAt(new Date());
+  };
 
   const run = async (action: () => Promise<WechatVideoServiceStatus>) => {
-    setLoading(true)
-    setMessage("")
+    setLoading(true);
+    setMessage("");
     try {
-      setStatus(await action())
-      setLastRefreshedAt(new Date())
+      applyStatus(await action());
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error))
+      setMessage(error instanceof Error ? error.message : String(error));
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
-  const refreshStatus = () => run(() => wechatVideoService.status())
+  const refreshStatus = useCallback(async (silent = false) => {
+    if (statusRefreshInFlightRef.current) return;
 
-  const focusVideoAccount = async (videoAccountId: string) => {
-    setOpenAccountMenuId(null)
-    await run(() => wechatVideoService.focusVideoAccount(videoAccountId))
-  }
+    statusRefreshInFlightRef.current = true;
+    if (!silent) {
+      setLoading(true);
+      setMessage("");
+    }
+
+    try {
+      applyStatus(await wechatVideoService.status());
+    } catch (error) {
+      if (!silent) {
+        setMessage(error instanceof Error ? error.message : String(error));
+      }
+    } finally {
+      statusRefreshInFlightRef.current = false;
+      if (!silent) {
+        setLoading(false);
+      }
+    }
+  }, []);
+
+  const openVideoAccountLog = async (videoAccountId: string) => {
+    setLoading(true);
+    setMessage("");
+    try {
+      await wechatVideoService.openVideoAccountLog(videoAccountId);
+    } catch (error) {
+      setMessage(error instanceof Error ? error.message : String(error));
+    } finally {
+      setLoading(false);
+    }
+  };
 
   useEffect(() => {
-    void refreshStatus()
+    void refreshStatus();
     const unsubscribeConfigChanged = wechatVideoService.onConfigChanged(() => {
-      void refreshStatus()
-    })
+      void refreshStatus();
+    });
+    const statusRefreshInterval = window.setInterval(() => {
+      void refreshStatus(true);
+    }, 5000);
 
-    return unsubscribeConfigChanged
-  }, [])
+    return () => {
+      unsubscribeConfigChanged();
+      window.clearInterval(statusRefreshInterval);
+    };
+  }, [refreshStatus]);
 
   return (
     <main className="flex min-h-svh flex-1 flex-col gap-6 bg-background p-6">
       <Card className="rounded-lg bg-[linear-gradient(135deg,color-mix(in_oklch,var(--color-emerald-500)_7%,var(--card))_0%,color-mix(in_oklch,var(--primary)_5%,var(--card))_48%,var(--card)_100%)] py-3 [--card-spacing:--spacing(3)]">
-        <CardContent className="flex min-h-14 flex-wrap items-center gap-x-5 gap-y-3 px-4">
-          <div className="flex min-w-40 items-center gap-2.5">
-            <CirclePower className="size-4 text-muted-foreground" />
+        <CardContent className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-3 px-4">
+          <div className="flex min-w-20 items-center gap-2.5">
+            <Tooltip>
+              <TooltipTrigger
+                className={cn(
+                  buttonVariants({
+                    size: "icon-sm",
+                    variant: status.running ? "destructive" : "outline",
+                  }),
+                  "bg-background/80",
+                )}
+                disabled={loading}
+                onClick={() =>
+                  run(() =>
+                    status.running ? wechatVideoService.stop() : wechatVideoService.start(),
+                  )
+                }
+              >
+                <IconPower />
+              </TooltipTrigger>
+              <TooltipContent>{serviceActionTooltip}</TooltipContent>
+            </Tooltip>
             <span
               className={
                 status.running
@@ -139,20 +216,19 @@ export function WechatServiceControlPage() {
                   : "size-2.5 rounded-full bg-muted-foreground/40"
               }
             />
-            <span className="text-base font-semibold">
-              {status.running ? "运行中" : "未运行"}
-            </span>
           </div>
 
-          <div className="h-7 w-px bg-border" />
+          <div className="hidden h-7 w-px bg-border xl:block" />
 
-          <div className="flex items-center gap-1.5 text-xs">
+          <div className="flex min-w-20 items-center gap-1.5 text-xs">
             <span className="text-muted-foreground">PID</span>
             <span className="font-medium">{status.pid ?? "-"}</span>
           </div>
 
-          <div className="flex min-w-0 flex-1 items-center gap-2.5">
-            <BadgeCheck className="size-4 shrink-0 text-muted-foreground" />
+          <div className="hidden h-7 w-px bg-border xl:block" />
+
+          <div className="flex min-w-[220px] flex-1 items-center gap-2.5">
+            <IconCircleCheck className="size-4 shrink-0 text-muted-foreground" />
             <span className="shrink-0 text-xs text-muted-foreground">主体</span>
             <div className="flex min-w-0 flex-wrap gap-1">
               {status.contractSubjects.length > 0 ? (
@@ -171,16 +247,16 @@ export function WechatServiceControlPage() {
             </div>
           </div>
 
-          <div className="h-7 w-px bg-border" />
+          <div className="hidden h-7 w-px bg-border xl:block" />
 
-          <div className="flex items-center gap-2.5 text-xs">
-            <Cpu className="size-4 text-muted-foreground" />
+          <div className="flex min-w-28 items-center gap-2.5 text-xs">
+            <IconCpu className="size-4 text-muted-foreground" />
             <span className="text-muted-foreground">进程</span>
             <span className="font-medium">{formatBytes(status.memory.processRssBytes)}</span>
           </div>
 
-          <div className="flex min-w-40 items-center gap-2.5 text-xs">
-            <Activity className="size-4 text-muted-foreground" />
+          <div className="flex min-w-56 flex-1 items-center gap-2.5 text-xs xl:flex-none">
+            <IconActivityHeartbeat className="size-4 text-muted-foreground" />
             <span className="text-muted-foreground">系统</span>
             <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
               <div
@@ -191,38 +267,33 @@ export function WechatServiceControlPage() {
               />
             </div>
             <span className="font-medium">{formatPercent(status.memory.systemUsedPercent)}</span>
-            <span className="text-muted-foreground">
-              {formatBytes(status.memory.systemUsedBytes)} / {formatBytes(status.memory.systemTotalBytes)}
+            <span className="truncate text-muted-foreground">
+              {formatBytes(status.memory.systemUsedBytes)} /{" "}
+              {formatBytes(status.memory.systemTotalBytes)}
             </span>
           </div>
 
-          <div className="ml-auto text-xs text-muted-foreground">
-            刷新 {formatTime(lastRefreshedAt)}
+          <div className="ml-auto flex min-w-full items-center justify-between gap-2 border-t pt-3 lg:min-w-0 lg:border-t-0 lg:pt-0">
+            <span className="text-xs text-muted-foreground">
+              刷新 {formatTime(lastRefreshedAt)}
+            </span>
+            <Tooltip>
+              <TooltipTrigger
+                aria-label="刷新服务状态"
+                className={cn(
+                  buttonVariants({ size: "icon-sm", variant: "outline" }),
+                  "bg-background/80",
+                )}
+                disabled={loading}
+                onClick={() => void refreshStatus()}
+              >
+                <IconRefresh className={loading ? "animate-spin" : undefined} />
+              </TooltipTrigger>
+              <TooltipContent>重新获取服务运行状态</TooltipContent>
+            </Tooltip>
           </div>
         </CardContent>
       </Card>
-
-      <section className="rounded-lg border bg-card p-5">
-        <div className="flex flex-wrap items-center gap-2">
-          <Button disabled={loading || status.running} onClick={() => run(() => wechatVideoService.start())}>
-            启动服务
-          </Button>
-          <Button
-            disabled={loading || !status.running}
-            variant="destructive"
-            onClick={() => run(() => wechatVideoService.stop())}
-          >
-            停止服务
-          </Button>
-          <Button disabled={loading} variant="outline" onClick={refreshStatus}>
-            <RefreshCw />
-            刷新状态
-          </Button>
-        </div>
-        <p className="mt-3 text-sm text-muted-foreground">
-          修改配置后，请先停止服务再重新启动，使新配置生效。
-        </p>
-      </section>
 
       {message ? (
         <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
@@ -235,7 +306,7 @@ export function WechatServiceControlPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <span className="flex size-8 items-center justify-center rounded-lg border bg-card">
-                <UserRoundCheck className="size-4 text-primary" />
+                <IconUsersGroup className="size-4 text-primary" />
               </span>
               <div>
                 <h2 className="text-sm font-semibold">视频号页面</h2>
@@ -253,9 +324,7 @@ export function WechatServiceControlPage() {
                 <VideoAccountStatusCard
                   key={account.videoAccountId}
                   account={account}
-                  menuOpen={openAccountMenuId === account.videoAccountId}
-                  onMenuOpenChange={(open) => setOpenAccountMenuId(open ? account.videoAccountId : null)}
-                  onFocusBrowser={() => focusVideoAccount(account.videoAccountId)}
+                  onOpenLog={() => openVideoAccountLog(account.videoAccountId)}
                 />
               ))}
             </div>
@@ -266,24 +335,19 @@ export function WechatServiceControlPage() {
           )}
         </section>
       ) : null}
-
     </main>
-  )
+  );
 }
 
 function VideoAccountStatusCard({
   account,
-  menuOpen,
-  onFocusBrowser,
-  onMenuOpenChange,
+  onOpenLog,
 }: {
-  account: WechatVideoAccountStatus
-  menuOpen: boolean
-  onFocusBrowser: () => void
-  onMenuOpenChange: (open: boolean) => void
+  account: WechatVideoAccountStatus;
+  onOpenLog: () => void;
 }) {
-  const state = loginStateMeta(account.loginState)
-  const subjectLabel = account.contractSubjectLabel ?? account.contractSubject ?? "未配置主体"
+  const state = loginStateMeta(account.loginState);
+  const subjectLabel = account.contractSubjectLabel ?? account.contractSubject ?? "未配置主体";
 
   return (
     <Card className="rounded-lg bg-card py-0 shadow-none transition-colors hover:bg-accent/20">
@@ -297,38 +361,33 @@ function VideoAccountStatusCard({
               <h3 className="truncate text-sm font-semibold" title={account.videoAccountName}>
                 {account.videoAccountName}
               </h3>
-              <p className="mt-1 truncate text-xs text-muted-foreground" title={account.videoAccountId}>
+              <p
+                className="mt-1 truncate text-xs text-muted-foreground"
+                title={account.videoAccountId}
+              >
                 {account.videoAccountId}
               </p>
             </div>
           </div>
           <div className="flex shrink-0 items-start gap-2">
-            <span className={`inline-flex h-7 items-center rounded-md border px-2 text-xs font-medium ${state.className}`}>
+            <span
+              className={`inline-flex h-7 items-center rounded-md border px-2 text-xs font-medium ${state.className}`}
+            >
               {state.label}
             </span>
-            <div className="relative">
-              <Button
-                aria-label="打开视频号操作菜单"
-                className="size-7"
-                size="icon"
-                variant="ghost"
-                onClick={() => onMenuOpenChange(!menuOpen)}
+            <DropdownMenu>
+              <DropdownMenuTrigger
+                className={buttonVariants({ size: "icon-sm", variant: "ghost" })}
               >
-                <Ellipsis className="size-4" />
-              </Button>
-              {menuOpen ? (
-                <div className="absolute right-0 top-8 z-20 w-44 rounded-lg border bg-popover p-1 text-popover-foreground shadow-md">
-                  <button
-                    className="flex w-full items-center gap-2 rounded-md px-2 py-2 text-left text-sm hover:bg-accent hover:text-accent-foreground"
-                    type="button"
-                    onClick={onFocusBrowser}
-                  >
-                    <MonitorUp className="size-4" />
-                    打开浏览器到前台
-                  </button>
-                </div>
-              ) : null}
-            </div>
+                <IconDotsVertical className="size-4" />
+              </DropdownMenuTrigger>
+              <DropdownMenuContent>
+                <DropdownMenuItem onClick={onOpenLog}>
+                  <IconFileText />
+                  打开日志文件
+                </DropdownMenuItem>
+              </DropdownMenuContent>
+            </DropdownMenu>
           </div>
         </div>
 
@@ -345,5 +404,5 @@ function VideoAccountStatusCard({
         </div>
       </CardContent>
     </Card>
-  )
+  );
 }

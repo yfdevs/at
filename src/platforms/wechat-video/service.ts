@@ -111,4 +111,10 @@ export const wechatVideoService = {
       videoAccountId
     )
   },
+  openVideoAccountLog(videoAccountId: string) {
+    return invokeWechatVideo<string>(
+      "wechat-video:service:video-account:open-log",
+      videoAccountId
+    )
+  },
 }
