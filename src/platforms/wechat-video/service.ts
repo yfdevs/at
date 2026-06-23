@@ -1,7 +1,20 @@
+export type WechatVideoAccountStatus = {
+  videoAccountId: string
+  videoAccountName: string
+  contractSubject?: string
+  contractSubjectLabel?: string
+  launched: boolean
+  loginState: "not-launched" | "login-required" | "logged-in" | "unknown"
+  pageCount: number
+  activeUrl?: string
+  userDataDir: string
+}
+
 export type WechatVideoServiceStatus = {
   running: boolean
   pid: number | null
   contractSubjects: Array<{ label: string; value: string }>
+  videoAccounts: WechatVideoAccountStatus[]
   memory: {
     processRssBytes: number
     systemUsedBytes: number
@@ -73,5 +86,11 @@ export const wechatVideoService = {
   },
   stop() {
     return invokeWechatVideo<WechatVideoServiceStatus>("wechat-video:service:stop")
+  },
+  focusVideoAccount(videoAccountId: string) {
+    return invokeWechatVideo<WechatVideoServiceStatus>(
+      "wechat-video:service:video-account:focus",
+      videoAccountId
+    )
   },
 }

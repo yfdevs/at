@@ -1,7 +1,7 @@
-import type { ComponentType } from "react"
-import { Navigate, Route, Routes } from "react-router-dom"
+import { useEffect, useState, type ComponentType } from "react"
+import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
-import { defaultRoute, routePath, type AppRoute } from "@/config/navigation"
+import { defaultRoute, isAppRoute, routePath, type AppRoute } from "@/config/navigation"
 import { KuaishouAnalyticsPage } from "@/pages/kuaishou-drama/analytics"
 import { KuaishouProjectsPage } from "@/pages/kuaishou-drama/projects"
 import { KuaishouSchedulePage } from "@/pages/kuaishou-drama/schedule"
@@ -23,13 +23,43 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
 }
 
 export function AppRoutes() {
+  const location = useLocation()
+  const currentPath = location.pathname.replace(/^\/+/, "")
+  const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute
+  const [cachedRoutes, setCachedRoutes] = useState<Set<AppRoute>>(() => new Set([activeRoute]))
+
+  useEffect(() => {
+    setCachedRoutes((current) => {
+      if (current.has(activeRoute)) return current
+      return new Set(current).add(activeRoute)
+    })
+  }, [activeRoute])
+
   return (
-    <Routes>
-      <Route index element={<Navigate to={routePath(defaultRoute)} replace />} />
-      {Object.entries(appRouteComponents).map(([route, Page]) => (
-        <Route key={route} path={route} element={<Page />} />
-      ))}
-      <Route path="*" element={<Navigate to={routePath(defaultRoute)} replace />} />
-    </Routes>
+    <>
+      <Routes>
+        <Route index element={<Navigate to={routePath(defaultRoute)} replace />} />
+        <Route
+          path="*"
+          element={
+            currentPath && !isAppRoute(currentPath)
+              ? <Navigate to={routePath(defaultRoute)} replace />
+              : null
+          }
+        />
+      </Routes>
+      {Object.entries(appRouteComponents).map(([route, Page]) => {
+        const typedRoute = route as AppRoute
+        if (!cachedRoutes.has(typedRoute)) return null
+
+        const active = activeRoute === typedRoute
+
+        return (
+          <div key={route} className={active ? "contents" : "hidden"}>
+            <Page />
+          </div>
+        )
+      })}
+    </>
   )
 }

@@ -1,4 +1,4 @@
-import { BrowserContextManager } from "../automation/browser-context-manager.js";
+import { BrowserContextManager, type VideoAccountRuntimeStatus } from "../automation/browser-context-manager.js";
 import { FeishuNotifier } from "../shared/feishu-notifier.js";
 import { loadServiceConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
@@ -9,7 +9,13 @@ import { TaskWorkerPool } from "./task-worker-pool.js";
 import { VideoAccountSyncService } from "./video-account-sync-service.js";
 
 export type WechatVideoRuntime = {
+  getStatus: () => WechatVideoRuntimeStatus;
+  focusVideoAccount: (videoAccountId: string) => Promise<void>;
   stop: () => Promise<void>;
+}
+
+export type WechatVideoRuntimeStatus = {
+  videoAccounts: VideoAccountRuntimeStatus[];
 }
 
 export type WechatVideoRuntimeOptions = {
@@ -59,6 +65,14 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
   log(options, "[runtime] started");
 
   return {
+    getStatus() {
+      return {
+        videoAccounts: browserContexts.getRuntimeStatuses(),
+      };
+    },
+    async focusVideoAccount(videoAccountId: string) {
+      await browserContexts.focusVideoAccount(videoAccountId);
+    },
     async stop() {
       logger.info("stopping");
       log(options, "[runtime] stopping");

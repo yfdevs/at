@@ -346,18 +346,32 @@ export function WechatConfigurationPage() {
 
   return (
     <main className="flex min-h-svh flex-1 flex-col bg-muted/20">
-      <div className="sticky top-0 z-10 border-b bg-background/95 px-6 py-4 backdrop-blur">
-        <div className="mx-auto flex w-full max-w-[760px] flex-col gap-4 sm:flex-row sm:items-center sm:justify-between">
-          <div className="space-y-1">
-            <h1 className="text-xl font-semibold tracking-normal">配置管理</h1>
-            <p className="text-sm text-muted-foreground">
-              配置会缓存到本机，保存后由服务启动时读取。
-            </p>
-          </div>
-          <div className="flex items-center gap-2">
-            <span className={hasChanges ? "hidden text-sm text-destructive sm:inline" : "hidden text-sm text-muted-foreground sm:inline"}>
-              {hasChanges ? "有未保存更改" : "当前配置已保存"}
+      <div className="sticky top-0 z-10 border-b bg-background/95 px-6 py-3 backdrop-blur">
+        <div className="mx-auto flex w-full max-w-[860px] flex-col gap-3 sm:flex-row sm:items-center sm:justify-between">
+          <div className="flex min-w-0 flex-wrap items-center gap-2">
+            <h1 className="mr-1 text-lg font-semibold tracking-normal">配置管理</h1>
+            <span
+              className={
+                hasChanges
+                  ? "inline-flex h-7 items-center gap-1.5 rounded-md border border-amber-300 bg-amber-50 px-2 text-xs font-medium text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
+                  : "inline-flex h-7 items-center gap-1.5 rounded-md border bg-background px-2 text-xs font-medium text-muted-foreground"
+              }
+            >
+              {hasChanges ? (
+                <AlertTriangle className="size-3.5" />
+              ) : (
+                <CheckCircle2 className="size-3.5 text-emerald-600" />
+              )}
+              {hasChanges ? "未保存" : "已保存"}
             </span>
+            {restartRequired ? (
+              <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-orange-300 bg-orange-50 px-2 text-xs font-medium text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
+                <AlertTriangle className="size-3.5" />
+                需重启
+              </span>
+            ) : null}
+          </div>
+          <div className="flex items-center gap-2 sm:justify-end">
             {hasChanges ? (
               <Button
                 className="w-fit"

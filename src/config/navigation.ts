@@ -1,9 +1,6 @@
 import type { LucideIcon } from "lucide-react"
 import {
-  ChartSplineIcon,
   ClipboardListIcon,
-  Clock3Icon,
-  FilmIcon,
   SlidersHorizontalIcon,
   TerminalIcon,
   UserCogIcon,
@@ -62,31 +59,31 @@ export const navigationGroups: NavigationGroup[] = [
       },
     ],
   },
-  {
-    title: "快手短剧",
-    items: [
-      {
-        title: "短剧项目",
-        route: "kuaishou/projects",
-        icon: FilmIcon,
-      },
-      {
-        title: "发布排期",
-        route: "kuaishou/schedule",
-        icon: Clock3Icon,
-      },
-      {
-        title: "数据看板",
-        route: "kuaishou/analytics",
-        icon: ChartSplineIcon,
-      },
-      {
-        title: "平台设置",
-        route: "kuaishou/settings",
-        icon: SlidersHorizontalIcon,
-      },
-    ],
-  },
+  // {
+  //   title: "快手短剧",
+  //   items: [
+  //     {
+  //       title: "短剧项目",
+  //       route: "kuaishou/projects",
+  //       icon: FilmIcon,
+  //     },
+  //     {
+  //       title: "发布排期",
+  //       route: "kuaishou/schedule",
+  //       icon: Clock3Icon,
+  //     },
+  //     {
+  //       title: "数据看板",
+  //       route: "kuaishou/analytics",
+  //       icon: ChartSplineIcon,
+  //     },
+  //     {
+  //       title: "平台设置",
+  //       route: "kuaishou/settings",
+  //       icon: SlidersHorizontalIcon,
+  //     },
+  //   ],
+  // },
 ]
 
 export function isAppRoute(route: string): route is AppRoute {

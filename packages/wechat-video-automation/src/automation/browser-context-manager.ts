@@ -25,6 +25,17 @@ export interface VideoAccountSyncChanges {
   }>;
 }
 
+export type VideoAccountRuntimeStatus = {
+  videoAccountId: string;
+  videoAccountName: string;
+  contractSubject?: string;
+  launched: boolean;
+  loginState: "not-launched" | "login-required" | "logged-in" | "unknown";
+  pageCount: number;
+  activeUrl?: string;
+  userDataDir: string;
+}
+
 export class BrowserContextManager {
   private readonly channels = new Map<string, ManagedChannel>();
   private readonly videoAccountsById = new Map<string, VideoAccount>();
@@ -53,6 +64,38 @@ export class BrowserContextManager {
         videoAccountId: account.id,
         videoAccountName: account.name,
         contractSubject: account.contractSubject,
+        userDataDir: channel?.userDataDir ?? this.getUserDataDir(account.id),
+      };
+    });
+  }
+
+  getRuntimeStatuses(): VideoAccountRuntimeStatus[] {
+    return Array.from(this.videoAccountsById.values()).map((account) => {
+      const channel = this.channels.get(account.id);
+      const pages = channel?.context.pages() ?? [];
+      const activePage = pages.find((page) => !page.isClosed() && page.url() !== "about:blank") ?? pages[0];
+      const activeUrl = activePage?.url();
+      const hasLoginPage = pages.some((page) => !page.isClosed() && page.url().includes("login"));
+      const hasPlatformPage = pages.some((page) => {
+        const url = page.url();
+        return !page.isClosed() && url !== "about:blank" && !url.includes("login");
+      });
+      const loginState: VideoAccountRuntimeStatus["loginState"] = !channel
+        ? "not-launched"
+        : hasLoginPage || this.loginRequiredNotifiedChannelIds.has(account.id)
+          ? "login-required"
+          : hasPlatformPage
+            ? "logged-in"
+            : "unknown";
+
+      return {
+        videoAccountId: account.id,
+        videoAccountName: account.name,
+        contractSubject: account.contractSubject,
+        launched: Boolean(channel),
+        loginState,
+        pageCount: pages.filter((page) => !page.isClosed()).length,
+        activeUrl: activeUrl && activeUrl !== "about:blank" ? activeUrl : undefined,
         userDataDir: channel?.userDataDir ?? this.getUserDataDir(account.id),
       };
     });
@@ -200,6 +243,18 @@ export class BrowserContextManager {
       await this.save(channelId);
     }
     return loggedIn;
+  }
+
+  async focusVideoAccount(channelId: string): Promise<void> {
+    const context = await this.getOrLaunch(channelId);
+    const page = context.pages().find((candidate) => !candidate.isClosed() && candidate.url() !== "about:blank")
+      ?? context.pages()[0]
+      ?? await context.newPage();
+
+    await page.bringToFront();
+    await page.evaluate(() => {
+      window.focus();
+    }).catch(() => undefined);
   }
 
   async refreshLoginStateInTemporaryPage(channelId: string, timeoutMs: number): Promise<boolean> {

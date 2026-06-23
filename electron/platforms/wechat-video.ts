@@ -4,13 +4,30 @@ import path from 'node:path'
 import { mem } from 'systeminformation'
 
 type WechatVideoRuntime = {
+  getStatus: () => {
+    videoAccounts: WechatVideoAccountStatus[]
+  }
+  focusVideoAccount?: (videoAccountId: string) => Promise<void>
   stop: () => Promise<void>
+}
+
+export type WechatVideoAccountStatus = {
+  videoAccountId: string
+  videoAccountName: string
+  contractSubject?: string
+  contractSubjectLabel?: string
+  launched: boolean
+  loginState: 'not-launched' | 'login-required' | 'logged-in' | 'unknown'
+  pageCount: number
+  activeUrl?: string
+  userDataDir: string
 }
 
 export type WechatVideoServiceStatus = {
   running: boolean
   pid: number | null
   contractSubjects: Array<{ label: string; value: string }>
+  videoAccounts: WechatVideoAccountStatus[]
   memory: {
     processRssBytes: number
     systemUsedBytes: number
@@ -86,6 +103,11 @@ function readSelectedContractSubjects(config = readConfig()) {
   return contractSubjectOptions.filter((option) => selectedSubjects.has(option.value))
 }
 
+function formatContractSubjectLabel(value: string | undefined) {
+  if (!value) return undefined
+  return contractSubjectOptions.find((option) => option.value === value)?.label ?? value
+}
+
 async function status(): Promise<WechatVideoServiceStatus> {
   const memory = await mem()
   const systemUsedBytes = memory.total - memory.available
@@ -94,6 +116,10 @@ async function status(): Promise<WechatVideoServiceStatus> {
     running: runtime !== null,
     pid: runtime ? process.pid : null,
     contractSubjects: readSelectedContractSubjects(),
+    videoAccounts: runtime?.getStatus().videoAccounts.map((account) => ({
+      ...account,
+      contractSubjectLabel: formatContractSubjectLabel(account.contractSubject),
+    })) ?? [],
     memory: {
       processRssBytes: process.memoryUsage().rss,
       systemUsedBytes,
@@ -273,6 +299,31 @@ export function registerWechatVideoPlatformHandlers() {
       runtime = null
     }
 
+    return status()
+  })
+
+  ipcMain.handle('wechat-video:service:video-account:focus', async (_event, videoAccountId: string) => {
+    if (runtimeStarting) {
+      runtime = await runtimeStarting
+      runtimeStarting = null
+    }
+
+    if (!runtime) {
+      throw new Error('微信视频号服务未启动。')
+    }
+
+    let currentRuntime = runtime
+    if (typeof currentRuntime.focusVideoAccount !== 'function') {
+      await currentRuntime.stop()
+      currentRuntime = await startRuntime()
+      runtime = currentRuntime
+    }
+
+    if (typeof currentRuntime.focusVideoAccount !== 'function') {
+      throw new Error('当前微信视频号服务实例不支持打开浏览器到前台，请重启应用后再试。')
+    }
+
+    await currentRuntime.focusVideoAccount(videoAccountId)
     return status()
   })
 }
