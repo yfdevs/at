@@ -5,5 +5,9 @@ export default defineConfig({
     entry: ["src/index.ts"],
     format: ["esm"],
     dts: true,
+    deps: {
+      onlyBundle: false,
+      alwaysBundle: ["@drama/axios"],
+    },
   },
 });

@@ -11,11 +11,11 @@ node_modules
 dist
 dist-ssr
 dist-electron
+release
 .history
 .cache
 .env
 .auth
-.runs
 .playwright-mcp
 *.local
 

@@ -36,6 +36,9 @@ importers:
       '@dnd-kit/utilities':
         specifier: ^3.2.2
         version: 3.2.2(react@18.2.0)
+      '@drama/axios':
+        specifier: workspace:*
+        version: link:packages/axios
       '@drama/wechat-video-automation':
         specifier: workspace:*
         version: link:packages/wechat-video-automation
