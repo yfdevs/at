@@ -16,6 +16,26 @@ const idlePageRefreshIntervalSeconds = 1500;
 const idlePageRefreshTimeoutSeconds = 60;
 const idlePageRefreshJitterSeconds = 300;
 
+function parseContractSubjects(setting: string): Set<string> {
+  return new Set(
+    setting
+      .split(",")
+      .map((subject) => subject.trim())
+      .filter(Boolean),
+  );
+}
+
+export function filterVideoAccountsByContractSubjects(
+  videoAccounts: VideoAccount[],
+  contractSubjectsSetting = getWechatVideoRuntimeSettings().videoAccountContractSubjects,
+): VideoAccount[] {
+  const contractSubjects = parseContractSubjects(contractSubjectsSetting);
+
+  return videoAccounts.filter((account) => (
+    account.contractSubject ? contractSubjects.has(account.contractSubject) : false
+  ));
+}
+
 export function resolveFromRoot(filePath: string): string {
   return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
 }
@@ -49,7 +69,7 @@ export interface ServiceConfig {
 
 export async function loadServiceConfig(): Promise<ServiceConfig> {
   const settings = getWechatVideoRuntimeSettings();
-  const videoAccounts = await fetchVideoAccountsApi();
+  const videoAccounts = filterVideoAccountsByContractSubjects(await fetchVideoAccountsApi(), settings.videoAccountContractSubjects);
   const accountIds = videoAccounts.map((account) => account.id);
 
   if (videoAccounts.length === 0) {

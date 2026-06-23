@@ -1,10 +1,18 @@
 export type WechatVideoServiceStatus = {
   running: boolean
   pid: number | null
+  contractSubjects: Array<{ label: string; value: string }>
+  memory: {
+    processRssBytes: number
+    systemUsedBytes: number
+    systemTotalBytes: number
+    systemUsedPercent: number
+  }
 }
 
 export type WechatVideoConfig = {
   apiBaseUrl: string
+  videoAccountContractSubjects: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -34,7 +42,8 @@ async function invokeWechatVideo<T>(channel: string, ...args: unknown[]): Promis
     throw new Error("微信视频号服务控制仅在 Electron 应用内可用。")
   }
 
-  return window.ipcRenderer.invoke<T>(channel, ...args)
+  const result = await window.ipcRenderer.invoke(channel, ...args)
+  return result as T
 }
 
 export const wechatVideoService = {

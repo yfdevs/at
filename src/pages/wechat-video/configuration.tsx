@@ -12,6 +12,7 @@ import {
   Card,
   CardContent,
 } from "@/components/ui/card"
+import { Checkbox } from "@/components/ui/checkbox"
 import {
   Field,
   FieldContent,
@@ -43,6 +44,7 @@ import {
 
 const emptyConfig: WechatVideoConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
+  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs",
@@ -87,8 +89,22 @@ type SwitchField = {
   inactiveLabel: string
 }
 
-type ConfigField = TextField | SelectField | SwitchField
+type SubjectField = {
+  kind: "subjects"
+  key: "videoAccountContractSubjects"
+  label: string
+  description?: string
+  options: Array<{ value: string; label: string }>
+}
+
+type ConfigField = TextField | SelectField | SwitchField | SubjectField
 type MessageTone = "success" | "error"
+
+const contractSubjectOptions = [
+  { label: "明星说", value: "MINGXINGSHUO" },
+  { label: "米苏", value: "MISU" },
+  { label: "微淘", value: "WEITAO" },
+]
 
 const sections: Array<{
   title: string
@@ -104,6 +120,13 @@ const sections: Array<{
         label: "后端接口地址",
         type: "url",
         description: "默认使用线上服务，必要时改成本地或测试地址。",
+      },
+      {
+        kind: "subjects",
+        key: "videoAccountContractSubjects",
+        label: "主体配置",
+        description: "只启动所选主体下的视频号账号。",
+        options: contractSubjectOptions,
       },
     ],
   },
@@ -451,6 +474,58 @@ function ConfigFieldControl({
     field.key === "localEpisodeVideoRoot" || field.key === "runDataDir"
       ? field.key
       : null
+
+  if (field.kind === "subjects") {
+    const selectedSubjects = new Set(
+      value
+        .split(",")
+        .map((subject) => subject.trim())
+        .filter(Boolean)
+    )
+
+    const toggleSubject = (subject: string, checked: boolean) => {
+      const nextSubjects = new Set(selectedSubjects)
+
+      if (checked) {
+        nextSubjects.add(subject)
+      } else {
+        nextSubjects.delete(subject)
+      }
+
+      onChange(
+        field.key,
+        field.options
+          .map((option) => option.value)
+          .filter((subject) => nextSubjects.has(subject))
+          .join(",")
+      )
+    }
+
+    return (
+      <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
+        <FieldContent>
+          <FieldLabel>{field.label}</FieldLabel>
+          {field.description ? (
+            <FieldDescription>{field.description}</FieldDescription>
+          ) : null}
+        </FieldContent>
+        <div className="flex min-w-0 flex-wrap gap-2">
+          {field.options.map((option) => (
+            <label
+              key={option.value}
+              className="flex h-8 w-auto min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2.5 text-sm"
+            >
+              <Checkbox
+                checked={selectedSubjects.has(option.value)}
+                onCheckedChange={(checked) => toggleSubject(option.value, checked === true)}
+              />
+              <span className="truncate">{option.label}</span>
+            </label>
+          ))}
+        </div>
+      </Field>
+    )
+  }
 
   if (field.kind === "switch") {
     const checked = value === "true"

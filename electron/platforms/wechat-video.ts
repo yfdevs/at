@@ -1,6 +1,7 @@
 import { app, BrowserWindow, dialog, ipcMain, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import Store from 'electron-store'
 import path from 'node:path'
+import { mem } from 'systeminformation'
 
 type WechatVideoRuntime = {
   stop: () => Promise<void>
@@ -9,10 +10,18 @@ type WechatVideoRuntime = {
 export type WechatVideoServiceStatus = {
   running: boolean
   pid: number | null
+  contractSubjects: Array<{ label: string; value: string }>
+  memory: {
+    processRssBytes: number
+    systemUsedBytes: number
+    systemTotalBytes: number
+    systemUsedPercent: number
+  }
 }
 
 export type WechatVideoConfig = {
   apiBaseUrl: string
+  videoAccountContractSubjects: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -37,6 +46,7 @@ type WechatVideoStore = {
 
 const defaultWechatVideoConfig: WechatVideoConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
+  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs',
@@ -55,14 +65,41 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   feishuBotWebhookUrl: '',
 }
 
+const contractSubjectOptions = [
+  { label: '明星说', value: 'MINGXINGSHUO' },
+  { label: '米苏', value: 'MISU' },
+  { label: '微淘', value: 'WEITAO' },
+]
+
 let runtime: WechatVideoRuntime | null = null
 let runtimeStarting: Promise<WechatVideoRuntime> | null = null
 let store: Store<WechatVideoStore> | null = null
 
-function status(): WechatVideoServiceStatus {
+function readSelectedContractSubjects(config = readConfig()) {
+  const selectedSubjects = new Set(
+    config.videoAccountContractSubjects
+      .split(',')
+      .map((subject) => subject.trim())
+      .filter(Boolean),
+  )
+
+  return contractSubjectOptions.filter((option) => selectedSubjects.has(option.value))
+}
+
+async function status(): Promise<WechatVideoServiceStatus> {
+  const memory = await mem()
+  const systemUsedBytes = memory.total - memory.available
+
   return {
     running: runtime !== null,
     pid: runtime ? process.pid : null,
+    contractSubjects: readSelectedContractSubjects(),
+    memory: {
+      processRssBytes: process.memoryUsage().rss,
+      systemUsedBytes,
+      systemTotalBytes: memory.total,
+      systemUsedPercent: memory.total > 0 ? (systemUsedBytes / memory.total) * 100 : 0,
+    },
   }
 }
 
@@ -112,11 +149,27 @@ function directoryDefaultPath(currentPath: string | undefined, fallback: string)
     : path.join(process.env.APP_ROOT, trimmedPath)
 }
 
+function normalizeSelectedRunDataDir(selectedPath: string | null) {
+  if (!selectedPath) {
+    return null
+  }
+
+  const normalizedPath = path.normalize(selectedPath)
+  const selectedDirName = path.basename(normalizedPath).toLowerCase()
+
+  if (selectedDirName === '.drama-runs') {
+    return normalizedPath
+  }
+
+  return path.join(normalizedPath, '.drama-runs')
+}
+
 function normalizeConfig(
   config: Partial<WechatVideoConfig> & Record<string, string | undefined>,
 ): WechatVideoConfig {
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatVideoConfig.apiBaseUrl,
+    videoAccountContractSubjects: config.videoAccountContractSubjects ?? defaultWechatVideoConfig.videoAccountContractSubjects,
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatVideoConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatVideoConfig.closeFailedTaskPages,
     runDataDir: config.runDataDir ?? defaultWechatVideoConfig.runDataDir,
@@ -182,11 +235,13 @@ export function registerWechatVideoPlatformHandlers() {
   })
 
   ipcMain.handle('wechat-video:config:select-run-data-dir', async (event, currentPath?: string) => {
-    return selectDirectory(event, {
+    const selectedPath = await selectDirectory(event, {
       title: '选择运行数据目录',
       defaultPath: directoryDefaultPath(currentPath, app.getPath('documents')),
       properties: ['openDirectory', 'createDirectory'],
     })
+
+    return normalizeSelectedRunDataDir(selectedPath)
   })
 
   ipcMain.handle('wechat-video:service:status', () => status())

@@ -1,7 +1,7 @@
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
+import { filterVideoAccountsByContractSubjects, type ServiceConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
-import type { ServiceConfig } from "../shared/config.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 
 const logger = createLogger("video-account-sync");
@@ -40,7 +40,7 @@ export class VideoAccountSyncService {
     this.syncing = true;
 
     try {
-      const videoAccounts = await fetchVideoAccountsApi();
+      const videoAccounts = filterVideoAccountsByContractSubjects(await fetchVideoAccountsApi());
       this.validateVideoAccounts(videoAccounts);
       const changes = this.browserContexts.syncVideoAccounts(videoAccounts);
       this.taskWorkerPool.syncVideoAccounts(videoAccounts);
