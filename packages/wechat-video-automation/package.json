@@ -16,15 +16,14 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@drama/axios": "workspace:*",
-    "fast-glob": "^3.3.3",
-    "fs-extra": "^11.3.2",
-    "pino": "^10.3.1",
     "playwright": "latest"
   },
   "devDependencies": {
+    "@drama/axios": "workspace:*",
     "@types/fs-extra": "^11.0.4",
     "@types/node": "latest",
+    "fast-glob": "^3.3.3",
+    "pino": "^10.3.1",
     "tsx": "latest",
     "typescript": "latest",
     "vite": "catalog:"

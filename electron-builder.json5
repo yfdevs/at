@@ -1,46 +1,46 @@
 {
-  "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  "appId": "YourAppID",
-  "asar": true,
-  "productName": "AutoDrama",
-  "directories": {
-    "output": "release/${version}",
-    "buildResources": "build"
+  $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
+  appId: "YourAppID",
+  asar: true,
+  npmRebuild: false,
+  nodeGypRebuild: false,
+  buildDependenciesFromSource: false,
+  productName: "AutoDrama",
+  directories: {
+    output: "release/${version}",
+    buildResources: "build",
   },
-  "files": [
-    "dist",
-    "dist-electron"
-  ],
-  "extraResources": [
+  files: ["dist", "dist-electron"],
+  extraResources: [
     {
-      "from": ".cache/playwright-browsers",
-      "to": "playwright-browsers"
-    }
+      from: ".cache/playwright-browsers",
+      to: "playwright-browsers",
+    },
   ],
-  "mac": {
-    "target": ["dmg"],
-    "icon": "build/icons/icon.icns",
-    "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
+  mac: {
+    target: ["dmg"],
+    icon: "build/icons/icon.icns",
+    artifactName: "${productName}-Mac-${version}-Installer.${ext}",
   },
-  "win": {
-    "target": [
+  win: {
+    target: [
       {
-        "target": "nsis",
-        "arch": ["x64"]
-      }
+        target: "nsis",
+        arch: ["x64"],
+      },
     ],
-    "icon": "build/icons/icon.ico",
-    "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
+    icon: "build/icons/icon.ico",
+    artifactName: "${productName}-Windows-${version}-Setup.${ext}",
   },
-  "nsis": {
-    "oneClick": false,
-    "perMachine": false,
-    "allowToChangeInstallationDirectory": true,
-    "deleteAppDataOnUninstall": false
+  nsis: {
+    oneClick: false,
+    perMachine: false,
+    allowToChangeInstallationDirectory: true,
+    deleteAppDataOnUninstall: false,
   },
-  "linux": {
-    "target": ["AppImage"],
-    "icon": "build/icons",
-    "artifactName": "${productName}-Linux-${version}.${ext}"
-  }
+  linux: {
+    target: ["AppImage"],
+    icon: "build/icons",
+    artifactName: "${productName}-Linux-${version}.${ext}",
+  },
 }

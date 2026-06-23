@@ -57,6 +57,12 @@ export type WechatVideoConfig = {
   feishuBotWebhookUrl: string
 }
 
+type WechatVideoConfigResult = {
+  config: WechatVideoConfig
+  path: string
+  restartRequired: boolean
+}
+
 type WechatVideoStore = {
   config: Partial<WechatVideoConfig> & Record<string, string | undefined>
 }
@@ -154,6 +160,12 @@ function writeConfig(config: WechatVideoConfig) {
   getStore().set('config', config)
 }
 
+function broadcastConfigChanged(result: WechatVideoConfigResult) {
+  for (const window of BrowserWindow.getAllWindows()) {
+    window.webContents.send('wechat-video:config:changed', result)
+  }
+}
+
 async function selectDirectory(event: IpcMainInvokeEvent, options: OpenDialogOptions) {
   const parentWindow = BrowserWindow.fromWebContents(event.sender)
   const result = parentWindow
@@ -245,11 +257,13 @@ export function registerWechatVideoPlatformHandlers() {
   ipcMain.handle('wechat-video:config:save', async (_event, config: WechatVideoConfig) => {
     const nextConfig = normalizeConfig(config)
     writeConfig(nextConfig)
-    return {
+    const result = {
       config: nextConfig,
       path: configPath(),
       restartRequired: runtime !== null || runtimeStarting !== null,
     }
+    broadcastConfigChanged(result)
+    return result
   })
 
   ipcMain.handle('wechat-video:config:select-local-episode-video-root', async (event, currentPath?: string) => {

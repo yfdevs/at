@@ -1,3 +1,5 @@
+import type { IpcRendererEvent } from "electron"
+
 export type WechatVideoAccountStatus = {
   videoAccountId: string
   videoAccountName: string
@@ -59,12 +61,28 @@ async function invokeWechatVideo<T>(channel: string, ...args: unknown[]): Promis
   return result as T
 }
 
+function onWechatVideo<T>(channel: string, listener: (payload: T) => void) {
+  if (!window.ipcRenderer) {
+    throw new Error("微信视频号服务控制仅在 Electron 应用内可用。")
+  }
+
+  const ipcListener = (_event: IpcRendererEvent, payload: T) => listener(payload)
+  window.ipcRenderer.on(channel, ipcListener)
+
+  return () => {
+    window.ipcRenderer.off(channel, ipcListener)
+  }
+}
+
 export const wechatVideoService = {
   getConfig() {
     return invokeWechatVideo<WechatVideoConfigResult>("wechat-video:config:get")
   },
   saveConfig(config: WechatVideoConfig) {
     return invokeWechatVideo<WechatVideoConfigResult>("wechat-video:config:save", config)
+  },
+  onConfigChanged(listener: (result: WechatVideoConfigResult) => void) {
+    return onWechatVideo<WechatVideoConfigResult>("wechat-video:config:changed", listener)
   },
   selectLocalEpisodeVideoRoot(currentPath?: string) {
     return invokeWechatVideo<string | null>(

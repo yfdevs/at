@@ -119,6 +119,11 @@ export function WechatServiceControlPage() {
 
   useEffect(() => {
     void refreshStatus()
+    const unsubscribeConfigChanged = wechatVideoService.onConfigChanged(() => {
+      void refreshStatus()
+    })
+
+    return unsubscribeConfigChanged
   }, [])
 
   return (

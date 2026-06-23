@@ -6,7 +6,7 @@
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "pnpm --filter @drama/wechat-video-automation build && vp dev",
-    "build": "pnpm --filter @drama/wechat-video-automation build && pnpm wechat-video:install-browsers && tsc && vp build && electron-builder",
+    "build": "pnpm --filter @drama/wechat-video-automation build && pnpm wechat-video:install-browsers && tsc && vp build && electron-builder --config electron-builder.json5",
     "lint": "vp lint",
     "preview": "vp preview",
     "wechat-video:install-browsers": "node scripts/install-playwright-browsers.mjs",
@@ -19,7 +19,6 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
-    "@drama/axios": "workspace:*",
     "@drama/wechat-video-automation": "workspace:*",
     "@fontsource-variable/geist": "^5.2.9",
     "@tailwindcss/vite": "^4.3.1",
