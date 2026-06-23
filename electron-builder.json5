@@ -1,33 +1,35 @@
-// @see - https://www.electron.build/configuration/configuration
 {
   "$schema": "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   "appId": "YourAppID",
   "asar": true,
-  "productName": "YourAppName",
+  "productName": "AutoDrama",
   "directories": {
-    "output": "release/${version}"
+    "output": "release/${version}",
+    "buildResources": "build"
   },
   "files": [
     "dist",
     "dist-electron"
   ],
+  "extraResources": [
+    {
+      "from": ".cache/playwright-browsers",
+      "to": "playwright-browsers"
+    }
+  ],
   "mac": {
-    "target": [
-      "dmg"
-    ],
-    "icon": "icons/mac/icon.icns",
+    "target": ["dmg"],
+    "icon": "build/icons/icon.icns",
     "artifactName": "${productName}-Mac-${version}-Installer.${ext}"
   },
   "win": {
     "target": [
       {
         "target": "nsis",
-        "arch": [
-          "x64"
-        ]
+        "arch": ["x64"]
       }
     ],
-    "icon": "icons/win/icon.ico",
+    "icon": "build/icons/icon.ico",
     "artifactName": "${productName}-Windows-${version}-Setup.${ext}"
   },
   "nsis": {
@@ -37,9 +39,8 @@
     "deleteAppDataOnUninstall": false
   },
   "linux": {
-    "target": [
-      "AppImage"
-    ],
+    "target": ["AppImage"],
+    "icon": "build/icons",
     "artifactName": "${productName}-Linux-${version}.${ext}"
   }
 }
