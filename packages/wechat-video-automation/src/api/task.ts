@@ -75,7 +75,14 @@ async function findNextUnclaimedAccountTaskId(
   };
   const url = "/dramaAiRpa/accountTask/page";
 
-  logger.info(`POST account task page url=${url} payload=${JSON.stringify(requestPayload)}`);
+  logger.info("account task page request", {
+    url,
+    videoAccountId: videoAccount.id,
+    videoAccountName: videoAccount.name,
+    page: requestPayload.page,
+    pageSize: requestPayload.pageSize,
+    rpaStatus: requestPayload.rpaStatus,
+  });
   const response = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
   const payload = response.data;
   if (payload.code !== 0) {
@@ -89,29 +96,40 @@ async function findNextUnclaimedAccountTaskId(
     summary[status] = (summary[status] ?? 0) + 1;
     return summary;
   }, {});
-  logger.info(
-    `poll account task page result videoAccountId=${videoAccount.id} total=${total} rows=${items.length} status=${JSON.stringify(statusSummary)}`,
-  );
+  logger.info("account task page response", {
+    videoAccountId: videoAccount.id,
+    total,
+    rows: items.length,
+    statusSummary,
+  });
 
   const excludedAccountTaskIds = options.excludedAccountTaskIds;
   const skippedItems = excludedAccountTaskIds
     ? items.filter((item) => excludedAccountTaskIds.has(item.id))
     : [];
   if (skippedItems.length > 0) {
-    logger.info(
-      `skip cooling account tasks videoAccountId=${videoAccount.id} ids=${skippedItems.map((item) => item.id).join(",")}`,
-    );
+    logger.info("skip cooling account tasks", {
+      videoAccountId: videoAccount.id,
+      accountTaskIds: skippedItems.map((item) => item.id),
+    });
   }
 
   const accountTask = items.find((item) => !excludedAccountTaskIds?.has(item.id)) ?? null;
   if (!accountTask) {
-    logger.info(`no claimable account task from rpaStatus=READY query videoAccountId=${videoAccount.id} name=${videoAccount.name}`);
+    logger.info("no claimable account task", {
+      videoAccountId: videoAccount.id,
+      videoAccountName: videoAccount.name,
+      rpaStatus: "READY",
+    });
     return null;
   }
 
-  logger.info(
-    `selected accountTaskId=${accountTask.id} rpaStatus=${accountTask.rpaStatus} originalTitle=${accountTask.originalTitle ?? ""} videoAccountId=${videoAccount.id}`,
-  );
+  logger.info("selected account task", {
+    accountTaskId: accountTask.id,
+    rpaStatus: accountTask.rpaStatus,
+    originalTitle: accountTask.originalTitle,
+    videoAccountId: videoAccount.id,
+  });
   return accountTask.id;
 }
 
@@ -123,12 +141,20 @@ export async function claimNextTaskForVideoAccountApi(
   if (!accountTaskId) return null;
 
   const url = "/dramaAiRpa/rpa/claim";
-  logger.info(`claim request url=${url} accountTaskId=${accountTaskId} videoAccountId=${videoAccount.id}`);
+  logger.info("claim request", {
+    url,
+    accountTaskId,
+    videoAccountId: videoAccount.id,
+  });
   const response = await httpClient.post<ClaimTaskResponse>(url, {
     accountTaskId,
   });
   const payload = response.data;
-  logger.info(`claim response accountTaskId=${accountTaskId} code=${payload.code} msg=${payload.msg}`);
+  logger.info("claim response", {
+    accountTaskId,
+    code: payload.code,
+    responseMessage: payload.msg,
+  });
   if (payload.code !== 0) {
     throw new Error(`Failed to claim task: ${payload.msg || `code=${payload.code}`}`);
   }
@@ -154,7 +180,13 @@ export async function claimNextTaskForVideoAccountApi(
     videoAccountName: videoAccount.name,
     playlet: playlet as Record<string, unknown>,
   };
-  logger.info(`claimed from api: accountTaskId=${task.accountTaskId} originalTitle=${task.originalTitle} videoAccountId=${task.videoAccountId} name=${task.videoAccountName}`);
+  logger.info("claimed account task", {
+    accountTaskId: task.accountTaskId,
+    dramaId: task.dramaId,
+    originalTitle: task.originalTitle,
+    videoAccountId: task.videoAccountId,
+    videoAccountName: task.videoAccountName,
+  });
   return task;
 }
 
@@ -163,14 +195,21 @@ export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSucc
   const requestPayload = {
     accountTaskId: successReport.accountTaskId,
   };
-  logger.info(`POST /dramaAiRpa/rpa/successCallback url=${url} payload=${JSON.stringify(requestPayload)}`);
+  logger.info("success callback request", {
+    url,
+    accountTaskId: successReport.accountTaskId,
+  });
   const response = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
   const payload = response.data;
-  logger.info(
-    `/dramaAiRpa/rpa/successCallback response accountTaskId=${successReport.accountTaskId} body=${JSON.stringify(payload)}`,
-  );
+  logger.info("success callback response", {
+    accountTaskId: successReport.accountTaskId,
+    code: payload.code,
+    responseMessage: payload.msg,
+  });
   assertTaskApiResponseOk(payload, "Task success callback");
-  logger.info(`success callback accountTaskId=${successReport.accountTaskId}`);
+  logger.info("success callback completed", {
+    accountTaskId: successReport.accountTaskId,
+  });
 }
 
 export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorReport): Promise<void> {
@@ -181,14 +220,25 @@ export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorRep
     resultJson: errorReport.resultJson ?? {},
     errorMessage: errorReport.errorMessage,
   };
-  logger.info(
-    `POST /dramaAiRpa/rpa/failCallback url=${url} payload=${JSON.stringify(requestPayload)} dramaId=${errorReport.dramaId ?? ""} videoAccountId=${errorReport.videoAccountId}`,
-  );
+  logger.info("fail callback request", {
+    url,
+    accountTaskId: errorReport.accountTaskId,
+    dramaId: errorReport.dramaId,
+    failStage: errorReport.failStage,
+    videoAccountId: errorReport.videoAccountId,
+    errorMessage: errorReport.errorMessage,
+    resultJson: requestPayload.resultJson,
+  });
   const response = await httpClient.post<TaskCallbackResponse>(url, requestPayload);
   const payload = response.data;
-  logger.info(
-    `/dramaAiRpa/rpa/failCallback response accountTaskId=${errorReport.accountTaskId} body=${JSON.stringify(payload)}`,
-  );
+  logger.info("fail callback response", {
+    accountTaskId: errorReport.accountTaskId,
+    code: payload.code,
+    responseMessage: payload.msg,
+  });
   assertTaskApiResponseOk(payload, "Task fail callback");
-  logger.info(`fail callback accountTaskId=${errorReport.accountTaskId} failStage=${errorReport.failStage}`);
+  logger.info("fail callback completed", {
+    accountTaskId: errorReport.accountTaskId,
+    failStage: errorReport.failStage,
+  });
 }

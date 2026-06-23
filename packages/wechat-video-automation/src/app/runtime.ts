@@ -1,6 +1,7 @@
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import { FeishuNotifier } from "../shared/feishu-notifier.js";
 import { loadServiceConfig } from "../shared/config.js";
+import { createLogger } from "../shared/logger.js";
 import { configureWechatVideoRuntimeSettings, type WechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { IdlePageRefreshService } from "./idle-page-refresh-service.js";
 import { TaskService } from "./task-service.js";
@@ -16,8 +17,9 @@ export type WechatVideoRuntimeOptions = {
   settings?: Partial<WechatVideoRuntimeSettings>;
 }
 
+const logger = createLogger("runtime");
+
 function log(options: WechatVideoRuntimeOptions, message: string) {
-  console.log(message);
   options.onLog?.(message);
 }
 
@@ -38,28 +40,33 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
     idlePageRefreshService,
   );
 
-  log(options, "[runtime] initialized video accounts:");
+  logger.info("initialized video accounts", {
+    videoAccountCount: serviceConfig.videoAccounts.length,
+  });
+  log(options, "[runtime] initialized video accounts");
   for (const videoAccount of serviceConfig.videoAccounts) {
-    log(
-      options,
-      `[runtime] - id=${videoAccount.id} name=${videoAccount.name} contractSubject=${
-        videoAccount.contractSubject ?? "-"
-      }`,
-    );
+    logger.info("video account loaded", {
+      videoAccountId: videoAccount.id,
+      videoAccountName: videoAccount.name,
+      contractSubject: videoAccount.contractSubject,
+    });
   }
 
   taskWorkerPool.start();
   videoAccountSyncService.start();
   idlePageRefreshService.start();
+  logger.info("started");
   log(options, "[runtime] started");
 
   return {
     async stop() {
+      logger.info("stopping");
       log(options, "[runtime] stopping");
       idlePageRefreshService.stop();
       videoAccountSyncService.stop();
       taskWorkerPool.stop();
       await browserContexts.close();
+      logger.info("stopped");
       log(options, "[runtime] stopped");
     },
   };

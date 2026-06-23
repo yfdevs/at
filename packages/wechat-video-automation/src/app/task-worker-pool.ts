@@ -58,7 +58,10 @@ export class TaskWorkerPool {
     for (const [videoAccountId, worker] of this.accountWorkersByVideoAccountId) {
       if (!nextAccountIds.has(videoAccountId)) {
         worker.stopped = true;
-        logger.info(`stopping removed videoAccountId=${videoAccountId} name=${worker.videoAccount.name}`);
+        logger.info("stopping removed worker", {
+          videoAccountId,
+          videoAccountName: worker.videoAccount.name,
+        });
       }
     }
 
@@ -73,7 +76,10 @@ export class TaskWorkerPool {
       existingWorker.videoAccount = videoAccount;
       if (existingWorker.stopped && !this.stopped) {
         existingWorker.stopped = false;
-        logger.info(`resuming videoAccountId=${videoAccount.id} name=${videoAccount.name}`);
+        logger.info("resuming worker", {
+          videoAccountId: videoAccount.id,
+          videoAccountName: videoAccount.name,
+        });
       }
       return;
     }
@@ -100,16 +106,17 @@ export class TaskWorkerPool {
     }, async () => {
     const videoAccountId = worker.videoAccount.id;
     let consecutiveEmptyClaims = 0;
-    logger.info(`started videoAccountId=${videoAccountId}`);
+    logger.info("worker started", { videoAccountId });
 
     while (!this.stopped && !worker.stopped) {
       try {
-        logger.info(`ensure login before claim videoAccountId=${videoAccountId}`);
+        logger.info("ensure login before claim", { videoAccountId });
         await this.browserContexts.ensureLoggedIn(videoAccountId);
         break;
       } catch (error) {
         const errorInfo = classifyError(error, ErrorType.Authentication);
-        logger.error(`login error, retry videoAccountId=${videoAccountId}`, {
+        logger.error("login error, retry", {
+          videoAccountId,
           errorType: errorInfo.type,
           errorMessage: errorInfo.message,
         });
@@ -123,12 +130,18 @@ export class TaskWorkerPool {
         await this.browserContexts.waitForLoginPageIfOpen(videoAccountId);
         const reservation = this.taskService.tryReserveChannel(videoAccountId, "worker-claim");
         if (!reservation) {
-          logger.info(`skip claim, channel busy videoAccountId=${videoAccountId} name=${videoAccount.name}`);
+          logger.info("skip claim, channel busy", {
+            videoAccountId,
+            videoAccountName: videoAccount.name,
+          });
           await sleep(1000);
           continue;
         }
 
-        logger.info(`claiming videoAccountId=${videoAccountId} name=${videoAccount.name}`);
+        logger.info("claiming task", {
+          videoAccountId,
+          videoAccountName: videoAccount.name,
+        });
         try {
           const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount);
           // debugger
@@ -137,9 +150,11 @@ export class TaskWorkerPool {
             const retryDelayMs = consecutiveEmptyClaims >= this.serviceConfig.worker.slowEmptyClaimThreshold
               ? this.serviceConfig.worker.slowEmptyClaimDelayMs
               : this.serviceConfig.worker.emptyClaimDelayMs;
-            logger.info(
-              `no task videoAccountId=${videoAccountId} emptyCount=${consecutiveEmptyClaims}, retry in ${retryDelayMs}ms`,
-            );
+            logger.info("no task, retry later", {
+              videoAccountId,
+              emptyClaimCount: consecutiveEmptyClaims,
+              retryDelayMs,
+            });
             reservation.release();
             await sleep(retryDelayMs);
             continue;
@@ -158,7 +173,12 @@ export class TaskWorkerPool {
               reservation,
             );
             reservation.release();
-            logger.info(`claimed accountTaskId=${claimedAccountTask.accountTaskId} dramaId=${claimedAccountTask.dramaId} videoAccountId=${taskRecord.channelId}`);
+            logger.info("claimed task record created", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              dramaId: claimedAccountTask.dramaId,
+              videoAccountId: taskRecord.channelId,
+              originalTitle: claimedAccountTask.originalTitle,
+            });
 
             await taskFinished;
             await reportClaimedTaskSuccessApi({
@@ -171,7 +191,10 @@ export class TaskWorkerPool {
               videoAccountId,
               videoAccountName: videoAccount.name,
             });
-            logger.info(`task finished, continue to claim next accountTaskId=${claimedAccountTask.accountTaskId} videoAccountId=${videoAccountId}`);
+            logger.info("task finished, continue claim loop", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              videoAccountId,
+            });
           } catch (error) {
             const errorInfo = classifyError(error, ErrorType.TaskExecution);
             const taskErrorMessage = errorInfo.message;
@@ -194,7 +217,9 @@ export class TaskWorkerPool {
               videoAccountId,
               errorMessage: taskErrorMessage,
             });
-            logger.error(`task failed, continue to claim next accountTaskId=${claimedAccountTask.accountTaskId} videoAccountId=${videoAccountId}`, {
+            logger.error("task failed, continue claim loop", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              videoAccountId,
               errorType: errorInfo.type,
               errorMessage: errorInfo.message,
             });
@@ -204,7 +229,8 @@ export class TaskWorkerPool {
         }
       } catch (error) {
         const errorInfo = classifyError(error, ErrorType.TaskClaim);
-        logger.error(`claim loop error videoAccountId=${videoAccountId}`, {
+        logger.error("claim loop error", {
+          videoAccountId,
           errorType: errorInfo.type,
           errorMessage: errorInfo.message,
         });
@@ -212,7 +238,7 @@ export class TaskWorkerPool {
       }
     }
 
-    logger.info(`stopped videoAccountId=${videoAccountId}`);
+    logger.info("worker stopped", { videoAccountId });
     });
   }
 }

@@ -55,12 +55,20 @@ export class TaskService {
       release: () => {
         if (this.channelReservationsById.get(channelId)?.token === token) {
           this.channelReservationsById.delete(channelId);
-          logger.info(`released channel reservation label=${label} ${this.formatVideoAccountLog(channelId)}`);
+          logger.info("released channel reservation", {
+            reservationLabel: label,
+            videoAccountId: channelId,
+            videoAccountName: this.browserContexts.getVideoAccountName(channelId),
+          });
         }
       },
     };
     this.channelReservationsById.set(channelId, reservation);
-    logger.info(`reserved channel label=${label} ${this.formatVideoAccountLog(channelId)}`);
+    logger.info("reserved channel", {
+      reservationLabel: label,
+      videoAccountId: channelId,
+      videoAccountName: this.browserContexts.getVideoAccountName(channelId),
+    });
     return reservation;
   }
 
@@ -84,7 +92,7 @@ export class TaskService {
     };
 
     runWithLogContext(this.createLogContext(task), () => {
-      this.enqueueTaskRecord(task, `queued mode=${mode}`);
+      this.enqueueTaskRecord(task, "queued manual task");
     });
     void this.runTaskRecord(task).catch(() => undefined);
     return task;
@@ -111,7 +119,7 @@ export class TaskService {
     };
 
     runWithLogContext(this.createLogContext(taskRecord), () => {
-      this.enqueueTaskRecord(taskRecord, `queued claimed accountTaskId=${claimedAccountTask.accountTaskId}`);
+      this.enqueueTaskRecord(taskRecord, "queued claimed task");
     });
     return { taskRecord, taskFinished: this.runTaskRecord(taskRecord, playletConfig) };
   }
@@ -130,14 +138,10 @@ export class TaskService {
   }
 
   private enqueueTaskRecord(taskRecord: TaskRecord, logMessage: string): void {
-    logger.info(`${logMessage} ${this.formatVideoAccountLog(taskRecord.channelId)}`);
+    logger.info(logMessage, this.createTaskLogFields(taskRecord));
     const taskKey = this.getTaskRecordKey(taskRecord);
     this.taskRecordsByKey.set(taskKey, taskRecord);
     this.activeTaskKeyByChannelId.set(taskRecord.channelId, taskKey);
-  }
-
-  private formatVideoAccountLog(channelId: string): string {
-    return `videoAccountId=${channelId} name=${this.browserContexts.getVideoAccountName(channelId)}`;
   }
 
   private createLogContext(taskRecord: TaskRecord): LogContext {
@@ -148,10 +152,17 @@ export class TaskService {
     };
   }
 
-  private formatTaskLog(taskRecord: TaskRecord): string {
-    return taskRecord.accountTaskId !== undefined
-      ? `accountTaskId=${taskRecord.accountTaskId}`
-      : `manual mode=${taskRecord.mode}`;
+  private createTaskLogFields(taskRecord: TaskRecord): Record<string, string | number | undefined> {
+    return {
+      mode: taskRecord.mode,
+      status: taskRecord.status,
+      accountTaskId: taskRecord.accountTaskId,
+      dramaId: taskRecord.dramaId,
+      originalTitle: taskRecord.originalTitle,
+      videoAccountId: taskRecord.videoAccountId ?? taskRecord.channelId,
+      videoAccountName: taskRecord.videoAccountName ?? this.browserContexts.getVideoAccountName(taskRecord.channelId),
+      dramaAiRpaId: taskRecord.dramaAiRpaId,
+    };
   }
 
   private formatAccountTaskKey(accountTaskId: string | number): string {
@@ -168,7 +179,7 @@ export class TaskService {
     return runWithLogContext(this.createLogContext(taskRecord), async () => {
       taskRecord.status = "running";
       taskRecord.startedAt = new Date().toISOString();
-      logger.info(`started ${this.formatTaskLog(taskRecord)} mode=${taskRecord.mode} ${this.formatVideoAccountLog(taskRecord.channelId)}`);
+      logger.info("task started", this.createTaskLogFields(taskRecord));
       await this.notifier.notifyTaskStarted({
         mode: taskRecord.mode,
         accountTaskId: taskRecord.accountTaskId,
@@ -190,13 +201,14 @@ export class TaskService {
           videoAccountName: this.browserContexts.getVideoAccountName(taskRecord.channelId),
         }, browserContext);
         taskRecord.status = "succeeded";
-        logger.info(`succeeded ${this.formatTaskLog(taskRecord)} ${this.formatVideoAccountLog(taskRecord.channelId)}`);
+        logger.info("task succeeded", this.createTaskLogFields(taskRecord));
       } catch (error) {
         const errorInfo = classifyError(error, ErrorType.TaskExecution);
         taskRecord.status = "failed";
         taskRecord.error = errorInfo.message;
         taskRecord.errorType = errorInfo.type;
-        logger.error(`failed ${this.formatTaskLog(taskRecord)} ${this.formatVideoAccountLog(taskRecord.channelId)}`, {
+        logger.error("task failed", {
+          ...this.createTaskLogFields(taskRecord),
           errorType: errorInfo.type,
           errorMessage: errorInfo.message,
         });

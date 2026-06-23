@@ -23,10 +23,10 @@ export class VideoAccountSyncService {
     this.timer = setInterval(() => {
       void this.sync().catch((error: unknown) => {
         const message = error instanceof Error ? error.message : String(error);
-        logger.warn(`sync failed: ${message}`);
+        logger.warn("sync failed", { errorMessage: message });
       });
     }, this.serviceConfig.videoAccountSync.intervalMs);
-    logger.info(`started intervalMs=${this.serviceConfig.videoAccountSync.intervalMs}`);
+    logger.info("started", { intervalMs: this.serviceConfig.videoAccountSync.intervalMs });
   }
 
   stop(): void {
@@ -48,11 +48,21 @@ export class VideoAccountSyncService {
       this.idlePageRefreshService?.syncVideoAccounts();
 
       if (changes.added.length || changes.removed.length || changes.renamed.length) {
-        logger.info(
-          `changed added=${changes.added.map((account) => `${account.id}/${account.name}`).join(",") || "-"} ` +
-          `removed=${changes.removed.map((account) => `${account.id}/${account.name}`).join(",") || "-"} ` +
-          `renamed=${changes.renamed.map((change) => `${change.previous.id}/${change.previous.name}->${change.next.name}`).join(",") || "-"}`,
-        );
+        logger.info("video accounts changed", {
+          added: changes.added.map((account) => ({
+            videoAccountId: account.id,
+            videoAccountName: account.name,
+          })),
+          removed: changes.removed.map((account) => ({
+            videoAccountId: account.id,
+            videoAccountName: account.name,
+          })),
+          renamed: changes.renamed.map((change) => ({
+            videoAccountId: change.previous.id,
+            previousName: change.previous.name,
+            nextName: change.next.name,
+          })),
+        });
       }
     } finally {
       this.syncing = false;

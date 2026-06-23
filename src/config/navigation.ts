@@ -4,7 +4,6 @@ import {
   ClipboardListIcon,
   Clock3Icon,
   FilmIcon,
-  ListVideoIcon,
   SlidersHorizontalIcon,
   TerminalIcon,
   UserCogIcon,
@@ -13,7 +12,6 @@ import {
 export type AppRoute =
   | "wechat/publish"
   | "wechat/config"
-  | "wechat/materials"
   | "wechat/accounts"
   | "wechat/service"
   | "kuaishou/projects"
@@ -56,11 +54,6 @@ export const navigationGroups: NavigationGroup[] = [
         title: "发布任务",
         route: "wechat/publish",
         icon: ClipboardListIcon,
-      },
-      {
-        title: "素材管理",
-        route: "wechat/materials",
-        icon: ListVideoIcon,
       },
       {
         title: "账号管理",

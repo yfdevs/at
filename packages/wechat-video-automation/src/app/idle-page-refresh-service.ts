@@ -20,11 +20,11 @@ export class IdlePageRefreshService {
 
     this.stopped = false;
     this.syncVideoAccounts();
-    logger.info(
-      `started intervalMs=${this.serviceConfig.idlePageRefresh.intervalMs} ` +
-      `timeoutMs=${this.serviceConfig.idlePageRefresh.timeoutMs} ` +
-      `jitterMs=${this.serviceConfig.idlePageRefresh.jitterMs}`,
-    );
+    logger.info("started", {
+      intervalMs: this.serviceConfig.idlePageRefresh.intervalMs,
+      timeoutMs: this.serviceConfig.idlePageRefresh.timeoutMs,
+      jitterMs: this.serviceConfig.idlePageRefresh.jitterMs,
+    });
   }
 
   stop(): void {
@@ -43,7 +43,7 @@ export class IdlePageRefreshService {
       if (!channelIds.has(channelId)) {
         clearTimeout(timer);
         this.timersByChannelId.delete(channelId);
-        logger.info(`stopped removed channelId=${channelId}`);
+        logger.info("stopped removed channel", { videoAccountId: channelId });
       }
     }
 
@@ -81,7 +81,10 @@ export class IdlePageRefreshService {
     }, async () => {
     const reservation = this.taskService.tryReserveChannel(channelId, "idle-page-refresh");
     if (!reservation) {
-      logger.info(`skip busy channelId=${channelId} name=${this.browserContexts.getVideoAccountName(channelId)}`);
+      logger.info("skip busy channel", {
+        videoAccountId: channelId,
+        videoAccountName: this.browserContexts.getVideoAccountName(channelId),
+      });
       return;
     }
 
@@ -92,7 +95,11 @@ export class IdlePageRefreshService {
       );
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
-      logger.warn(`failed channelId=${channelId} name=${this.browserContexts.getVideoAccountName(channelId)} ${message}`);
+      logger.warn("refresh failed", {
+        videoAccountId: channelId,
+        videoAccountName: this.browserContexts.getVideoAccountName(channelId),
+        errorMessage: message,
+      });
     } finally {
       reservation.release();
     }

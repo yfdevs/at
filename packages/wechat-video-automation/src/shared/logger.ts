@@ -1,7 +1,8 @@
 import path from "node:path";
-import { appendFileSync, mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
+import { mkdirSync, readdirSync, statSync, unlinkSync } from "node:fs";
 import { AsyncLocalStorage } from "node:async_hooks";
 import { format as formatConsoleArgs } from "node:util";
+import pino, { type Logger as PinoLogger } from "pino";
 import { resolveRunDataPath } from "./config.js";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
 import { integerSetting } from "./settings-value.js";
@@ -18,15 +19,25 @@ export interface LogContext {
   accountTaskId?: number;
 }
 
-export type LogFieldValue = string | number | boolean | null | undefined;
+export type LogFieldValue =
+  | string
+  | number
+  | boolean
+  | null
+  | undefined
+  | Error
+  | Record<string, unknown>
+  | unknown[];
 export type LogFields = Record<string, LogFieldValue>;
 
 const logContextStorage = new AsyncLocalStorage<LogContext>();
+const fileLoggers = new Map<string, PinoLogger>();
 const originalConsole = {
   log: console.log.bind(console),
   warn: console.warn.bind(console),
   error: console.error.bind(console),
 };
+
 let lastCleanupDate = "";
 let consoleFileLoggingInstalled = false;
 
@@ -36,10 +47,6 @@ function readRetentionDays(): number {
 
 function getLogDir(): string {
   return resolveRunDataPath("logs");
-}
-
-function getLogBaseName(): string {
-  return "app";
 }
 
 function formatDateKey(date: Date): string {
@@ -61,7 +68,7 @@ function sanitizeFileSegment(value: string): string {
 
 function getLogFilePath(dateKey: string, context: LogContext = {}): string {
   const accountSuffix = context.videoAccountId ? `-${sanitizeFileSegment(context.videoAccountId)}` : "";
-  return path.join(getLogDir(), `${getLogBaseName()}${accountSuffix}-${dateKey}.log`);
+  return path.join(getLogDir(), `app${accountSuffix}-${dateKey}.jsonl`);
 }
 
 function cleanupOldLogFiles(todayKey: string): void {
@@ -70,13 +77,11 @@ function cleanupOldLogFiles(todayKey: string): void {
 
   try {
     const logDir = getLogDir();
-    const logBaseName = getLogBaseName();
     mkdirSync(logDir, { recursive: true });
     const retentionDays = readRetentionDays();
     const cutoff = dateFromKey(todayKey);
     cutoff.setDate(cutoff.getDate() - retentionDays + 1);
-    const escapedBaseName = logBaseName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-    const filePattern = new RegExp(`^${escapedBaseName}(?:-.+)?-(\\d{4}-\\d{2}-\\d{2})\\.log$`);
+    const filePattern = /^app(?:-.+)?-(\d{4}-\d{2}-\d{2})\.(?:jsonl|log)$/;
 
     for (const entry of readdirSync(logDir, { withFileTypes: true })) {
       if (!entry.isFile()) continue;
@@ -96,62 +101,90 @@ function cleanupOldLogFiles(todayKey: string): void {
   }
 }
 
-function writeLogFile(line: string, context: LogContext = getLogContext()): void {
-  try {
-    const todayKey = formatDateKey(new Date());
-    cleanupOldLogFiles(todayKey);
-    const logFilePath = getLogFilePath(todayKey, context);
-    mkdirSync(path.dirname(logFilePath), { recursive: true });
-    appendFileSync(logFilePath, `${line}\n`, "utf8");
-  } catch {
-    // Keep logging best-effort; filesystem failures must not break task execution.
-  }
-}
-
 function getLogContext(): LogContext {
   return logContextStorage.getStore() ?? {};
 }
 
-function quoteLogValue(value: LogFieldValue): string | undefined {
-  if (value === undefined) return undefined;
-  if (value === null) return "null";
-  if (typeof value === "number" || typeof value === "boolean") return String(value);
-  const normalized = value.replace(/\s+/g, " ").trim();
-  if (/^[A-Za-z0-9_.:/@-]+$/.test(normalized)) return normalized;
-  return JSON.stringify(normalized);
-}
+function getPinoLogger(context: LogContext): PinoLogger {
+  const todayKey = formatDateKey(new Date());
+  cleanupOldLogFiles(todayKey);
+  const logFilePath = getLogFilePath(todayKey, context);
+  const cachedLogger = fileLoggers.get(logFilePath);
 
-function appendFields(parts: string[], fields: LogFields): void {
-  for (const [key, value] of Object.entries(fields)) {
-    const formattedValue = quoteLogValue(value);
-    if (formattedValue !== undefined) parts.push(`${key}=${formattedValue}`);
+  if (cachedLogger) {
+    return cachedLogger;
   }
+
+  mkdirSync(path.dirname(logFilePath), { recursive: true });
+  const logger = pino(
+    {
+      base: null,
+      messageKey: "message",
+      timestamp: pino.stdTimeFunctions.isoTime,
+      formatters: {
+        level(label) {
+          return { level: label };
+        },
+      },
+    },
+    pino.destination({
+      dest: logFilePath,
+      mkdir: true,
+      sync: false,
+    }),
+  );
+  fileLoggers.set(logFilePath, logger);
+  return logger;
 }
 
-function contextToFields(context: LogContext): LogFields {
+function normalizeFields(fields: LogFields = {}): Record<string, unknown> {
+  const normalized: Record<string, unknown> = {};
+
+  for (const [key, value] of Object.entries(fields)) {
+    if (value === undefined) continue;
+    if (value instanceof Error) {
+      normalized[key === "error" ? "err" : key] = {
+        name: value.name,
+        message: value.message,
+        stack: value.stack,
+      };
+      continue;
+    }
+    normalized[key] = value;
+  }
+
+  return normalized;
+}
+
+function buildRecord(scope: string, fields: LogFields, context: LogContext): Record<string, unknown> {
   return {
-    videoAccountId: context.videoAccountId,
-    videoAccountName: context.videoAccountName,
-    accountTaskId: context.accountTaskId,
+    scope,
+    ...context,
+    ...normalizeFields(fields),
   };
 }
 
-function formatLine(
+function writeLog(
   scope: string,
   level: "info" | "warn" | "error",
   message: string,
   fields: LogFields = {},
   context: LogContext = getLogContext(),
-): string {
-  const parts = [
-    `ts=${new Date().toISOString()}`,
-    `level=${level.toUpperCase()}`,
-    `scope=${scope}`,
-  ];
-  appendFields(parts, contextToFields(context));
-  appendFields(parts, fields);
-  parts.push(`message=${quoteLogValue(message) ?? "\"\""}`);
-  return parts.join(" ");
+): void {
+  try {
+    const record = buildRecord(scope, fields, context);
+    getPinoLogger(context)[level](record, message);
+    originalConsole[level === "warn" ? "warn" : level === "error" ? "error" : "log"](
+      JSON.stringify({
+        time: new Date().toISOString(),
+        level,
+        ...record,
+        message,
+      }),
+    );
+  } catch {
+    // Keep logging best-effort; filesystem failures must not break task execution.
+  }
 }
 
 export function runWithLogContext<T>(context: LogContext, action: () => T): T {
@@ -169,39 +202,21 @@ function installConsoleFileLogging(): void {
   consoleFileLoggingInstalled = true;
 
   console.log = (...args: unknown[]) => {
-    const line = formatLine("console", "info", formatConsoleArgs(...args));
-    originalConsole.log(line);
-    writeLogFile(line);
+    writeLog("console", "info", formatConsoleArgs(...args));
   };
   console.warn = (...args: unknown[]) => {
-    const line = formatLine("console", "warn", formatConsoleArgs(...args));
-    originalConsole.warn(line);
-    writeLogFile(line);
+    writeLog("console", "warn", formatConsoleArgs(...args));
   };
   console.error = (...args: unknown[]) => {
-    const line = formatLine("console", "error", formatConsoleArgs(...args));
-    originalConsole.error(line);
-    writeLogFile(line);
+    writeLog("console", "error", formatConsoleArgs(...args));
   };
 }
 
 export function createLogger(scope: string): Logger {
   return {
-    info: (message, fields) => {
-      const line = formatLine(scope, "info", message, fields);
-      originalConsole.log(line);
-      writeLogFile(line);
-    },
-    warn: (message, fields) => {
-      const line = formatLine(scope, "warn", message, fields);
-      originalConsole.warn(line);
-      writeLogFile(line);
-    },
-    error: (message, fields) => {
-      const line = formatLine(scope, "error", message, fields);
-      originalConsole.error(line);
-      writeLogFile(line);
-    },
+    info: (message, fields) => writeLog(scope, "info", message, fields),
+    warn: (message, fields) => writeLog(scope, "warn", message, fields),
+    error: (message, fields) => writeLog(scope, "error", message, fields),
   };
 }
 
