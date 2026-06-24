@@ -1,6 +1,7 @@
 import type { LucideIcon } from "lucide-react"
 import {
   ClipboardListIcon,
+  ClapperboardIcon,
   SlidersHorizontalIcon,
   TerminalIcon,
   UserCogIcon,
@@ -11,6 +12,8 @@ export type AppRoute =
   | "wechat/config"
   | "wechat/accounts"
   | "wechat/service"
+  | "meituan/service"
+  | "meituan/config"
   | "kuaishou/projects"
   | "kuaishou/schedule"
   | "kuaishou/analytics"
@@ -56,6 +59,21 @@ export const navigationGroups: NavigationGroup[] = [
         title: "账号管理",
         route: "wechat/accounts",
         icon: UserCogIcon,
+      },
+    ],
+  },
+  {
+    title: "美团创作平台",
+    items: [
+      {
+        title: "服务控制",
+        route: "meituan/service",
+        icon: ClapperboardIcon,
+      },
+      {
+        title: "配置管理",
+        route: "meituan/config",
+        icon: SlidersHorizontalIcon,
       },
     ],
   },

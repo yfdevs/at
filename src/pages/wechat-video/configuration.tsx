@@ -47,7 +47,7 @@ const emptyConfig: WechatVideoConfig = {
   videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
-  runDataDir: ".drama-runs",
+  runDataDir: ".drama-runs/wechat-video",
   logRetentionDays: "3",
   workerEmptyClaimDelaySeconds: "5",
   workerSlowEmptyClaimThreshold: "30",

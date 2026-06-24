@@ -10,12 +10,16 @@ import { WechatAccountsPage } from "@/pages/wechat-video/accounts"
 import { WechatConfigurationPage } from "@/pages/wechat-video/configuration"
 import { WechatPublishTasksPage } from "@/pages/wechat-video/publish-tasks"
 import { WechatServiceControlPage } from "@/pages/wechat-video/service-control"
+import { MeituanCreationConfigurationPage } from "@/pages/meituan-creation/configuration"
+import { MeituanCreationServiceControlPage } from "@/pages/meituan-creation/service-control"
 
 const appRouteComponents: Record<AppRoute, ComponentType> = {
   "wechat/publish": WechatPublishTasksPage,
   "wechat/config": WechatConfigurationPage,
   "wechat/accounts": WechatAccountsPage,
   "wechat/service": WechatServiceControlPage,
+  "meituan/service": MeituanCreationServiceControlPage,
+  "meituan/config": MeituanCreationConfigurationPage,
   "kuaishou/projects": KuaishouProjectsPage,
   "kuaishou/schedule": KuaishouSchedulePage,
   "kuaishou/analytics": KuaishouAnalyticsPage,

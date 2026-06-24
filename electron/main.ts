@@ -1,12 +1,17 @@
-import { app, BrowserWindow, Menu, nativeImage } from 'electron'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron'
 import windowStateKeeper from 'electron-window-state'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
+import { mem } from 'systeminformation'
 
 import {
   registerWechatVideoPlatformHandlers,
   stopWechatVideoPlatformRuntime,
 } from './platforms/wechat-video'
+import {
+  registerMeituanCreationPlatformHandlers,
+  stopMeituanCreationPlatformRuntime,
+} from './platforms/meituan-creation'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -62,6 +67,7 @@ app.on('window-all-closed', () => {
 
 app.on('before-quit', () => {
   stopWechatVideoPlatformRuntime()
+  stopMeituanCreationPlatformRuntime()
 })
 
 app.on('activate', () => {
@@ -72,7 +78,9 @@ app.on('activate', () => {
 
 app.whenReady().then(() => {
   Menu.setApplicationMenu(null)
+  ipcMainHandleAppRuntimeStatus()
   registerWechatVideoPlatformHandlers()
+  registerMeituanCreationPlatformHandlers()
 
   if (process.platform === 'darwin' && VITE_DEV_SERVER_URL) {
     app.dock?.setIcon(getAppIconPath())
@@ -80,3 +88,20 @@ app.whenReady().then(() => {
 
   createWindow()
 })
+
+function ipcMainHandleAppRuntimeStatus() {
+  ipcMain.handle('app:runtime:status', async () => {
+    const memory = await mem()
+    const systemUsedBytes = memory.total - memory.available
+
+    return {
+      pid: process.pid,
+      memory: {
+        processRssBytes: process.memoryUsage().rss,
+        systemUsedBytes,
+        systemTotalBytes: memory.total,
+        systemUsedPercent: memory.total > 0 ? (systemUsedBytes / memory.total) * 100 : 0,
+      },
+    }
+  })
+}

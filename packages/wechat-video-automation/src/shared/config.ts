@@ -5,7 +5,7 @@ import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
 
-const serviceAuthRoot = ".auth/channels";
+const serviceAuthRoot = ".drama-runs/wechat-video/auth/channels";
 const serviceBrowserHeadless = false;
 const serviceBrowserSlowMo = 20;
 const emptyClaimDelaySeconds = 5;
@@ -41,7 +41,7 @@ export function resolveFromRoot(filePath: string): string {
 }
 
 export function resolveRunDataPath(...segments: string[]): string {
-  const runDataDir = getWechatVideoRuntimeSettings().runDataDir || ".drama-runs";
+  const runDataDir = getWechatVideoRuntimeSettings().runDataDir || ".drama-runs/wechat-video";
   return path.join(resolveFromRoot(runDataDir), ...segments);
 }
 

@@ -73,7 +73,7 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
-  runDataDir: '.drama-runs',
+  runDataDir: '.drama-runs/wechat-video',
   logRetentionDays: '3',
   workerEmptyClaimDelaySeconds: '5',
   workerSlowEmptyClaimThreshold: '30',
@@ -198,11 +198,15 @@ function normalizeSelectedRunDataDir(selectedPath: string | null) {
   const normalizedPath = path.normalize(selectedPath)
   const selectedDirName = path.basename(normalizedPath).toLowerCase()
 
-  if (selectedDirName === '.drama-runs') {
+  if (selectedDirName === 'wechat-video') {
     return normalizedPath
   }
 
-  return path.join(normalizedPath, '.drama-runs')
+  if (selectedDirName === '.drama-runs') {
+    return path.join(normalizedPath, 'wechat-video')
+  }
+
+  return path.join(normalizedPath, '.drama-runs', 'wechat-video')
 }
 
 function normalizeConfig(
@@ -213,7 +217,10 @@ function normalizeConfig(
     videoAccountContractSubjects: config.videoAccountContractSubjects ?? defaultWechatVideoConfig.videoAccountContractSubjects,
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatVideoConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatVideoConfig.closeFailedTaskPages,
-    runDataDir: config.runDataDir ?? defaultWechatVideoConfig.runDataDir,
+    runDataDir:
+      !config.runDataDir || config.runDataDir === '.drama-runs'
+        ? defaultWechatVideoConfig.runDataDir
+        : config.runDataDir,
     logRetentionDays: config.logRetentionDays ?? defaultWechatVideoConfig.logRetentionDays,
     workerEmptyClaimDelaySeconds: config.workerEmptyClaimDelaySeconds ?? defaultWechatVideoConfig.workerEmptyClaimDelaySeconds,
     workerSlowEmptyClaimThreshold: config.workerSlowEmptyClaimThreshold ?? defaultWechatVideoConfig.workerSlowEmptyClaimThreshold,

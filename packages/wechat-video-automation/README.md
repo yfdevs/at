@@ -14,7 +14,7 @@
 
 | JSON 字段 | 中文名称 | 默认值 | 说明 |
 | --- | --- | --- | --- |
-| `browser.userDataDir` | 单账号浏览器登录态目录 | `.auth/weixin-video-channel` | 仅命令行单 profile 模式使用；服务模式固定使用 `.auth/channels/<视频号ID>`。 |
+| `browser.userDataDir` | 单账号浏览器登录态目录 | `.auth/weixin-video-channel` | 仅命令行单 profile 模式使用；服务模式固定使用 `.drama-runs/wechat-video/auth/channels/<视频号ID>`。 |
 | `browser.headless` | 是否无头运行 | `false` | `false` 会显示浏览器窗口，便于扫码登录。 |
 | `browser.slowMo` | 操作延迟 | `20` | 单位毫秒。 |
 | `browser.keepOpenOnError` | 出错后保持浏览器打开 | `true` | 方便排查失败页面。 |
@@ -49,7 +49,7 @@
 
 运行时配置由 Electron 主进程从 `electron-store` 读取后注入，用户通过配置页面修改；自动化包不读取环境文件或业务 `process.env`。
 
-每个视频号 ID 对应一个独立账号目录，例如 `.auth/channels/video-account-1001`。真正的浏览器 profile 保存在 `.auth/channels/video-account-1001/chromium-profile`，该目录包含该账号独有的 cookie、Local Storage、IndexedDB 和浏览器缓存，账号之间不会读取或复制这些数据。各账号的 `storage-state.json` 只是调试快照，分别保存在自己的账号目录中。
+每个视频号 ID 对应一个独立账号目录，例如 `.drama-runs/wechat-video/auth/channels/video-account-1001`。真正的浏览器 profile 保存在 `.drama-runs/wechat-video/auth/channels/video-account-1001/chromium-profile`，该目录包含该账号独有的 cookie、Local Storage、IndexedDB 和浏览器缓存，账号之间不会读取或复制这些数据。各账号的 `storage-state.json` 只是调试快照，分别保存在自己的账号目录中。
 
 不同视频号可以并行执行任务；同一个视频号由一个独立 worker 串行处理：按视频号 ID 领取任务，领到后立即执行，执行完成后再领取下一单。
 
@@ -107,7 +107,7 @@
 
 - `closeFailedTaskPages=true`：下一次任务开启新标签时关闭之前的任务标签。
 - `closeFailedTaskPages=false`：保留所有任务标签，不区分任务成功或失败。
-- `runDataDir=.drama-runs`：运行数据目录，用于临时上传文件、远程素材缓存、上传报告和日志；需与本地剧集视频目录在同一磁盘分区。日志写入 `runDataDir/logs`，无视频号上下文的服务日志写入 `app-YYYY-MM-DD.log`；任务、领取、上传和保活刷新等带视频号上下文的日志按账号写入 `app-<视频号ID>-YYYY-MM-DD.log`。
+- `runDataDir=.drama-runs/wechat-video`：微信视频号运行数据目录，用于临时上传文件、远程素材缓存、上传报告、账号登录态和日志；需与本地剧集视频目录在同一磁盘分区。日志写入 `runDataDir/logs`，无视频号上下文的服务日志写入 `app-YYYY-MM-DD.log`；任务、领取、上传和保活刷新等带视频号上下文的日志按账号写入 `app-<视频号ID>-YYYY-MM-DD.log`。
 - `logRetentionDays=3`：日志保留天数，默认保留最近 3 天。
 - `workerEmptyClaimDelaySeconds=5`：没有领到任务时的短轮询间隔，默认 5 秒。
 - `workerSlowEmptyClaimThreshold=10`：连续空任务达到该次数后切到慢轮询，默认 10 次；也就是默认第 1-9 次空任务后等 5 秒，第 10 次开始等 30 秒。

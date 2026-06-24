@@ -1,8 +1,6 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  IconActivityHeartbeat,
   IconCircleCheck,
-  IconCpu,
   IconDotsVertical,
   IconFileText,
   IconPower,
@@ -10,7 +8,7 @@ import {
   IconUsersGroup,
 } from "@tabler/icons-react";
 
-import { Button, buttonVariants } from "@/components/ui/button";
+import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
 import {
   DropdownMenu,
@@ -38,31 +36,6 @@ const initialStatus: WechatVideoServiceStatus = {
     systemUsedPercent: 0,
   },
 };
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) {
-    return "-";
-  }
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
-
-function formatPercent(value: number) {
-  if (!Number.isFinite(value)) {
-    return "-";
-  }
-
-  return `${value.toFixed(1)}%`;
-}
 
 function formatTime(value: Date | null) {
   if (!value) {
@@ -220,13 +193,6 @@ export function WechatServiceControlPage() {
 
           <div className="hidden h-7 w-px bg-border xl:block" />
 
-          <div className="flex min-w-20 items-center gap-1.5 text-xs">
-            <span className="text-muted-foreground">PID</span>
-            <span className="font-medium">{status.pid ?? "-"}</span>
-          </div>
-
-          <div className="hidden h-7 w-px bg-border xl:block" />
-
           <div className="flex min-w-[220px] flex-1 items-center gap-2.5">
             <IconCircleCheck className="size-4 shrink-0 text-muted-foreground" />
             <span className="shrink-0 text-xs text-muted-foreground">主体</span>
@@ -249,31 +215,7 @@ export function WechatServiceControlPage() {
 
           <div className="hidden h-7 w-px bg-border xl:block" />
 
-          <div className="flex min-w-28 items-center gap-2.5 text-xs">
-            <IconCpu className="size-4 text-muted-foreground" />
-            <span className="text-muted-foreground">进程</span>
-            <span className="font-medium">{formatBytes(status.memory.processRssBytes)}</span>
-          </div>
-
-          <div className="flex min-w-56 flex-1 items-center gap-2.5 text-xs xl:flex-none">
-            <IconActivityHeartbeat className="size-4 text-muted-foreground" />
-            <span className="text-muted-foreground">系统</span>
-            <div className="h-1.5 w-16 overflow-hidden rounded-full bg-muted">
-              <div
-                className="h-full rounded-full bg-primary transition-all"
-                style={{
-                  width: `${Math.min(Math.max(status.memory.systemUsedPercent, 0), 100)}%`,
-                }}
-              />
-            </div>
-            <span className="font-medium">{formatPercent(status.memory.systemUsedPercent)}</span>
-            <span className="truncate text-muted-foreground">
-              {formatBytes(status.memory.systemUsedBytes)} /{" "}
-              {formatBytes(status.memory.systemTotalBytes)}
-            </span>
-          </div>
-
-          <div className="ml-auto flex min-w-full items-center justify-between gap-2 border-t pt-3 lg:min-w-0 lg:border-t-0 lg:pt-0">
+          <div className="ml-auto flex items-center gap-2">
             <span className="text-xs text-muted-foreground">
               刷新 {formatTime(lastRefreshedAt)}
             </span>
