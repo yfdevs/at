@@ -17,12 +17,6 @@ export type WechatVideoServiceStatus = {
   pid: number | null
   contractSubjects: Array<{ label: string; value: string }>
   videoAccounts: WechatVideoAccountStatus[]
-  memory: {
-    processRssBytes: number
-    systemUsedBytes: number
-    systemTotalBytes: number
-    systemUsedPercent: number
-  }
 }
 
 export type WechatVideoConfig = {

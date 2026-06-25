@@ -41,6 +41,18 @@ function formatBytes(bytes: number) {
   return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`
 }
 
+function memoryBarClass(percent: number) {
+  if (percent >= 90) {
+    return "bg-rose-500"
+  }
+
+  if (percent >= 75) {
+    return "bg-amber-500"
+  }
+
+  return "bg-emerald-500"
+}
+
 async function getAppRuntimeStatus() {
   if (!window.ipcRenderer) {
     throw new Error("应用运行状态仅在 Electron 应用内可用。")
@@ -119,11 +131,32 @@ export function AppSidebar({ ...props }: ComponentProps<typeof Sidebar>) {
             <span className="truncate text-xs font-medium">应用进程</span>
             <span className="size-2 rounded-full bg-emerald-500" />
           </div>
-          <div className="mt-1 grid grid-cols-2 gap-2 text-[11px] text-sidebar-foreground/70">
-            <span>PID {runtimeStatus?.pid ?? "-"}</span>
-            <span className="text-right">
-              {formatBytes(runtimeStatus?.memory.processRssBytes ?? 0)}
-            </span>
+          <div className="mt-1 space-y-0.5 text-[11px] text-sidebar-foreground/70">
+            <div className="flex items-center justify-between gap-2">
+              <span>PID</span>
+              <span className="font-medium tabular-nums">{runtimeStatus?.pid ?? "-"}</span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>应用内存</span>
+              <span className="font-medium tabular-nums">
+                {formatBytes(runtimeStatus?.memory.processRssBytes ?? 0)}
+              </span>
+            </div>
+            <div className="flex items-center justify-between gap-2">
+              <span>系统内存</span>
+              <span className="font-medium tabular-nums">
+                {formatBytes(runtimeStatus?.memory.systemUsedBytes ?? 0)} /{" "}
+                {formatBytes(runtimeStatus?.memory.systemTotalBytes ?? 0)}
+              </span>
+            </div>
+          <div className="h-1.5 overflow-hidden rounded-full bg-sidebar-border">
+            <div
+                className={`h-full rounded-full transition-all ${memoryBarClass(runtimeStatus?.memory.systemUsedPercent ?? 0)}`}
+                style={{
+                  width: `${Math.min(Math.max(runtimeStatus?.memory.systemUsedPercent ?? 0, 0), 100)}%`,
+                }}
+              />
+            </div>
           </div>
         </div>
       </SidebarFooter>

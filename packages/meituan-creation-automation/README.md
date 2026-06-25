@@ -16,15 +16,20 @@ https://czz.meituan.com/new/publishVideo
 
 ## 后端任务 Schema
 
-后续后端任务 JSON 可通过 `collection` 指定创建新合集时选择的级联类型：
+服务启动时可以只打开发布页并等待/保存登录态。后续执行表单自动化时，后端任务 JSON 需要按 schema 提供作者、受众、合集类型和合集标题。只要传入了任一任务字段，就会完整校验；字段缺失或不合法时运行时会直接报错，不做默认值兜底：
 
 ```json
 {
   "authorNicknameText": "本人 明星说漫剧",
-  "collection": {
-    "type": "真人短剧（含AI）",
-    "subType": "真人短剧"
-  }
+  "audience": "男频",
+  "collectionType": "真人短剧（含AI）",
+  "collectionSubType": "真人短剧",
+  "collectionTitle": "示例剧名",
+  "collectionCoverUrl": "https://example.com/poster.jpg",
+  "backgroundText": "现代",
+  "storyThemeText": "脑洞",
+  "totalEpisodes": 12,
+  "checkpointEpisodes": [8, 6, 5]
 }
 ```
 
@@ -33,5 +38,10 @@ https://czz.meituan.com/new/publishVideo
 - `真人短剧（含AI）` -> `真人短剧`、`AI真人短剧`
 - `动漫短剧` -> `动态漫`、`沙雕漫`、`PPT漫`
 
-未提供 `collection` 时默认使用 `真人短剧（含AI）` -> `真人短剧`。
-未提供 `authorNicknameText` 时默认使用 `本人 明星说漫剧`。
+`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`collectionCoverUrl`、`backgroundText`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes` 都是必填字段。
+`audience` 支持 `男频`、`女频`。
+`collectionTitle` 是合集标题，也就是剧名称。
+`collectionCoverUrl` 是合集封面图片 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
+`backgroundText` 是时代背景，支持 `现代`、`都市`、`古代`、`乡村`、`年代`、`架空`、`职场`、`民国`、`宫廷`、`校园`、`荒岛`、`古装`、`末世`。
+`storyThemeText` 是故事主题，按美团下拉选项文本传入。
+`totalEpisodes` 是总集数；`checkpointEpisodes` 是卡点集，最多 3 个，取值不能超过总集数。

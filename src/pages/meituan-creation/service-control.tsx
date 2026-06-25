@@ -19,12 +19,6 @@ const initialStatus: MeituanCreationServiceStatus = {
   loginState: "unknown",
   userDataDir: "",
   pid: null,
-  memory: {
-    processRssBytes: 0,
-    systemUsedBytes: 0,
-    systemTotalBytes: 0,
-    systemUsedPercent: 0,
-  },
 }
 
 function loginStateLabel(loginState: MeituanCreationLoginState) {
@@ -125,7 +119,7 @@ export function MeituanCreationServiceControlPage() {
               >
                 <PowerIcon />
               </TooltipTrigger>
-              <TooltipContent>{status.running ? "停止美团创作平台浏览器" : "启动浏览器并打开发布页"}</TooltipContent>
+              <TooltipContent>{status.running ? "停止美团创作平台浏览器" : "启动浏览器并执行任务"}</TooltipContent>
             </Tooltip>
             <span
               className={

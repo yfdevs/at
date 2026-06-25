@@ -173,6 +173,9 @@ importers:
       playwright:
         specifier: latest
         version: 1.61.0
+      zod:
+        specifier: 3.22.4
+        version: 3.22.4
     devDependencies:
       '@types/node':
         specifier: latest

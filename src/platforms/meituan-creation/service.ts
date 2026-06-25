@@ -21,12 +21,6 @@ export type MeituanCreationServiceStatus = {
   activeUrl?: string
   userDataDir: string
   pid: number | null
-  memory: {
-    processRssBytes: number
-    systemUsedBytes: number
-    systemTotalBytes: number
-    systemUsedPercent: number
-  }
 }
 
 async function invokeMeituanCreation<T>(channel: string, ...args: unknown[]): Promise<T> {

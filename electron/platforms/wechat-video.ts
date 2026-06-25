@@ -1,8 +1,16 @@
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
+import { app, BrowserWindow, ipcMain } from 'electron'
 import Store from 'electron-store'
-import { existsSync, mkdirSync, readdirSync, statSync } from 'node:fs'
+import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import path from 'node:path'
-import { mem } from 'systeminformation'
+import {
+  directoryDefaultPath,
+  normalizePlatformRunDataDir,
+  openExistingPath,
+  playwrightBrowsersPath,
+  resolveFromAppRoot,
+  RuntimeController,
+  selectDirectory,
+} from './shared'
 
 type WechatVideoRuntime = {
   getStatus: () => {
@@ -29,12 +37,6 @@ export type WechatVideoServiceStatus = {
   pid: number | null
   contractSubjects: Array<{ label: string; value: string }>
   videoAccounts: WechatVideoAccountStatus[]
-  memory: {
-    processRssBytes: number
-    systemUsedBytes: number
-    systemTotalBytes: number
-    systemUsedPercent: number
-  }
 }
 
 export type WechatVideoConfig = {
@@ -97,8 +99,7 @@ const contractSubjectOptions = [
 
 const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
-let runtime: WechatVideoRuntime | null = null
-let runtimeStarting: Promise<WechatVideoRuntime> | null = null
+const runtimeController = new RuntimeController<WechatVideoRuntime>()
 let store: Store<WechatVideoStore> | null = null
 
 function readSelectedContractSubjects(config = readConfig()) {
@@ -118,23 +119,16 @@ function formatContractSubjectLabel(value: string | undefined) {
 }
 
 async function status(): Promise<WechatVideoServiceStatus> {
-  const memory = await mem()
-  const systemUsedBytes = memory.total - memory.available
+  const runtime = runtimeController.current
 
   return {
-    running: runtime !== null,
+    running: runtimeController.running,
     pid: runtime ? process.pid : null,
     contractSubjects: readSelectedContractSubjects(),
     videoAccounts: runtime?.getStatus().videoAccounts.map((account) => ({
       ...account,
       contractSubjectLabel: formatContractSubjectLabel(account.contractSubject),
     })) ?? [],
-    memory: {
-      processRssBytes: process.memoryUsage().rss,
-      systemUsedBytes,
-      systemTotalBytes: memory.total,
-      systemUsedPercent: memory.total > 0 ? (systemUsedBytes / memory.total) * 100 : 0,
-    },
   }
 }
 
@@ -169,46 +163,6 @@ function broadcastConfigChanged(result: WechatVideoConfigResult) {
   }
 }
 
-async function selectDirectory(event: IpcMainInvokeEvent, options: OpenDialogOptions) {
-  const parentWindow = BrowserWindow.fromWebContents(event.sender)
-  const result = parentWindow
-    ? await dialog.showOpenDialog(parentWindow, options)
-    : await dialog.showOpenDialog(options)
-
-  return result.canceled ? null : result.filePaths[0] ?? null
-}
-
-function directoryDefaultPath(currentPath: string | undefined, fallback: string) {
-  const trimmedPath = currentPath?.trim()
-
-  if (!trimmedPath) {
-    return fallback
-  }
-
-  return path.isAbsolute(trimmedPath)
-    ? trimmedPath
-    : path.join(process.env.APP_ROOT, trimmedPath)
-}
-
-function normalizeSelectedRunDataDir(selectedPath: string | null) {
-  if (!selectedPath) {
-    return null
-  }
-
-  const normalizedPath = path.normalize(selectedPath)
-  const selectedDirName = path.basename(normalizedPath).toLowerCase()
-
-  if (selectedDirName === 'wechat-video') {
-    return normalizedPath
-  }
-
-  if (selectedDirName === '.drama-runs') {
-    return path.join(normalizedPath, 'wechat-video')
-  }
-
-  return path.join(normalizedPath, '.drama-runs', 'wechat-video')
-}
-
 function normalizeConfig(
   config: Partial<WechatVideoConfig> & Record<string, string | undefined>,
 ): WechatVideoConfig {
@@ -235,10 +189,6 @@ function normalizeConfig(
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatVideoConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatVideoConfig.feishuBotWebhookUrl,
   }
-}
-
-function resolveFromAppRoot(value: string) {
-  return path.isAbsolute(value) ? value : path.join(process.env.APP_ROOT, value)
 }
 
 function sanitizeLogFileSegment(value: string) {
@@ -269,28 +219,6 @@ function findLatestVideoAccountLogFile(videoAccountId: string) {
   return latestLogFile ?? logsDir
 }
 
-async function openPath(targetPath: string) {
-  const errorMessage = existsSync(targetPath)
-    ? await shell.openPath(targetPath)
-    : `路径不存在：${targetPath}`
-
-  if (errorMessage) {
-    throw new Error(errorMessage)
-  }
-
-  return targetPath
-}
-
-function playwrightBrowsersPath() {
-  if (process.env.PLAYWRIGHT_BROWSERS_PATH) {
-    return process.env.PLAYWRIGHT_BROWSERS_PATH
-  }
-
-  return app.isPackaged
-    ? path.join(process.resourcesPath, 'playwright-browsers')
-    : path.join(process.env.APP_ROOT, '.cache', 'playwright-browsers')
-}
-
 async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath()
 
@@ -314,7 +242,7 @@ export function registerWechatVideoPlatformHandlers() {
     const result = {
       config: nextConfig,
       path: configPath(),
-      restartRequired: runtime !== null || runtimeStarting !== null,
+      restartRequired: runtimeController.running || runtimeController.startingPromise !== null,
     }
     broadcastConfigChanged(result)
     return result
@@ -335,46 +263,23 @@ export function registerWechatVideoPlatformHandlers() {
       properties: ['openDirectory', 'createDirectory'],
     })
 
-    return normalizeSelectedRunDataDir(selectedPath)
+    return normalizePlatformRunDataDir(selectedPath, 'wechat-video')
   })
 
   ipcMain.handle('wechat-video:service:status', () => status())
 
   ipcMain.handle('wechat-video:service:start', async () => {
-    if (runtime) return status()
-
-    if (!runtimeStarting) {
-      runtimeStarting = startRuntime()
-    }
-
-    try {
-      runtime = await runtimeStarting
-    } finally {
-      runtimeStarting = null
-    }
-
+    await runtimeController.start(startRuntime)
     return status()
   })
 
   ipcMain.handle('wechat-video:service:stop', async () => {
-    if (runtimeStarting) {
-      runtime = await runtimeStarting
-      runtimeStarting = null
-    }
-
-    if (runtime) {
-      await runtime.stop()
-      runtime = null
-    }
-
+    await runtimeController.stop()
     return status()
   })
 
   ipcMain.handle('wechat-video:service:video-account:focus', async (_event, videoAccountId: string) => {
-    if (runtimeStarting) {
-      runtime = await runtimeStarting
-      runtimeStarting = null
-    }
+    const runtime = await runtimeController.resolveStarting()
 
     if (!runtime) {
       throw new Error('微信视频号服务未启动。')
@@ -382,9 +287,7 @@ export function registerWechatVideoPlatformHandlers() {
 
     let currentRuntime = runtime
     if (typeof currentRuntime.focusVideoAccount !== 'function') {
-      await currentRuntime.stop()
-      currentRuntime = await startRuntime()
-      runtime = currentRuntime
+      currentRuntime = await runtimeController.replace(startRuntime)
     }
 
     if (typeof currentRuntime.focusVideoAccount !== 'function') {
@@ -396,11 +299,10 @@ export function registerWechatVideoPlatformHandlers() {
   })
 
   ipcMain.handle('wechat-video:service:video-account:open-log', async (_event, videoAccountId: string) => {
-    return openPath(findLatestVideoAccountLogFile(videoAccountId))
+    return openExistingPath(findLatestVideoAccountLogFile(videoAccountId))
   })
 }
 
 export function stopWechatVideoPlatformRuntime() {
-  void runtime?.stop()
-  runtime = null
+  runtimeController.stopInBackground()
 }

@@ -29,12 +29,6 @@ const initialStatus: WechatVideoServiceStatus = {
   pid: null,
   contractSubjects: [],
   videoAccounts: [],
-  memory: {
-    processRssBytes: 0,
-    systemUsedBytes: 0,
-    systemTotalBytes: 0,
-    systemUsedPercent: 0,
-  },
 };
 
 function formatTime(value: Date | null) {

@@ -2,7 +2,6 @@ import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron'
 import windowStateKeeper from 'electron-window-state'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
-import { mem } from 'systeminformation'
 
 import {
   registerWechatVideoPlatformHandlers,
@@ -12,6 +11,7 @@ import {
   registerMeituanCreationPlatformHandlers,
   stopMeituanCreationPlatformRuntime,
 } from './platforms/meituan-creation'
+import { readMemoryStatus } from './platforms/shared'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 
@@ -91,17 +91,9 @@ app.whenReady().then(() => {
 
 function ipcMainHandleAppRuntimeStatus() {
   ipcMain.handle('app:runtime:status', async () => {
-    const memory = await mem()
-    const systemUsedBytes = memory.total - memory.available
-
     return {
       pid: process.pid,
-      memory: {
-        processRssBytes: process.memoryUsage().rss,
-        systemUsedBytes,
-        systemTotalBytes: memory.total,
-        systemUsedPercent: memory.total > 0 ? (systemUsedBytes / memory.total) * 100 : 0,
-      },
+      memory: await readMemoryStatus(),
     }
   })
 }
