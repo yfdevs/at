@@ -1,5 +1,7 @@
 import { useCallback, useEffect, useRef, useState } from "react"
-import { ExternalLinkIcon, PowerIcon, RefreshCwIcon } from "lucide-react"
+import { IconPower } from "@tabler/icons-react"
+import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
+import { toast } from "sonner"
 
 import { buttonVariants } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -39,7 +41,6 @@ function formatTime(value: Date | null) {
 
 export function MeituanCreationServiceControlPage() {
   const [status, setStatus] = useState<MeituanCreationServiceStatus>(initialStatus)
-  const [message, setMessage] = useState("")
   const [loading, setLoading] = useState(false)
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
   const statusRefreshInFlightRef = useRef(false)
@@ -55,14 +56,15 @@ export function MeituanCreationServiceControlPage() {
     statusRefreshInFlightRef.current = true
     if (!silent) {
       setLoading(true)
-      setMessage("")
     }
 
     try {
       applyStatus(await meituanCreationService.status())
     } catch (error) {
       if (!silent) {
-        setMessage(error instanceof Error ? error.message : String(error))
+        toast.error("状态刷新失败", {
+          description: error instanceof Error ? error.message : String(error),
+        })
       }
     } finally {
       statusRefreshInFlightRef.current = false
@@ -74,11 +76,14 @@ export function MeituanCreationServiceControlPage() {
 
   const run = async (action: () => Promise<MeituanCreationServiceStatus>) => {
     setLoading(true)
-    setMessage("")
     try {
-      applyStatus(await action())
+      const nextStatus = await action()
+      applyStatus(nextStatus)
+      toast.success(nextStatus.running ? "美团创作平台已启动" : "美团创作平台已停止")
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error))
+      toast.error("操作失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       setLoading(false)
     }
@@ -99,16 +104,16 @@ export function MeituanCreationServiceControlPage() {
   return (
     <main className="flex min-h-svh flex-1 flex-col gap-6 bg-background p-6">
       <Card className="rounded-lg bg-[linear-gradient(135deg,color-mix(in_oklch,var(--color-yellow-500)_8%,var(--card))_0%,var(--card)_58%,color-mix(in_oklch,var(--primary)_5%,var(--card))_100%)] py-3 [--card-spacing:--spacing(3)]">
-        <CardContent className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-3 px-4">
-          <div className="flex min-w-20 items-center gap-2.5">
+        <CardContent className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-3 px-4">
+          <div className="flex min-w-24 items-center gap-3">
             <Tooltip>
               <TooltipTrigger
                 className={cn(
                   buttonVariants({
-                    size: "icon-sm",
+                    size: "icon-lg",
                     variant: status.running ? "destructive" : "outline",
                   }),
-                  "bg-background/80"
+                  "size-11 bg-background/80 [&_svg]:size-5"
                 )}
                 disabled={loading}
                 onClick={() =>
@@ -117,7 +122,7 @@ export function MeituanCreationServiceControlPage() {
                   )
                 }
               >
-                <PowerIcon />
+                <IconPower className="size-5" />
               </TooltipTrigger>
               <TooltipContent>{status.running ? "停止美团创作平台浏览器" : "启动浏览器并执行任务"}</TooltipContent>
             </Tooltip>
@@ -160,12 +165,6 @@ export function MeituanCreationServiceControlPage() {
           </div>
         </CardContent>
       </Card>
-
-      {message ? (
-        <div className="rounded-lg border bg-card p-3 text-sm text-muted-foreground">
-          {message}
-        </div>
-      ) : null}
 
       <section className="grid gap-4">
         <Card className="rounded-lg py-0 shadow-none">

@@ -5,7 +5,6 @@ import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
 
-const serviceAuthRoot = ".drama-runs/wechat-video/auth/channels";
 const serviceBrowserHeadless = false;
 const serviceBrowserSlowMo = 20;
 const emptyClaimDelaySeconds = 5;
@@ -84,7 +83,7 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
 
   return {
     videoAccounts,
-    authRoot: serviceAuthRoot,
+    authRoot: resolveRunDataPath("auth", "channels"),
     browser: {
       headless: serviceBrowserHeadless,
       slowMo: serviceBrowserSlowMo,

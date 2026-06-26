@@ -219,6 +219,12 @@ function findLatestVideoAccountLogFile(videoAccountId: string) {
   return latestLogFile ?? logsDir
 }
 
+function assertWechatVideoConfigReady(config = readConfig()) {
+  if (!config.localEpisodeVideoRoot.trim()) {
+    throw new Error('WECHAT_LOCAL_VIDEO_ROOT_REQUIRED')
+  }
+}
+
 async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath()
 
@@ -269,6 +275,7 @@ export function registerWechatVideoPlatformHandlers() {
   ipcMain.handle('wechat-video:service:status', () => status())
 
   ipcMain.handle('wechat-video:service:start', async () => {
+    assertWechatVideoConfigReady()
     await runtimeController.start(startRuntime)
     return status()
   })

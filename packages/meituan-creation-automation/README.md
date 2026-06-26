@@ -26,10 +26,22 @@ https://czz.meituan.com/new/publishVideo
   "collectionSubType": "真人短剧",
   "collectionTitle": "示例剧名",
   "collectionCoverUrl": "https://example.com/poster.jpg",
+  "copyrightProofUrl": "https://example.com/copyright-proof.png",
+  "premiereProofUrl": "https://example.com/premiere-proof.png",
   "backgroundText": "现代",
+  "plotSettingTexts": ["打脸虐渣", "重生"],
   "storyThemeText": "脑洞",
   "totalEpisodes": 12,
-  "checkpointEpisodes": [8, 6, 5]
+  "checkpointEpisodes": [8, 6, 5],
+  "productionCompanyText": "明星说漫剧",
+  "directorNames": ["张三"],
+  "producerNames": ["李四"],
+  "screenwriterNames": ["王五"],
+  "actorNames": ["赵六", "钱七"],
+  "averageEpisodeDurationMinutes": 2,
+  "plotSynopsisText": "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
+  "premiereStatus": "美团联合首发",
+  "expectedPremiereTimeText": "2026-06-25 12:30:00"
 }
 ```
 
@@ -38,10 +50,18 @@ https://czz.meituan.com/new/publishVideo
 - `真人短剧（含AI）` -> `真人短剧`、`AI真人短剧`
 - `动漫短剧` -> `动态漫`、`沙雕漫`、`PPT漫`
 
-`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`collectionCoverUrl`、`backgroundText`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes` 都是必填字段。
+`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`collectionCoverUrl`、`copyrightProofUrl`、`premiereProofUrl`、`backgroundText`、`plotSettingTexts`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes`、`productionCompanyText`、`directorNames`、`producerNames`、`screenwriterNames`、`actorNames`、`averageEpisodeDurationMinutes`、`plotSynopsisText`、`expectedPremiereTimeText` 都是必填字段。
 `audience` 支持 `男频`、`女频`。
 `collectionTitle` 是合集标题，也就是剧名称。
 `collectionCoverUrl` 是合集封面图片 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
+`copyrightProofUrl` 是版权证明文件 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
+`premiereProofUrl` 是首发证明材料 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
 `backgroundText` 是时代背景，支持 `现代`、`都市`、`古代`、`乡村`、`年代`、`架空`、`职场`、`民国`、`宫廷`、`校园`、`荒岛`、`古装`、`末世`。
+`plotSettingTexts` 是剧情设定，最多 2 个，按美团下拉选项文本传入。
 `storyThemeText` 是故事主题，按美团下拉选项文本传入。
 `totalEpisodes` 是总集数；`checkpointEpisodes` 是卡点集，最多 3 个，取值不能超过总集数。
+`directorNames`、`producerNames`、`screenwriterNames`、`actorNames` 是自定义多选 tag 输入，按输入后下拉选项文本点击。
+`averageEpisodeDurationMinutes` 是单集平均时长，单位分钟。
+`plotSynopsisText` 是剧情简介。
+`premiereStatus` 是全网首发情况，支持 `美团独家`、`美团联合首发`、`非美团首发`，不传时默认 `美团联合首发`。
+`expectedPremiereTimeText` 是预计首发时间，格式示例 `2026-06-25 12:30:00`。

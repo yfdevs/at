@@ -51,13 +51,18 @@ async function invokeWechatVideo<T>(channel: string, ...args: unknown[]): Promis
     throw new Error("微信视频号服务控制仅在 Electron 应用内可用。")
   }
 
-  const result = await window.ipcRenderer.invoke(channel, ...args)
-  return result as T
+  try {
+    const result = await window.ipcRenderer.invoke(channel, ...args)
+    return result as T
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(readableWechatVideoError(message))
+  }
 }
 
 function onWechatVideo<T>(channel: string, listener: (payload: T) => void) {
   if (!window.ipcRenderer) {
-    throw new Error("微信视频号服务控制仅在 Electron 应用内可用。")
+    return () => undefined
   }
 
   const ipcListener = (_event: IpcRendererEvent, payload: T) => listener(payload)
@@ -66,6 +71,30 @@ function onWechatVideo<T>(channel: string, listener: (payload: T) => void) {
   return () => {
     window.ipcRenderer.off(channel, ipcListener)
   }
+}
+
+function readableWechatVideoError(message: string) {
+  if (message.includes("WECHAT_LOCAL_VIDEO_ROOT_REQUIRED")) {
+    return "请先在微信视频号配置中选择剧集视频根目录。"
+  }
+
+  if (message.includes("localEpisodeVideoRoot is required for local episode videos")) {
+    return "请先在微信视频号配置中选择剧集视频根目录。"
+  }
+
+  if (message.includes("[local-video-invalid] 剧集视频目录不存在:")) {
+    return message.replace("[local-video-invalid] 剧集视频目录不存在:", "微信剧集视频目录不存在：")
+  }
+
+  if (message.includes("[local-video-invalid] 存在重复集数:")) {
+    return message.replace("[local-video-invalid] 存在重复集数:", "微信剧集视频存在重复集数：")
+  }
+
+  if (message.includes("[local-video-invalid] 剧集文件应按文件名匹配")) {
+    return message.replace("[local-video-invalid]", "微信剧集视频不正确：")
+  }
+
+  return message
 }
 
 export const wechatVideoService = {
@@ -93,7 +122,14 @@ export const wechatVideoService = {
   status() {
     return invokeWechatVideo<WechatVideoServiceStatus>("wechat-video:service:status")
   },
-  start() {
+  async start() {
+    const { config } = await invokeWechatVideo<WechatVideoConfigResult>(
+      "wechat-video:config:get"
+    )
+    if (!config.localEpisodeVideoRoot.trim()) {
+      throw new Error("请先在微信视频号配置中选择剧集视频根目录。")
+    }
+
     return invokeWechatVideo<WechatVideoServiceStatus>("wechat-video:service:start")
   },
   stop() {

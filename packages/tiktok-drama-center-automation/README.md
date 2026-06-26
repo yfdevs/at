@@ -1,0 +1,5 @@
+# TikTok Drama Center Automation
+
+TikTok Drama Center 自动化运行时包。
+
+当前只提供平台独立的包结构、运行时生命周期和类型出口；具体业务流程等待后续补充。

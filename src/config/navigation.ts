@@ -14,10 +14,14 @@ export type AppRoute =
   | "wechat/service"
   | "meituan/service"
   | "meituan/config"
+  | "kuaishou/service"
+  | "kuaishou/config"
   | "kuaishou/projects"
   | "kuaishou/schedule"
   | "kuaishou/analytics"
   | "kuaishou/settings"
+  | "tiktok-drama-center/service"
+  | "tiktok-drama-center/config"
 
 export type NavigationItem = {
   title: string
@@ -77,31 +81,46 @@ export const navigationGroups: NavigationGroup[] = [
       },
     ],
   },
-  // {
-  //   title: "快手短剧",
-  //   items: [
-  //     {
-  //       title: "短剧项目",
-  //       route: "kuaishou/projects",
-  //       icon: FilmIcon,
-  //     },
-  //     {
-  //       title: "发布排期",
-  //       route: "kuaishou/schedule",
-  //       icon: Clock3Icon,
-  //     },
-  //     {
-  //       title: "数据看板",
-  //       route: "kuaishou/analytics",
-  //       icon: ChartSplineIcon,
-  //     },
-  //     {
-  //       title: "平台设置",
-  //       route: "kuaishou/settings",
-  //       icon: SlidersHorizontalIcon,
-  //     },
-  //   ],
-  // },
+  {
+    title: "快手短剧",
+    items: [
+      {
+        title: "服务控制",
+        route: "kuaishou/service",
+        icon: TerminalIcon,
+      },
+      {
+        title: "配置管理",
+        route: "kuaishou/config",
+        icon: SlidersHorizontalIcon,
+      },
+      {
+        title: "短剧项目",
+        route: "kuaishou/projects",
+        icon: ClapperboardIcon,
+      },
+      {
+        title: "发布排期",
+        route: "kuaishou/schedule",
+        icon: ClipboardListIcon,
+      },
+    ],
+  },
+  {
+    title: "TikTok Drama Center",
+    items: [
+      {
+        title: "服务控制",
+        route: "tiktok-drama-center/service",
+        icon: TerminalIcon,
+      },
+      {
+        title: "配置管理",
+        route: "tiktok-drama-center/config",
+        icon: SlidersHorizontalIcon,
+      },
+    ],
+  },
 ]
 
 export function isAppRoute(route: string): route is AppRoute {

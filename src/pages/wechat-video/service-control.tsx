@@ -7,6 +7,7 @@ import {
   IconRefresh,
   IconUsersGroup,
 } from "@tabler/icons-react";
+import { toast } from "sonner";
 
 import { buttonVariants } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
@@ -76,7 +77,6 @@ function loginStateMeta(loginState: WechatVideoAccountStatus["loginState"]) {
 
 export function WechatServiceControlPage() {
   const [status, setStatus] = useState<WechatVideoServiceStatus>(initialStatus);
-  const [message, setMessage] = useState<string>("");
   const [loading, setLoading] = useState(false);
   const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null);
   const statusRefreshInFlightRef = useRef(false);
@@ -91,11 +91,14 @@ export function WechatServiceControlPage() {
 
   const run = async (action: () => Promise<WechatVideoServiceStatus>) => {
     setLoading(true);
-    setMessage("");
     try {
-      applyStatus(await action());
+      const nextStatus = await action();
+      applyStatus(nextStatus);
+      toast.success(nextStatus.running ? "微信视频号服务已启动" : "微信视频号服务已停止");
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      toast.error("操作失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setLoading(false);
     }
@@ -107,14 +110,15 @@ export function WechatServiceControlPage() {
     statusRefreshInFlightRef.current = true;
     if (!silent) {
       setLoading(true);
-      setMessage("");
     }
 
     try {
       applyStatus(await wechatVideoService.status());
     } catch (error) {
       if (!silent) {
-        setMessage(error instanceof Error ? error.message : String(error));
+        toast.error("状态刷新失败", {
+          description: error instanceof Error ? error.message : String(error),
+        });
       }
     } finally {
       statusRefreshInFlightRef.current = false;
@@ -126,11 +130,12 @@ export function WechatServiceControlPage() {
 
   const openVideoAccountLog = async (videoAccountId: string) => {
     setLoading(true);
-    setMessage("");
     try {
       await wechatVideoService.openVideoAccountLog(videoAccountId);
     } catch (error) {
-      setMessage(error instanceof Error ? error.message : String(error));
+      toast.error("打开日志失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
     } finally {
       setLoading(false);
     }
@@ -154,16 +159,16 @@ export function WechatServiceControlPage() {
   return (
     <main className="flex min-h-svh flex-1 flex-col gap-6 bg-background p-6">
       <Card className="rounded-lg bg-[linear-gradient(135deg,color-mix(in_oklch,var(--color-emerald-500)_7%,var(--card))_0%,color-mix(in_oklch,var(--primary)_5%,var(--card))_48%,var(--card)_100%)] py-3 [--card-spacing:--spacing(3)]">
-        <CardContent className="flex min-h-14 flex-wrap items-center gap-x-4 gap-y-3 px-4">
-          <div className="flex min-w-20 items-center gap-2.5">
+        <CardContent className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-3 px-4">
+          <div className="flex min-w-24 items-center gap-3">
             <Tooltip>
               <TooltipTrigger
                 className={cn(
                   buttonVariants({
-                    size: "icon-sm",
+                    size: "icon-lg",
                     variant: status.running ? "destructive" : "outline",
                   }),
-                  "bg-background/80",
+                  "size-11 bg-background/80 [&_svg]:size-5",
                 )}
                 disabled={loading}
                 onClick={() =>
@@ -172,7 +177,7 @@ export function WechatServiceControlPage() {
                   )
                 }
               >
-                <IconPower />
+                <IconPower className="size-5" />
               </TooltipTrigger>
               <TooltipContent>{serviceActionTooltip}</TooltipContent>
             </Tooltip>
@@ -230,12 +235,6 @@ export function WechatServiceControlPage() {
           </div>
         </CardContent>
       </Card>
-
-      {message ? (
-        <div className="rounded-lg border border-destructive/30 bg-destructive/10 p-3 text-sm text-destructive">
-          {message}
-        </div>
-      ) : null}
 
       {status.running ? (
         <section className="space-y-3">

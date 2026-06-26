@@ -1,5 +1,6 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState } from "react"
 import { AlertTriangle, CheckCircle2, FolderOpen, RotateCcw, Save } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import { Card, CardContent } from "@/components/ui/card"
@@ -28,10 +29,9 @@ import {
 const emptyConfig: MeituanCreationConfig = {
   headless: "false",
   operationDelaySeconds: "0.02",
+  localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-creation",
 }
-
-type MessageTone = "success" | "error"
 
 type TextField = {
   kind?: "text"
@@ -61,8 +61,14 @@ const sections: Array<{
 }> = [
   {
     title: "文件与浏览器",
-    description: "运行数据、登录态和临时文件统一放在平台目录下。",
+    description: "视频目录、登录态和临时文件由美团平台配置独立管理。",
     fields: [
+      {
+        key: "localEpisodeVideoRoot",
+        label: "剧集视频目录",
+        description: "按合集标题匹配 xxx-第1集.mp4 这类本地视频。",
+        directory: true,
+      },
       {
         key: "runDataDir",
         label: "运行数据目录",
@@ -91,8 +97,6 @@ const sections: Array<{
 export function MeituanCreationConfigurationPage() {
   const [config, setConfig] = useState<MeituanCreationConfig>(emptyConfig)
   const [savedConfig, setSavedConfig] = useState<MeituanCreationConfig>(emptyConfig)
-  const [message, setMessage] = useState("")
-  const [messageTone, setMessageTone] = useState<MessageTone>("success")
   const [restartRequired, setRestartRequired] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -113,47 +117,55 @@ export function MeituanCreationConfigurationPage() {
       .getConfig()
       .then(applyResult)
       .catch((error) => {
-        setMessageTone("error")
-        setMessage(error instanceof Error ? error.message : String(error))
+        toast.error("配置读取失败", {
+          description: error instanceof Error ? error.message : String(error),
+        })
       })
       .finally(() => setLoading(false))
   }, [])
 
   const updateConfig = (key: keyof MeituanCreationConfig, value: string) => {
     setConfig((current) => ({ ...current, [key]: value }))
-    setMessage("")
   }
 
   const discardChanges = () => {
     setConfig(savedConfig)
-    setMessage("")
   }
 
   const saveConfig = async () => {
     setLoading(true)
-    setMessage("")
     try {
       const result = await meituanCreationService.saveConfig(config)
       applyResult(result)
-      setMessageTone("success")
-      setMessage(result.restartRequired ? "配置已保存。服务正在运行，请重启服务后生效。" : "配置已保存。")
+      if (result.restartRequired) {
+        toast.warning("配置已保存", {
+          description: "服务正在运行，请重启服务后生效。",
+        })
+      } else {
+        toast.success("配置已保存")
+      }
     } catch (error) {
-      setMessageTone("error")
-      setMessage(error instanceof Error ? error.message : String(error))
+      toast.error("配置保存失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       setLoading(false)
     }
   }
 
-  const selectRunDataDir = async () => {
+  const selectDirectory = async (key: "localEpisodeVideoRoot" | "runDataDir") => {
     try {
-      const selectedPath = await meituanCreationService.selectRunDataDir(config.runDataDir)
+      const selectedPath =
+        key === "localEpisodeVideoRoot"
+          ? await meituanCreationService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
+          : await meituanCreationService.selectRunDataDir(config.runDataDir)
       if (selectedPath) {
-        updateConfig("runDataDir", selectedPath)
+        updateConfig(key, selectedPath)
       }
     } catch (error) {
-      setMessageTone("error")
-      setMessage(error instanceof Error ? error.message : String(error))
+      toast.error("目录选择失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -201,27 +213,6 @@ export function MeituanCreationConfigurationPage() {
 
       <div className="mx-auto flex w-full max-w-[760px] flex-1 flex-col gap-7 p-6">
         <div className="flex w-full min-w-0 flex-col gap-4">
-          {restartRequired ? (
-            <StatusNotice icon={<AlertTriangle className="size-4 text-amber-600" />} tone="warning">
-              配置已变化，当前服务需要停止后重新启动才能使用新配置。
-            </StatusNotice>
-          ) : null}
-
-          {message ? (
-            <StatusNotice
-              icon={
-                messageTone === "error" ? (
-                  <AlertTriangle className="size-4 text-destructive" />
-                ) : (
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                )
-              }
-              tone={messageTone}
-            >
-              {message}
-            </StatusNotice>
-          ) : null}
-
           {sections.map((section) => (
             <section id={section.title} key={section.title} className="scroll-mt-28 space-y-3">
               <div className="space-y-1">
@@ -238,7 +229,7 @@ export function MeituanCreationConfigurationPage() {
                           config={config}
                           field={field}
                           onChange={updateConfig}
-                          onSelectRunDataDir={selectRunDataDir}
+                          onSelectDirectory={selectDirectory}
                         />
                       </div>
                     ))}
@@ -253,42 +244,22 @@ export function MeituanCreationConfigurationPage() {
   )
 }
 
-function StatusNotice({
-  children,
-  icon,
-  tone = "default",
-}: {
-  children: ReactNode
-  icon: ReactNode
-  tone?: "default" | "warning" | "success" | "error"
-}) {
-  const className =
-    tone === "warning"
-      ? "flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
-      : tone === "error"
-        ? "flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        : "flex items-start gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground"
-
-  return (
-    <div className={className}>
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <span>{children}</span>
-    </div>
-  )
-}
-
 function ConfigFieldControl({
   config,
   field,
   onChange,
-  onSelectRunDataDir,
+  onSelectDirectory,
 }: {
   config: MeituanCreationConfig
   field: ConfigField
   onChange: (key: keyof MeituanCreationConfig, value: string) => void
-  onSelectRunDataDir: () => void
+  onSelectDirectory: (key: "localEpisodeVideoRoot" | "runDataDir") => void
 }) {
   const value = config[field.key]
+  const directoryKey =
+    field.key === "localEpisodeVideoRoot" || field.key === "runDataDir"
+      ? field.key
+      : null
 
   if (field.kind === "switch") {
     const checked = value === "true"
@@ -334,9 +305,12 @@ function ConfigFieldControl({
               <InputGroupText>{field.suffix}</InputGroupText>
             </InputGroupAddon>
           ) : null}
-          {field.directory ? (
+          {field.directory && directoryKey ? (
             <InputGroupAddon align="inline-end">
-              <InputGroupButton aria-label={`选择${field.label}`} onClick={onSelectRunDataDir}>
+              <InputGroupButton
+                aria-label={`选择${field.label}`}
+                onClick={() => onSelectDirectory(directoryKey)}
+              >
                 <FolderOpen />
                 选择
               </InputGroupButton>

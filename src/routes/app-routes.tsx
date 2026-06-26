@@ -3,6 +3,8 @@ import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { defaultRoute, isAppRoute, routePath, type AppRoute } from "@/config/navigation"
 import { KuaishouAnalyticsPage } from "@/pages/kuaishou-drama/analytics"
+import { KuaishouDramaConfigurationPage } from "@/pages/kuaishou-drama/configuration"
+import { KuaishouDramaServiceControlPage } from "@/pages/kuaishou-drama/service-control"
 import { KuaishouProjectsPage } from "@/pages/kuaishou-drama/projects"
 import { KuaishouSchedulePage } from "@/pages/kuaishou-drama/schedule"
 import { KuaishouSettingsPage } from "@/pages/kuaishou-drama/settings"
@@ -12,6 +14,8 @@ import { WechatPublishTasksPage } from "@/pages/wechat-video/publish-tasks"
 import { WechatServiceControlPage } from "@/pages/wechat-video/service-control"
 import { MeituanCreationConfigurationPage } from "@/pages/meituan-creation/configuration"
 import { MeituanCreationServiceControlPage } from "@/pages/meituan-creation/service-control"
+import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama-center/configuration"
+import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama-center/service-control"
 
 const appRouteComponents: Record<AppRoute, ComponentType> = {
   "wechat/publish": WechatPublishTasksPage,
@@ -20,10 +24,14 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "wechat/service": WechatServiceControlPage,
   "meituan/service": MeituanCreationServiceControlPage,
   "meituan/config": MeituanCreationConfigurationPage,
+  "kuaishou/service": KuaishouDramaServiceControlPage,
+  "kuaishou/config": KuaishouDramaConfigurationPage,
   "kuaishou/projects": KuaishouProjectsPage,
   "kuaishou/schedule": KuaishouSchedulePage,
   "kuaishou/analytics": KuaishouAnalyticsPage,
   "kuaishou/settings": KuaishouSettingsPage,
+  "tiktok-drama-center/service": TiktokDramaCenterServiceControlPage,
+  "tiktok-drama-center/config": TiktokDramaCenterConfigurationPage,
 }
 
 export function AppRoutes() {

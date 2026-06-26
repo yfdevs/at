@@ -11,6 +11,14 @@ import {
   registerMeituanCreationPlatformHandlers,
   stopMeituanCreationPlatformRuntime,
 } from './platforms/meituan-creation'
+import {
+  registerKuaishouDramaPlatformHandlers,
+  stopKuaishouDramaPlatformRuntime,
+} from './platforms/kuaishou-drama'
+import {
+  registerTiktokDramaCenterPlatformHandlers,
+  stopTiktokDramaCenterPlatformRuntime,
+} from './platforms/tiktok-drama-center'
 import { readMemoryStatus } from './platforms/shared'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -68,6 +76,8 @@ app.on('window-all-closed', () => {
 app.on('before-quit', () => {
   stopWechatVideoPlatformRuntime()
   stopMeituanCreationPlatformRuntime()
+  stopKuaishouDramaPlatformRuntime()
+  stopTiktokDramaCenterPlatformRuntime()
 })
 
 app.on('activate', () => {
@@ -81,6 +91,8 @@ app.whenReady().then(() => {
   ipcMainHandleAppRuntimeStatus()
   registerWechatVideoPlatformHandlers()
   registerMeituanCreationPlatformHandlers()
+  registerKuaishouDramaPlatformHandlers()
+  registerTiktokDramaCenterPlatformHandlers()
 
   if (process.platform === 'darwin' && VITE_DEV_SERVER_URL) {
     app.dock?.setIcon(getAppIconPath())

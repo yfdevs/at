@@ -29,6 +29,7 @@ type MeituanCreationRuntime = {
 export type MeituanCreationConfig = {
   headless: string;
   operationDelaySeconds: string;
+  localEpisodeVideoRoot: string;
   runDataDir: string;
 };
 
@@ -52,19 +53,34 @@ function loadMeituanCreationTaskPayload(): MeituanCreationTaskConfig {
     audience: "男频",
     collectionType: "真人短剧（含AI）",
     collectionSubType: "真人短剧",
-    collectionTitle: "明星说漫剧",
+    collectionTitle: "公司破产当天，底层审核员成了华尔街之神",
     collectionCoverUrl:
       "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/posters/20260624/account-task-467-cdb0070978d442f7843b0af6ecd4ba7d.jpg",
+    copyrightProofUrl:
+      "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260625/account-task-399-77a496762b62472981521c1e7c6eb488.png",
+    premiereProofUrl:
+      "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260625/account-task-399-77a496762b62472981521c1e7c6eb488.png",
     backgroundText: "现代",
+    plotSettingTexts: ["打脸虐渣", "重生"],
     storyThemeText: "脑洞",
     totalEpisodes: 12,
-    checkpointEpisodes: [8, 6, 5],
+    checkpointEpisodes: [6, 5],
+    productionCompanyText: "明星说漫剧",
+    directorNames: ["张三"],
+    producerNames: ["李四"],
+    screenwriterNames: ["王五"],
+    actorNames: ["赵六", "钱七"],
+    averageEpisodeDurationMinutes: 2,
+    plotSynopsisText: "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
+    premiereStatus: "美团联合首发",
+    expectedPremiereTimeText: "2026-06-25 12:30:00",
   };
 }
 
 const defaultMeituanCreationConfig: MeituanCreationConfig = {
   headless: "false",
   operationDelaySeconds: "0.02",
+  localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-creation",
 };
 
@@ -96,6 +112,8 @@ function normalizeConfig(
   return {
     headless: config.headless ?? defaultMeituanCreationConfig.headless,
     operationDelaySeconds,
+    localEpisodeVideoRoot:
+      config.localEpisodeVideoRoot ?? defaultMeituanCreationConfig.localEpisodeVideoRoot,
     runDataDir:
       !config.runDataDir || config.runDataDir === ".drama-runs"
         ? defaultMeituanCreationConfig.runDataDir
@@ -173,8 +191,12 @@ async function startRuntime() {
     userDataDir: meituanCreationUserDataDir(),
     credentialStatePath: meituanCreationCredentialStatePath(),
     assetDownloadDir: meituanCreationAssetDownloadDir(),
+    onLog: (message: string) => {
+      console.log(message);
+    },
     config: {
       ...taskPayload,
+      localEpisodeVideoRoot: config.localEpisodeVideoRoot,
       browser: {
         headless: config.headless === "true",
         slowMo: operationDelayMs,
@@ -200,6 +222,17 @@ export function registerMeituanCreationPlatformHandlers() {
         path: configPath(),
         restartRequired: runtimeController.running || runtimeController.startingPromise !== null,
       };
+    },
+  );
+
+  ipcMain.handle(
+    "meituan-creation:config:select-local-episode-video-root",
+    async (event, currentPath?: string) => {
+      return selectDirectory(event, {
+        title: "选择美团剧集视频目录",
+        defaultPath: directoryDefaultPath(currentPath, app.getPath("videos")),
+        properties: ["openDirectory", "createDirectory"],
+      });
     },
   );
 

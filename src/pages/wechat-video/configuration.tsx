@@ -1,4 +1,4 @@
-import { useEffect, useMemo, useState, type ReactNode } from "react"
+import { useEffect, useMemo, useState } from "react"
 import {
   AlertTriangle,
   CheckCircle2,
@@ -6,6 +6,7 @@ import {
   RotateCcw,
   Save,
 } from "lucide-react"
+import { toast } from "sonner"
 
 import { Button } from "@/components/ui/button"
 import {
@@ -98,7 +99,6 @@ type SubjectField = {
 }
 
 type ConfigField = TextField | SelectField | SwitchField | SubjectField
-type MessageTone = "success" | "error"
 
 const contractSubjectOptions = [
   { label: "明星说", value: "MINGXINGSHUO" },
@@ -272,8 +272,6 @@ const sections: Array<{
 export function WechatConfigurationPage() {
   const [config, setConfig] = useState<WechatVideoConfig>(emptyConfig)
   const [savedConfig, setSavedConfig] = useState<WechatVideoConfig>(emptyConfig)
-  const [message, setMessage] = useState("")
-  const [messageTone, setMessageTone] = useState<MessageTone>("success")
   const [restartRequired, setRestartRequired] = useState(false)
   const [loading, setLoading] = useState(false)
 
@@ -294,33 +292,37 @@ export function WechatConfigurationPage() {
       .getConfig()
       .then(applyResult)
       .catch((error) => {
-        setMessageTone("error")
-        setMessage(error instanceof Error ? error.message : String(error))
+        toast.error("配置读取失败", {
+          description: error instanceof Error ? error.message : String(error),
+        })
       })
       .finally(() => setLoading(false))
   }, [])
 
   const updateConfig = (key: keyof WechatVideoConfig, value: string) => {
     setConfig((current) => ({ ...current, [key]: value }))
-    setMessage("")
   }
 
   const discardChanges = () => {
     setConfig(savedConfig)
-    setMessage("")
   }
 
   const saveConfig = async () => {
     setLoading(true)
-    setMessage("")
     try {
       const result = await wechatVideoService.saveConfig(config)
       applyResult(result)
-      setMessageTone("success")
-      setMessage(result.restartRequired ? "配置已保存。服务正在运行，请重启服务后生效。" : "配置已保存。")
+      if (result.restartRequired) {
+        toast.warning("配置已保存", {
+          description: "服务正在运行，请重启服务后生效。",
+        })
+      } else {
+        toast.success("配置已保存")
+      }
     } catch (error) {
-      setMessageTone("error")
-      setMessage(error instanceof Error ? error.message : String(error))
+      toast.error("配置保存失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     } finally {
       setLoading(false)
     }
@@ -339,8 +341,9 @@ export function WechatConfigurationPage() {
 
       updateConfig(key, selectedPath)
     } catch (error) {
-      setMessageTone("error")
-      setMessage(error instanceof Error ? error.message : String(error))
+      toast.error("目录选择失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
     }
   }
 
@@ -393,30 +396,6 @@ export function WechatConfigurationPage() {
 
       <div className="mx-auto flex w-full max-w-[760px] flex-1 flex-col gap-7 p-6">
         <div className="flex w-full min-w-0 flex-col gap-4">
-          {restartRequired ? (
-            <StatusNotice
-              icon={<AlertTriangle className="size-4 text-amber-600" />}
-              tone="warning"
-            >
-              配置已变化，当前服务需要停止后重新启动才能使用新配置。
-            </StatusNotice>
-          ) : null}
-
-          {message ? (
-            <StatusNotice
-              icon={
-                messageTone === "error" ? (
-                  <AlertTriangle className="size-4 text-destructive" />
-                ) : (
-                  <CheckCircle2 className="size-4 text-emerald-600" />
-                )
-              }
-              tone={messageTone}
-            >
-              {message}
-            </StatusNotice>
-          ) : null}
-
           {sections.map((section) => (
             <section id={section.title} key={section.title} className="scroll-mt-28 space-y-3">
               <div className="space-y-1">
@@ -445,30 +424,6 @@ export function WechatConfigurationPage() {
         </div>
       </div>
     </main>
-  )
-}
-
-function StatusNotice({
-  children,
-  icon,
-  tone = "default",
-}: {
-  children: ReactNode
-  icon: ReactNode
-  tone?: "default" | "warning" | "success" | "error"
-}) {
-  const className =
-    tone === "warning"
-      ? "flex items-start gap-2 rounded-lg border border-amber-300 bg-amber-50 px-3 py-2 text-sm text-amber-900 dark:border-amber-500/30 dark:bg-amber-500/10 dark:text-amber-200"
-      : tone === "error"
-        ? "flex items-start gap-2 rounded-lg border border-destructive/30 bg-destructive/5 px-3 py-2 text-sm text-destructive"
-        : "flex items-start gap-2 rounded-lg border bg-background px-3 py-2 text-sm text-muted-foreground"
-
-  return (
-    <div className={className}>
-      <span className="mt-0.5 shrink-0">{icon}</span>
-      <span>{children}</span>
-    </div>
   )
 }
 
