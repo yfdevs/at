@@ -103,6 +103,22 @@ function tiktokDramaCenterCredentialStatePath() {
   return path.join(tiktokDramaCenterRunDataDir(), "auth", "storage-state.json");
 }
 
+function tiktokDramaCenterSchemeFile() {
+  return path.join(tiktokDramaCenterRunDataDir(), "scheme.local.json");
+}
+
+function tiktokDramaCenterVideoDir() {
+  return path.join(tiktokDramaCenterRunDataDir(), "videos");
+}
+
+function tiktokDramaCenterTempDir() {
+  return path.join(tiktokDramaCenterRunDataDir(), "tmp");
+}
+
+function tiktokDramaCenterLogFile() {
+  return path.join(tiktokDramaCenterRunDataDir(), "logs", "app.log");
+}
+
 async function defaultStoppedStatus(): Promise<TiktokDramaCenterServiceStatus> {
   return {
     platform: "tiktok-drama-center",
@@ -143,6 +159,10 @@ async function startRuntime() {
       console.log(message);
     },
     config: {
+      logFile: tiktokDramaCenterLogFile(),
+      schemeFile: tiktokDramaCenterSchemeFile(),
+      tempDir: tiktokDramaCenterTempDir(),
+      videoDir: tiktokDramaCenterVideoDir(),
       browser: {
         headless: config.headless === "true",
         slowMo: operationDelayMs,

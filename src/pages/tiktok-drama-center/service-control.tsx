@@ -174,7 +174,7 @@ export function TiktokDramaCenterServiceControlPage() {
             <div className="grid gap-2 text-xs text-muted-foreground">
               <div className="rounded-md bg-muted px-3 py-2">当前页面：{activeUrl}</div>
               <div className="rounded-md bg-muted px-3 py-2">账号目录：{status.userDataDir || "-"}</div>
-              <div className="rounded-md bg-muted px-3 py-2">业务流程：待接入</div>
+              <div className="rounded-md bg-muted px-3 py-2">业务流程：读取运行目录中的 scheme.local.json 与 videos</div>
             </div>
           </CardContent>
         </Card>

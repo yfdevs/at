@@ -1,0 +1,25 @@
+{
+  "id": "demo-001",
+  "title": "黑石岛逆袭主二",
+  "description": "这里填写剧集简介。",
+  "episodeCount": 2,
+  "coverFile": "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/posters/20260624/account-task-492-5da4e945eff84573acdda9ec87782835.jpg",
+  "targetAudience": "女性",
+  "themes": [
+    "都市",
+    "总裁"
+  ],
+  "sourceLanguage": "中文",
+  "isAiDrama": "是",
+  "publishMode": "过审后自动发布",
+  "autoMountAnchor": true,
+  "hostingMode": true,
+  "freePreviewEpisodes": 1,
+  "paidFreePreviewEpisodes": 1,
+  "pricePerEpisode": 0.31,
+  "actors": [
+    "叶辰",
+    "刘战斌"
+  ],
+  "contractText": "CT20260618700038"
+}
