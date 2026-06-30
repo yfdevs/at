@@ -1,0 +1,26 @@
+{
+  "name": "@drama/baidu-netdisk-automation",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "vp pack",
+    "check": "tsc --noEmit",
+    "download:share": "node --experimental-strip-types src/download-baidu-folder.ts",
+    "download:share:direct": "node --experimental-strip-types src/download-baidu-folder.ts --strategy=direct",
+    "download:share:save": "node --experimental-strip-types src/download-baidu-folder.ts --strategy=save"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "typescript": "latest",
+    "vite": "catalog:"
+  }
+}

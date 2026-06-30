@@ -87,6 +87,14 @@ const defaultMeituanCreationConfig: MeituanCreationConfig = {
 const runtimeController = new RuntimeController<MeituanCreationRuntime>();
 let store: Store<MeituanCreationStore> | null = null;
 
+export function getMeituanCreationBrowserInstanceCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
+export function getMeituanCreationRunningPlatformCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
 function getStore() {
   if (!store) {
     store = new Store<MeituanCreationStore>({

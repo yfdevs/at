@@ -5,21 +5,30 @@ import { fileURLToPath } from 'node:url'
 import path from 'node:path'
 
 import {
+  getWechatVideoBrowserInstanceCount,
+  getWechatVideoRunningPlatformCount,
   registerWechatVideoPlatformHandlers,
   stopWechatVideoPlatformRuntime,
 } from './platforms/wechat-video'
 import {
+  getMeituanCreationBrowserInstanceCount,
+  getMeituanCreationRunningPlatformCount,
   registerMeituanCreationPlatformHandlers,
   stopMeituanCreationPlatformRuntime,
 } from './platforms/meituan-creation'
 import {
+  getKuaishouDramaBrowserInstanceCount,
+  getKuaishouDramaRunningPlatformCount,
   registerKuaishouDramaPlatformHandlers,
   stopKuaishouDramaPlatformRuntime,
 } from './platforms/kuaishou-drama'
 import {
+  getTiktokDramaCenterBrowserInstanceCount,
+  getTiktokDramaCenterRunningPlatformCount,
   registerTiktokDramaCenterPlatformHandlers,
   stopTiktokDramaCenterPlatformRuntime,
 } from './platforms/tiktok-drama-center'
+import { registerBaiduNetdiskPlatformHandlers } from './platforms/baidu-netdisk'
 import { readMemoryStatus } from './platforms/shared'
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
@@ -105,6 +114,7 @@ app.whenReady().then(() => {
   registerMeituanCreationPlatformHandlers()
   registerKuaishouDramaPlatformHandlers()
   registerTiktokDramaCenterPlatformHandlers()
+  registerBaiduNetdiskPlatformHandlers()
 
   if (process.platform === 'darwin' && VITE_DEV_SERVER_URL) {
     app.dock?.setIcon(getAppIconPath())
@@ -115,9 +125,51 @@ app.whenReady().then(() => {
 
 function ipcMainHandleAppRuntimeStatus() {
   ipcMain.handle('app:runtime:status', async () => {
+    const runningPlatformStatus = getGlobalRunningPlatformStatus()
+
     return {
       pid: process.pid,
+      browserInstanceCount: getGlobalBrowserInstanceCount(),
+      runningPlatformCount: runningPlatformStatus.running,
+      totalPlatformCount: runningPlatformStatus.total,
       memory: await readMemoryStatus(),
     }
   })
+}
+
+function getGlobalBrowserInstanceCount() {
+  const counters = [
+    getWechatVideoBrowserInstanceCount,
+    getMeituanCreationBrowserInstanceCount,
+    getKuaishouDramaBrowserInstanceCount,
+    getTiktokDramaCenterBrowserInstanceCount,
+  ]
+
+  return counters.reduce((count, readCount) => {
+    try {
+      return count + readCount()
+    } catch {
+      return count
+    }
+  }, 0)
+}
+
+function getGlobalRunningPlatformStatus() {
+  const counters = [
+    getWechatVideoRunningPlatformCount,
+    getMeituanCreationRunningPlatformCount,
+    getKuaishouDramaRunningPlatformCount,
+    getTiktokDramaCenterRunningPlatformCount,
+  ]
+
+  return {
+    running: counters.reduce((count, readCount) => {
+      try {
+        return count + readCount()
+      } catch {
+        return count
+      }
+    }, 0),
+    total: counters.length,
+  }
 }

@@ -70,6 +70,77 @@ body {
   height: var(--app-titlebar-height) !important;
 }
 
+.app-titlebar-memory-host {
+  position: absolute;
+  top: 0;
+  right: 132px;
+  z-index: 100;
+  height: var(--app-titlebar-height);
+  display: flex;
+  align-items: center;
+  padding-right: 6px;
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-memory {
+  display: flex;
+  height: 22px;
+  align-items: center;
+  gap: 4px;
+  overflow: hidden;
+  border-radius: 5px;
+  background: color-mix(in oklch, var(--foreground) 6%, transparent);
+  padding: 0 5px;
+  color: color-mix(in oklch, var(--foreground) 68%, transparent);
+  font-size: 11px;
+  line-height: 1;
+  white-space: nowrap;
+}
+
+.app-titlebar-metrics-button,
+.app-titlebar-netdisk-button {
+  display: inline-flex;
+  height: 20px;
+  align-items: center;
+  justify-content: center;
+  border: 0;
+  border-radius: 4px;
+  background: transparent;
+  color: inherit;
+  font: inherit;
+  line-height: 1;
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-metrics-button {
+  gap: 6px;
+  padding: 0 3px;
+}
+
+.app-titlebar-netdisk-button {
+  width: 22px;
+  padding: 0;
+  cursor: pointer;
+}
+
+.app-titlebar-metrics-button:focus-visible,
+.app-titlebar-netdisk-button:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -1px;
+}
+
+.app-titlebar-status-item {
+  display: inline-flex;
+  align-items: center;
+  gap: 4px;
+}
+
+.app-titlebar-status-divider {
+  width: 1px;
+  height: 12px;
+  background: color-mix(in oklch, var(--foreground) 12%, transparent);
+}
+
 .cet-titlebar .cet-control-icon {
   height: var(--app-titlebar-height) !important;
   width: 44px;

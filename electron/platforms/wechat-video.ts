@@ -102,6 +102,16 @@ const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', 
 const runtimeController = new RuntimeController<WechatVideoRuntime>()
 let store: Store<WechatVideoStore> | null = null
 
+export function getWechatVideoBrowserInstanceCount() {
+  return runtimeController.current
+    ?.getStatus()
+    .videoAccounts.filter((account) => account.launched).length ?? 0
+}
+
+export function getWechatVideoRunningPlatformCount() {
+  return runtimeController.running ? 1 : 0
+}
+
 function readSelectedContractSubjects(config = readConfig()) {
   const selectedSubjects = new Set(
     config.videoAccountContractSubjects

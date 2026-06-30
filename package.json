@@ -5,8 +5,8 @@
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
-    "dev": "pnpm --filter @drama/wechat-video-automation build && pnpm --filter @drama/meituan-creation-automation build && pnpm --filter @drama/kuaishou-drama-automation build && pnpm --filter @drama/tiktok-drama-center-automation build && vp dev",
-    "build": "pnpm --filter @drama/wechat-video-automation build && pnpm --filter @drama/meituan-creation-automation build && pnpm --filter @drama/kuaishou-drama-automation build && pnpm --filter @drama/tiktok-drama-center-automation build && pnpm wechat-video:install-browsers && tsc && vp build && electron-builder --config electron-builder.json5",
+    "dev": "pnpm --filter @drama/wechat-video-automation build && pnpm --filter @drama/meituan-creation-automation build && pnpm --filter @drama/kuaishou-drama-automation build && pnpm --filter @drama/tiktok-drama-center-automation build && pnpm --filter @drama/baidu-netdisk-automation build && vp dev",
+    "build": "pnpm --filter @drama/wechat-video-automation build && pnpm --filter @drama/meituan-creation-automation build && pnpm --filter @drama/kuaishou-drama-automation build && pnpm --filter @drama/tiktok-drama-center-automation build && pnpm --filter @drama/baidu-netdisk-automation build && pnpm wechat-video:install-browsers && tsc && vp build && electron-builder --config electron-builder.json5",
     "lint": "vp lint",
     "preview": "vp preview",
     "wechat-video:install-browsers": "node scripts/install-playwright-browsers.mjs",
@@ -17,6 +17,8 @@
     "kuaishou-drama:build": "pnpm --filter @drama/kuaishou-drama-automation build",
     "tiktok-drama-center:check": "pnpm --filter @drama/tiktok-drama-center-automation check",
     "tiktok-drama-center:build": "pnpm --filter @drama/tiktok-drama-center-automation build",
+    "baidu-netdisk:check": "pnpm --filter @drama/baidu-netdisk-automation check",
+    "baidu-netdisk:build": "pnpm --filter @drama/baidu-netdisk-automation build",
     "prepare": "vp config"
   },
   "dependencies": {
@@ -25,6 +27,7 @@
     "@dnd-kit/modifiers": "^9.0.0",
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
+    "@drama/baidu-netdisk-automation": "workspace:*",
     "@drama/kuaishou-drama-automation": "workspace:*",
     "@drama/meituan-creation-automation": "workspace:*",
     "@drama/tiktok-drama-center-automation": "workspace:*",

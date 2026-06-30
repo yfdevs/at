@@ -52,6 +52,14 @@ const defaultTiktokDramaCenterConfig: TiktokDramaCenterConfig = {
 const runtimeController = new RuntimeController<TiktokDramaCenterRuntime>();
 let store: Store<TiktokDramaCenterStore> | null = null;
 
+export function getTiktokDramaCenterBrowserInstanceCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
+export function getTiktokDramaCenterRunningPlatformCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
 function getStore() {
   if (!store) {
     store = new Store<TiktokDramaCenterStore>({

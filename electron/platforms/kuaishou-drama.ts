@@ -79,6 +79,14 @@ const runtimeController = new RuntimeController<KuaishouDramaRuntime>();
 const require = createRequire(import.meta.url);
 let store: Store<KuaishouDramaStore> | null = null;
 
+export function getKuaishouDramaBrowserInstanceCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
+export function getKuaishouDramaRunningPlatformCount() {
+  return runtimeController.current?.getStatus().running ? 1 : 0;
+}
+
 function normalizeOperationDelaySeconds(value: string | undefined) {
   const nextValue = value?.trim();
   if (!nextValue || nextValue === "0.02") {
