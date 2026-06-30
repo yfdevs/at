@@ -1,31 +1,23 @@
-import type { CSSProperties } from "react";
 import { HashRouter } from "react-router-dom";
 
-import { AppSidebar } from "@/components/app-sidebar";
 import { AppTitlebarMemory } from "@/components/app-titlebar-memory";
-import { AppRoutes } from "@/routes/app-routes";
-import { SidebarInset, SidebarProvider } from "@/components/ui/sidebar";
+import { AppTitlebarPlatformNav } from "@/components/app-titlebar-platform-nav";
 import { Toaster } from "@/components/ui/sonner";
+import { AppRoutes } from "@/routes/app-routes";
 
 import "./App.css";
 
 export default function App() {
   return (
     <HashRouter>
-      <SidebarProvider
-        style={
-          {
-            "--sidebar-width": "calc(var(--spacing) * 42)",
-          } as CSSProperties
-        }
-      >
+      <div className="flex h-full min-h-0 flex-col bg-background">
         <AppTitlebarMemory />
-        <AppSidebar variant="sidebar" />
-        <SidebarInset className="bg-background">
+        <AppTitlebarPlatformNav />
+        <div className="min-h-0 flex-1 overflow-auto bg-background">
           <AppRoutes />
-        </SidebarInset>
+        </div>
         <Toaster position="bottom-right" />
-      </SidebarProvider>
+      </div>
     </HashRouter>
   );
 }

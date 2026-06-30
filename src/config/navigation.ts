@@ -1,6 +1,8 @@
 import type { Icon } from "@mynaui/icons-react";
 import { FineTune, Terminal } from "@mynaui/icons-react";
 
+export type PlatformId = "wechat" | "meituan" | "kuaishou" | "tiktok-drama-center";
+
 export type AppRoute =
   | "wechat/publish"
   | "wechat/config"
@@ -28,11 +30,55 @@ export type NavigationGroup = {
   items: NavigationItem[];
 };
 
+export type PlatformNavigationItem = {
+  id: PlatformId;
+  title: string;
+  routePrefix: string;
+  serviceRoute: AppRoute;
+  configRoute: AppRoute;
+  logoSrc: string;
+};
+
 export const defaultRoute: AppRoute = "wechat/service";
 
 export function routePath(route: AppRoute) {
   return `/${route}`;
 }
+
+export const platformNavigation: PlatformNavigationItem[] = [
+  {
+    id: "wechat",
+    title: "微信视频号",
+    routePrefix: "wechat",
+    serviceRoute: "wechat/service",
+    configRoute: "wechat/config",
+    logoSrc: `${import.meta.env.BASE_URL}wx.svg`,
+  },
+  {
+    id: "meituan",
+    title: "美团创作平台",
+    routePrefix: "meituan",
+    serviceRoute: "meituan/service",
+    configRoute: "meituan/config",
+    logoSrc: `${import.meta.env.BASE_URL}meituan.svg`,
+  },
+  {
+    id: "kuaishou",
+    title: "快手短剧",
+    routePrefix: "kuaishou",
+    serviceRoute: "kuaishou/service",
+    configRoute: "kuaishou/config",
+    logoSrc: `${import.meta.env.BASE_URL}kuaishou.svg`,
+  },
+  {
+    id: "tiktok-drama-center",
+    title: "TikTok Drama Center",
+    routePrefix: "tiktok-drama-center",
+    serviceRoute: "tiktok-drama-center/service",
+    configRoute: "tiktok-drama-center/config",
+    logoSrc: `${import.meta.env.BASE_URL}tiktok.svg`,
+  },
+];
 
 export const navigationGroups: NavigationGroup[] = [
   {
@@ -99,4 +145,11 @@ export const navigationGroups: NavigationGroup[] = [
 
 export function isAppRoute(route: string): route is AppRoute {
   return navigationGroups.some((group) => group.items.some((item) => item.route === route));
+}
+
+export function platformForPath(route: string) {
+  return (
+    platformNavigation.find((platform) => route.startsWith(`${platform.routePrefix}/`)) ??
+    platformNavigation[0]
+  );
 }

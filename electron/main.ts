@@ -1,131 +1,142 @@
-import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron'
-import { setupTitlebar, attachTitlebarToWindow } from 'custom-electron-titlebar/main'
-import windowStateKeeper from 'electron-window-state'
-import { fileURLToPath } from 'node:url'
-import path from 'node:path'
+import { app, BrowserWindow, ipcMain, Menu, nativeImage } from "electron";
+import { setupTitlebar, attachTitlebarToWindow } from "custom-electron-titlebar/main";
+import windowStateKeeper from "electron-window-state";
+import { fileURLToPath } from "node:url";
+import path from "node:path";
 
 import {
   getWechatVideoBrowserInstanceCount,
   getWechatVideoRunningPlatformCount,
   registerWechatVideoPlatformHandlers,
   stopWechatVideoPlatformRuntime,
-} from './platforms/wechat-video'
+} from "./platforms/wechat-video";
 import {
   getMeituanCreationBrowserInstanceCount,
   getMeituanCreationRunningPlatformCount,
   registerMeituanCreationPlatformHandlers,
   stopMeituanCreationPlatformRuntime,
-} from './platforms/meituan-creation'
+} from "./platforms/meituan-creation";
 import {
   getKuaishouDramaBrowserInstanceCount,
   getKuaishouDramaRunningPlatformCount,
   registerKuaishouDramaPlatformHandlers,
   stopKuaishouDramaPlatformRuntime,
-} from './platforms/kuaishou-drama'
+} from "./platforms/kuaishou-drama";
 import {
   getTiktokDramaCenterBrowserInstanceCount,
   getTiktokDramaCenterRunningPlatformCount,
   registerTiktokDramaCenterPlatformHandlers,
   stopTiktokDramaCenterPlatformRuntime,
-} from './platforms/tiktok-drama-center'
-import { registerBaiduNetdiskPlatformHandlers } from './platforms/baidu-netdisk'
-import { readMemoryStatus } from './platforms/shared'
+} from "./platforms/tiktok-drama-center";
+import { registerBaiduNetdiskPlatformHandlers } from "./platforms/baidu-netdisk";
+import { readMemoryStatus } from "./platforms/shared";
 
-const __dirname = path.dirname(fileURLToPath(import.meta.url))
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-process.env.APP_ROOT = path.join(__dirname, '..')
+process.env.APP_ROOT = path.join(__dirname, "..");
 
-export const VITE_DEV_SERVER_URL = process.env['VITE_DEV_SERVER_URL']
-export const MAIN_DIST = path.join(process.env.APP_ROOT, 'dist-electron')
-export const RENDERER_DIST = path.join(process.env.APP_ROOT, 'dist')
+export const VITE_DEV_SERVER_URL = process.env["VITE_DEV_SERVER_URL"];
+export const MAIN_DIST = path.join(process.env.APP_ROOT, "dist-electron");
+export const RENDERER_DIST = path.join(process.env.APP_ROOT, "dist");
 
-process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 'public') : RENDERER_DIST
+process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
+  ? path.join(process.env.APP_ROOT, "public")
+  : RENDERER_DIST;
 
-let win: BrowserWindow | null
+let win: BrowserWindow | null;
 
-setupTitlebar()
-ipcMain.removeAllListeners('update-window-controls')
-ipcMain.on('update-window-controls', (event) => {
-  event.returnValue = false
-})
+setupTitlebar();
+ipcMain.removeAllListeners("update-window-controls");
+ipcMain.on("update-window-controls", (event) => {
+  event.returnValue = false;
+});
 
 function getAppIconPath() {
-  return path.join(process.env.VITE_PUBLIC, 'icon.png')
+  return path.join(process.env.VITE_PUBLIC, "icon.png");
 }
 
 function createWindow() {
-  const appIcon = nativeImage.createFromPath(getAppIconPath())
+  const appIcon = nativeImage.createFromPath(getAppIconPath());
+  const fixedWindowSize = {
+    width: 720,
+    height: 680,
+  };
   const mainWindowState = windowStateKeeper({
-    defaultWidth: 1280,
-    defaultHeight: 860,
-  })
+    defaultWidth: fixedWindowSize.width,
+    defaultHeight: fixedWindowSize.height,
+  });
 
   win = new BrowserWindow({
     x: mainWindowState.x,
     y: mainWindowState.y,
-    width: mainWindowState.width,
-    height: mainWindowState.height,
-    minWidth: 1024,
-    minHeight: 720,
-    title: 'AutoDrama',
-    titleBarStyle: 'hidden',
+    width: fixedWindowSize.width,
+    height: fixedWindowSize.height,
+    minWidth: fixedWindowSize.width,
+    minHeight: fixedWindowSize.height,
+    maxWidth: fixedWindowSize.width,
+    maxHeight: fixedWindowSize.height,
+    resizable: false,
+    maximizable: false,
+    fullscreenable: false,
+    title: "AutoDrama",
+    titleBarStyle: "hidden",
     icon: appIcon,
     autoHideMenuBar: true,
     webPreferences: {
-      preload: path.join(__dirname, 'preload.mjs'),
+      preload: path.join(__dirname, "preload.mjs"),
       sandbox: false,
     },
-  })
-  mainWindowState.manage(win)
-  attachTitlebarToWindow(win)
-  win.setMenu(null)
+  });
+  mainWindowState.manage(win);
+  attachTitlebarToWindow(win);
+  win.setMenu(null);
 
   if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL)
+    win.loadURL(VITE_DEV_SERVER_URL);
   } else {
-    win.loadFile(path.join(RENDERER_DIST, 'index.html'))
+    win.loadFile(path.join(RENDERER_DIST, "index.html"));
   }
 }
 
-app.on('window-all-closed', () => {
-  if (process.platform !== 'darwin') {
-    app.quit()
-    win = null
+app.on("window-all-closed", () => {
+  if (process.platform !== "darwin") {
+    app.quit();
+    win = null;
   }
-})
+});
 
-app.on('before-quit', () => {
-  stopWechatVideoPlatformRuntime()
-  stopMeituanCreationPlatformRuntime()
-  stopKuaishouDramaPlatformRuntime()
-  stopTiktokDramaCenterPlatformRuntime()
-})
+app.on("before-quit", () => {
+  stopWechatVideoPlatformRuntime();
+  stopMeituanCreationPlatformRuntime();
+  stopKuaishouDramaPlatformRuntime();
+  stopTiktokDramaCenterPlatformRuntime();
+});
 
-app.on('activate', () => {
+app.on("activate", () => {
   if (BrowserWindow.getAllWindows().length === 0) {
-    createWindow()
+    createWindow();
   }
-})
+});
 
 app.whenReady().then(() => {
-  Menu.setApplicationMenu(null)
-  ipcMainHandleAppRuntimeStatus()
-  registerWechatVideoPlatformHandlers()
-  registerMeituanCreationPlatformHandlers()
-  registerKuaishouDramaPlatformHandlers()
-  registerTiktokDramaCenterPlatformHandlers()
-  registerBaiduNetdiskPlatformHandlers()
+  Menu.setApplicationMenu(null);
+  ipcMainHandleAppRuntimeStatus();
+  registerWechatVideoPlatformHandlers();
+  registerMeituanCreationPlatformHandlers();
+  registerKuaishouDramaPlatformHandlers();
+  registerTiktokDramaCenterPlatformHandlers();
+  registerBaiduNetdiskPlatformHandlers();
 
-  if (process.platform === 'darwin' && VITE_DEV_SERVER_URL) {
-    app.dock?.setIcon(getAppIconPath())
+  if (process.platform === "darwin" && VITE_DEV_SERVER_URL) {
+    app.dock?.setIcon(getAppIconPath());
   }
 
-  createWindow()
-})
+  createWindow();
+});
 
 function ipcMainHandleAppRuntimeStatus() {
-  ipcMain.handle('app:runtime:status', async () => {
-    const runningPlatformStatus = getGlobalRunningPlatformStatus()
+  ipcMain.handle("app:runtime:status", async () => {
+    const runningPlatformStatus = getGlobalRunningPlatformStatus();
 
     return {
       pid: process.pid,
@@ -133,8 +144,8 @@ function ipcMainHandleAppRuntimeStatus() {
       runningPlatformCount: runningPlatformStatus.running,
       totalPlatformCount: runningPlatformStatus.total,
       memory: await readMemoryStatus(),
-    }
-  })
+    };
+  });
 }
 
 function getGlobalBrowserInstanceCount() {
@@ -143,15 +154,15 @@ function getGlobalBrowserInstanceCount() {
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getTiktokDramaCenterBrowserInstanceCount,
-  ]
+  ];
 
   return counters.reduce((count, readCount) => {
     try {
-      return count + readCount()
+      return count + readCount();
     } catch {
-      return count
+      return count;
     }
-  }, 0)
+  }, 0);
 }
 
 function getGlobalRunningPlatformStatus() {
@@ -160,16 +171,16 @@ function getGlobalRunningPlatformStatus() {
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getTiktokDramaCenterRunningPlatformCount,
-  ]
+  ];
 
   return {
     running: counters.reduce((count, readCount) => {
       try {
-        return count + readCount()
+        return count + readCount();
       } catch {
-        return count
+        return count;
       }
     }, 0),
     total: counters.length,
-  }
+  };
 }

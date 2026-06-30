@@ -1,5 +1,5 @@
 :root {
-  --app-titlebar-height: 30px;
+  --app-titlebar-height: 37px;
 }
 
 html,
@@ -8,12 +8,13 @@ body {
 }
 
 #root {
+  height: 100vh;
   min-height: 100vh;
 }
 
 .cet-container #root {
   height: 100%;
-  min-height: 100%;
+  min-height: 0;
 }
 
 .cet-container [data-slot="sidebar-wrapper"] {
@@ -43,9 +44,7 @@ body {
 }
 
 .cet-titlebar .cet-icon {
-  width: 38px;
-  height: var(--app-titlebar-height);
-  opacity: 0.9;
+  display: none !important;
 }
 
 .cet-titlebar .cet-icon img {
@@ -53,9 +52,7 @@ body {
 }
 
 .cet-titlebar .cet-title {
-  font-size: 12px !important;
-  font-weight: 560;
-  letter-spacing: 0;
+  display: none !important;
 }
 
 .cet-titlebar .cet-title.cet-title-left {
@@ -70,10 +67,14 @@ body {
   height: var(--app-titlebar-height) !important;
 }
 
+.cet-container {
+  top: var(--app-titlebar-height) !important;
+}
+
 .app-titlebar-memory-host {
   position: absolute;
   top: 0;
-  right: 132px;
+  right: 120px;
   z-index: 100;
   height: var(--app-titlebar-height);
   display: flex;
@@ -82,9 +83,57 @@ body {
   -webkit-app-region: no-drag;
 }
 
+.app-titlebar-platform-nav-host {
+  position: absolute;
+  inset: 0;
+  z-index: 101;
+  pointer-events: none;
+}
+
+.app-titlebar-platform-switcher {
+  position: absolute;
+  top: calc((var(--app-titlebar-height) - 30px) / 2);
+  left: 4px;
+  display: inline-flex;
+  height: 30px;
+  align-items: center;
+  gap: 2px;
+  border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
+  border-radius: 7px;
+  background: color-mix(in oklch, var(--background) 94%, var(--foreground) 6%);
+  padding: 1px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-platform-button,
+.app-titlebar-config-button {
+  width: 28px;
+  height: 28px;
+  border-radius: 6px;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
+.app-titlebar-platform-button-active {
+  border-color: color-mix(in oklch, var(--foreground) 12%, transparent);
+  background: var(--background);
+}
+
+.app-titlebar-config-host {
+  position: absolute;
+  top: calc((var(--app-titlebar-height) - 30px) / 2);
+  right: 92px;
+  display: flex;
+  height: 30px;
+  align-items: center;
+  pointer-events: auto;
+  -webkit-app-region: no-drag;
+}
+
 .app-titlebar-memory {
   display: flex;
-  height: 22px;
+  height: 26px;
   align-items: center;
   gap: 4px;
   overflow: hidden;
@@ -147,6 +196,10 @@ body {
   transition: background-color 150ms ease;
 }
 
+.cet-titlebar .cet-control-maximize {
+  display: none !important;
+}
+
 .cet-titlebar .cet-control-icon:not(.inactive):hover {
   background-color: color-mix(in oklch, var(--foreground) 10%, transparent) !important;
 }
@@ -160,8 +213,13 @@ body {
   outline-offset: -2px;
 }
 
-.cet-titlebar.light .cet-control-icon svg {
-  fill: var(--foreground) !important;
+.cet-titlebar .cet-window-controls .cet-control-icon svg {
+  color: color-mix(in oklch, var(--foreground) 84%, transparent) !important;
+  fill: currentColor !important;
+}
+
+.cet-titlebar .cet-window-controls .cet-control-icon svg * {
+  fill: currentColor !important;
 }
 
 .cet-titlebar .cet-control-close:not(.inactive):hover {
@@ -174,7 +232,13 @@ body {
 
 .cet-titlebar .cet-control-close:not(.inactive):hover svg,
 .cet-titlebar .cet-control-close:not(.inactive):active svg {
-  fill: var(--primary-foreground) !important;
+  color: var(--primary-foreground) !important;
+  fill: currentColor !important;
+}
+
+.cet-titlebar .cet-control-close:not(.inactive):hover svg *,
+.cet-titlebar .cet-control-close:not(.inactive):active svg * {
+  fill: currentColor !important;
 }
 
 ::-webkit-scrollbar {
