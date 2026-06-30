@@ -1,11 +1,5 @@
-import type { LucideIcon } from "lucide-react"
-import {
-  ClipboardListIcon,
-  ClapperboardIcon,
-  SlidersHorizontalIcon,
-  TerminalIcon,
-  UserCogIcon,
-} from "lucide-react"
+import type { Icon } from "@mynaui/icons-react";
+import { FineTune, Terminal } from "@mynaui/icons-react";
 
 export type AppRoute =
   | "wechat/publish"
@@ -21,23 +15,23 @@ export type AppRoute =
   | "kuaishou/analytics"
   | "kuaishou/settings"
   | "tiktok-drama-center/service"
-  | "tiktok-drama-center/config"
+  | "tiktok-drama-center/config";
 
 export type NavigationItem = {
-  title: string
-  route: AppRoute
-  icon: LucideIcon
-}
+  title: string;
+  route: AppRoute;
+  icon: Icon;
+};
 
 export type NavigationGroup = {
-  title: string
-  items: NavigationItem[]
-}
+  title: string;
+  items: NavigationItem[];
+};
 
-export const defaultRoute: AppRoute = "wechat/service"
+export const defaultRoute: AppRoute = "wechat/service";
 
 export function routePath(route: AppRoute) {
-  return `/${route}`
+  return `/${route}`;
 }
 
 export const navigationGroups: NavigationGroup[] = [
@@ -47,22 +41,12 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "服务控制",
         route: "wechat/service",
-        icon: TerminalIcon,
+        icon: Terminal,
       },
       {
         title: "配置管理",
         route: "wechat/config",
-        icon: SlidersHorizontalIcon,
-      },
-      {
-        title: "发布任务",
-        route: "wechat/publish",
-        icon: ClipboardListIcon,
-      },
-      {
-        title: "账号管理",
-        route: "wechat/accounts",
-        icon: UserCogIcon,
+        icon: FineTune,
       },
     ],
   },
@@ -72,12 +56,12 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "服务控制",
         route: "meituan/service",
-        icon: ClapperboardIcon,
+        icon: Terminal,
       },
       {
         title: "配置管理",
         route: "meituan/config",
-        icon: SlidersHorizontalIcon,
+        icon: FineTune,
       },
     ],
   },
@@ -87,22 +71,12 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "服务控制",
         route: "kuaishou/service",
-        icon: TerminalIcon,
+        icon: Terminal,
       },
       {
         title: "配置管理",
         route: "kuaishou/config",
-        icon: SlidersHorizontalIcon,
-      },
-      {
-        title: "短剧项目",
-        route: "kuaishou/projects",
-        icon: ClapperboardIcon,
-      },
-      {
-        title: "发布排期",
-        route: "kuaishou/schedule",
-        icon: ClipboardListIcon,
+        icon: FineTune,
       },
     ],
   },
@@ -112,19 +86,17 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "服务控制",
         route: "tiktok-drama-center/service",
-        icon: TerminalIcon,
+        icon: Terminal,
       },
       {
         title: "配置管理",
         route: "tiktok-drama-center/config",
-        icon: SlidersHorizontalIcon,
+        icon: FineTune,
       },
     ],
   },
-]
+];
 
 export function isAppRoute(route: string): route is AppRoute {
-  return navigationGroups.some((group) =>
-    group.items.some((item) => item.route === route)
-  )
+  return navigationGroups.some((group) => group.items.some((item) => item.route === route));
 }

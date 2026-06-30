@@ -1,4 +1,5 @@
 import { ipcRenderer, contextBridge } from 'electron'
+import { Titlebar, TitlebarColor } from 'custom-electron-titlebar'
 
 type IpcRendererListener = Parameters<typeof ipcRenderer.on>[1]
 
@@ -41,4 +42,28 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 
   // You can expose other APTs you need here.
   // ...
+})
+
+window.addEventListener('DOMContentLoaded', () => {
+  const titlebar = new Titlebar({
+    backgroundColor: TitlebarColor.fromHex('#fafafa'),
+    itemBackgroundColor: TitlebarColor.fromHex('#f0f0f0'),
+    menuBarBackgroundColor: TitlebarColor.fromHex('#fafafa'),
+    menuSeparatorColor: TitlebarColor.fromHex('#e5e5e5'),
+    svgColor: TitlebarColor.fromHex('#404040'),
+    icon: './icon.png',
+    iconSize: 18,
+    shadow: false,
+    titleHorizontalAlignment: 'left',
+    unfocusEffect: false,
+    containerOverflow: 'hidden',
+    tooltips: {
+      minimize: '最小化',
+      maximize: '最大化',
+      restoreDown: '还原',
+      close: '关闭',
+    },
+  })
+
+  titlebar.updateTitle('AutoDrama')
 })

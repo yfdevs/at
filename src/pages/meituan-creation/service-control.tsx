@@ -1,17 +1,13 @@
-import { useCallback, useEffect, useRef, useState } from "react"
-import { IconPower } from "@tabler/icons-react"
-import { ExternalLinkIcon, RefreshCwIcon } from "lucide-react"
-import { toast } from "sonner"
-
-import { buttonVariants } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import {
+  ServiceControlToolbar,
+  ServiceDetailCard,
+  useServiceControl,
+} from "@/pages/shared/service-control"
 import {
   meituanCreationService,
   type MeituanCreationLoginState,
   type MeituanCreationServiceStatus,
 } from "@/platforms/meituan-creation/service"
-import { cn } from "@/lib/utils"
 
 const initialStatus: MeituanCreationServiceStatus = {
   platform: "meituan-creation",
@@ -23,161 +19,55 @@ const initialStatus: MeituanCreationServiceStatus = {
   pid: null,
 }
 
+const accentClassName =
+  "bg-[linear-gradient(135deg,color-mix(in_oklch,var(--color-yellow-500)_8%,var(--card))_0%,var(--card)_58%,color-mix(in_oklch,var(--primary)_5%,var(--card))_100%)]"
+
 function loginStateLabel(loginState: MeituanCreationLoginState) {
   if (loginState === "logged-in") return "已登录"
   if (loginState === "login-required") return "等待登录"
   return "检测中"
 }
 
-function formatTime(value: Date | null) {
-  if (!value) return "-"
-
-  return value.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })
+function successMessage(status: MeituanCreationServiceStatus) {
+  return status.running ? "美团创作平台已启动" : "美团创作平台已停止"
 }
 
 export function MeituanCreationServiceControlPage() {
-  const [status, setStatus] = useState<MeituanCreationServiceStatus>(initialStatus)
-  const [loading, setLoading] = useState(false)
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
-  const statusRefreshInFlightRef = useRef(false)
-
-  const applyStatus = (nextStatus: MeituanCreationServiceStatus) => {
-    setStatus(nextStatus)
-    setLastRefreshedAt(new Date())
-  }
-
-  const refreshStatus = useCallback(async (silent = false) => {
-    if (statusRefreshInFlightRef.current) return
-
-    statusRefreshInFlightRef.current = true
-    if (!silent) {
-      setLoading(true)
-    }
-
-    try {
-      applyStatus(await meituanCreationService.status())
-    } catch (error) {
-      if (!silent) {
-        toast.error("状态刷新失败", {
-          description: error instanceof Error ? error.message : String(error),
-        })
-      }
-    } finally {
-      statusRefreshInFlightRef.current = false
-      if (!silent) {
-        setLoading(false)
-      }
-    }
-  }, [])
-
-  const run = async (action: () => Promise<MeituanCreationServiceStatus>) => {
-    setLoading(true)
-    try {
-      const nextStatus = await action()
-      applyStatus(nextStatus)
-      toast.success(nextStatus.running ? "美团创作平台已启动" : "美团创作平台已停止")
-    } catch (error) {
-      toast.error("操作失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    } finally {
-      setLoading(false)
-    }
-  }
-
-  useEffect(() => {
-    void refreshStatus()
-
-    const statusRefreshInterval = window.setInterval(() => {
-      void refreshStatus(true)
-    }, 3000)
-
-    return () => {
-      window.clearInterval(statusRefreshInterval)
-    }
-  }, [refreshStatus])
+  const {
+    lastRefreshedAt,
+    loading,
+    refreshStatus,
+    status,
+    toggleService,
+  } = useServiceControl({
+    initialStatus,
+    service: meituanCreationService,
+    successMessage,
+  })
+  const activeUrl = status.activeUrl ?? status.publishVideoUrl
 
   return (
     <main className="flex min-h-svh flex-1 flex-col gap-6 bg-background p-6">
-      <Card className="rounded-lg bg-[linear-gradient(135deg,color-mix(in_oklch,var(--color-yellow-500)_8%,var(--card))_0%,var(--card)_58%,color-mix(in_oklch,var(--primary)_5%,var(--card))_100%)] py-3 [--card-spacing:--spacing(3)]">
-        <CardContent className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-3 px-4">
-          <div className="flex min-w-24 items-center gap-3">
-            <Tooltip>
-              <TooltipTrigger
-                className={cn(
-                  buttonVariants({
-                    size: "icon-lg",
-                    variant: status.running ? "destructive" : "outline",
-                  }),
-                  "size-11 bg-background/80 [&_svg]:size-5"
-                )}
-                disabled={loading}
-                onClick={() =>
-                  run(() =>
-                    status.running ? meituanCreationService.stop() : meituanCreationService.start()
-                  )
-                }
-              >
-                <IconPower className="size-5" />
-              </TooltipTrigger>
-              <TooltipContent>{status.running ? "停止美团创作平台浏览器" : "启动浏览器并执行任务"}</TooltipContent>
-            </Tooltip>
-            <span
-              className={
-                status.running
-                  ? "size-2.5 rounded-full bg-emerald-500"
-                  : "size-2.5 rounded-full bg-muted-foreground/40"
-              }
-            />
-          </div>
+      <ServiceControlToolbar
+        accentClassName={accentClassName}
+        activeText={activeUrl}
+        activeTitle={activeUrl}
+        lastRefreshedAt={lastRefreshedAt}
+        loading={loading}
+        loginText={loginStateLabel(status.loginState)}
+        running={status.running}
+        toggleTooltip={status.running ? "停止美团创作平台浏览器" : "启动浏览器并执行任务"}
+        onRefresh={() => void refreshStatus()}
+        onToggle={() => void toggleService()}
+      />
 
-          <div className="flex min-w-32 items-center gap-1.5 text-xs">
-            <span className="text-muted-foreground">登录</span>
-            <span className="font-medium">{loginStateLabel(status.loginState)}</span>
-          </div>
-
-          <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
-            <ExternalLinkIcon className="size-4 shrink-0 text-muted-foreground" />
-            <span className="truncate font-medium" title={status.activeUrl ?? status.publishVideoUrl}>
-              {status.activeUrl ?? status.publishVideoUrl}
-            </span>
-          </div>
-
-          <div className="ml-auto flex items-center gap-2">
-            <span className="text-xs text-muted-foreground">
-              刷新 {formatTime(lastRefreshedAt)}
-            </span>
-            <Tooltip>
-              <TooltipTrigger
-                aria-label="刷新服务状态"
-                className={cn(buttonVariants({ size: "icon-sm", variant: "outline" }), "bg-background/80")}
-                disabled={loading}
-                onClick={() => void refreshStatus()}
-              >
-                <RefreshCwIcon className={loading ? "animate-spin" : undefined} />
-              </TooltipTrigger>
-              <TooltipContent>重新获取服务运行状态</TooltipContent>
-            </Tooltip>
-          </div>
-        </CardContent>
-      </Card>
-
-      <section className="grid gap-4">
-        <Card className="rounded-lg py-0 shadow-none">
-          <CardContent className="space-y-3 p-4 text-sm">
-            <h2 className="text-sm font-semibold">启动行为</h2>
-            <div className="grid gap-2 text-xs text-muted-foreground">
-              <div className="rounded-md bg-muted px-3 py-2">登录页：{status.loginUrl}</div>
-              <div className="rounded-md bg-muted px-3 py-2">发布页：{status.publishVideoUrl}</div>
-              <div className="rounded-md bg-muted px-3 py-2">账号目录：{status.userDataDir || "-"}</div>
-            </div>
-          </CardContent>
-        </Card>
-      </section>
+      <ServiceDetailCard
+        rows={[
+          { label: "登录页", value: status.loginUrl },
+          { label: "发布页", value: status.publishVideoUrl },
+          { label: "账号目录", value: status.userDataDir || "-" },
+        ]}
+      />
     </main>
   )
 }

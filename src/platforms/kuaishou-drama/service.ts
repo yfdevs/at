@@ -1,14 +1,30 @@
 export type KuaishouDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type KuaishouDramaConfig = {
+  accountProfileName: string
   headless: string
   operationDelaySeconds: string
   runDataDir: string
+  logRetentionDays: string
+  mockTaskEnabled: string
 }
+
+export type KuaishouDramaStoragePaths = {
+  runDataDir: string
+  accountDir: string
+  userDataDir: string
+  credentialStatePath: string
+  assetDownloadDir: string
+  logDir: string
+  logFilePath: string
+}
+
+export type KuaishouDramaStoragePathKey = keyof KuaishouDramaStoragePaths | "configFilePath" | "latestLog"
 
 export type KuaishouDramaConfigResult = {
   config: KuaishouDramaConfig
   path: string
+  storagePaths: KuaishouDramaStoragePaths
   restartRequired: boolean
 }
 
@@ -18,6 +34,11 @@ export type KuaishouDramaServiceStatus = {
   loginState: KuaishouDramaLoginState
   activeUrl?: string
   userDataDir: string
+  accountProfileName?: string
+  accountDir?: string
+  credentialStatePath?: string
+  assetDownloadDir?: string
+  logFilePath?: string
   pid: number | null
 }
 
@@ -45,6 +66,9 @@ export const kuaishouDramaService = {
       "kuaishou-drama:config:select-run-data-dir",
       currentPath
     )
+  },
+  openStoragePath(key: KuaishouDramaStoragePathKey) {
+    return invokeKuaishouDrama<string>("kuaishou-drama:config:open-storage-path", key)
   },
   status() {
     return invokeKuaishouDrama<KuaishouDramaServiceStatus>("kuaishou-drama:service:status")

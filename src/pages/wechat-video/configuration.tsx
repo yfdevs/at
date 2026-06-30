@@ -1,47 +1,38 @@
-import { useEffect, useMemo, useState } from "react"
-import {
-  AlertTriangle,
-  CheckCircle2,
-  FolderOpen,
-  RotateCcw,
-  Save,
-} from "lucide-react"
-import { toast } from "sonner"
+import { useEffect, useMemo, useState } from "react";
+import { CheckCircle, DangerTriangle, Folder, RefreshAlt, Save } from "@mynaui/icons-react";
+import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button"
-import {
-  Card,
-  CardContent,
-} from "@/components/ui/card"
-import { Checkbox } from "@/components/ui/checkbox"
+import { Button } from "@/components/ui/button";
+import { Card, CardContent } from "@/components/ui/card";
+import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldContent,
   FieldDescription,
   FieldGroup,
   FieldLabel,
-} from "@/components/ui/field"
+} from "@/components/ui/field";
 import {
   InputGroup,
   InputGroupAddon,
   InputGroupButton,
   InputGroupInput,
   InputGroupText,
-} from "@/components/ui/input-group"
+} from "@/components/ui/input-group";
 import {
   Select,
   SelectContent,
   SelectItem,
   SelectTrigger,
   SelectValue,
-} from "@/components/ui/select"
-import { Separator } from "@/components/ui/separator"
-import { Switch } from "@/components/ui/switch"
+} from "@/components/ui/select";
+import { Separator } from "@/components/ui/separator";
+import { Switch } from "@/components/ui/switch";
 import {
   wechatVideoService,
   type WechatVideoConfig,
   type WechatVideoConfigResult,
-} from "@/platforms/wechat-video/service"
+} from "@/platforms/wechat-video/service";
 
 const emptyConfig: WechatVideoConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
@@ -62,54 +53,54 @@ const emptyConfig: WechatVideoConfig = {
   episodeUploadWaitTimeoutSeconds: "7200",
   episodeUploadFailedRetryAttempts: "3",
   feishuBotWebhookUrl: "",
-}
+};
 
 type TextField = {
-  kind?: "text"
-  key: keyof WechatVideoConfig
-  label: string
-  description?: string
-  type?: "text" | "number" | "url"
-  suffix?: string
-}
+  kind?: "text";
+  key: keyof WechatVideoConfig;
+  label: string;
+  description?: string;
+  type?: "text" | "number" | "url";
+  suffix?: string;
+};
 
 type SelectField = {
-  kind: "select"
-  key: keyof WechatVideoConfig
-  label: string
-  description?: string
-  options: Array<{ value: string; label: string }>
-}
+  kind: "select";
+  key: keyof WechatVideoConfig;
+  label: string;
+  description?: string;
+  options: Array<{ value: string; label: string }>;
+};
 
 type SwitchField = {
-  kind: "switch"
-  key: keyof WechatVideoConfig
-  label: string
-  description?: string
-  activeLabel: string
-  inactiveLabel: string
-}
+  kind: "switch";
+  key: keyof WechatVideoConfig;
+  label: string;
+  description?: string;
+  activeLabel: string;
+  inactiveLabel: string;
+};
 
 type SubjectField = {
-  kind: "subjects"
-  key: "videoAccountContractSubjects"
-  label: string
-  description?: string
-  options: Array<{ value: string; label: string }>
-}
+  kind: "subjects";
+  key: "videoAccountContractSubjects";
+  label: string;
+  description?: string;
+  options: Array<{ value: string; label: string }>;
+};
 
-type ConfigField = TextField | SelectField | SwitchField | SubjectField
+type ConfigField = TextField | SelectField | SwitchField | SubjectField;
 
 const contractSubjectOptions = [
   { label: "明星说", value: "MINGXINGSHUO" },
   { label: "米苏", value: "MISU" },
   { label: "微淘", value: "WEITAO" },
-]
+];
 
 const sections: Array<{
-  title: string
-  description: string
-  fields: ConfigField[]
+  title: string;
+  description: string;
+  fields: ConfigField[];
 }> = [
   {
     title: "接口连接",
@@ -267,85 +258,85 @@ const sections: Array<{
       },
     ],
   },
-]
+];
 
 export function WechatConfigurationPage() {
-  const [config, setConfig] = useState<WechatVideoConfig>(emptyConfig)
-  const [savedConfig, setSavedConfig] = useState<WechatVideoConfig>(emptyConfig)
-  const [restartRequired, setRestartRequired] = useState(false)
-  const [loading, setLoading] = useState(false)
+  const [config, setConfig] = useState<WechatVideoConfig>(emptyConfig);
+  const [savedConfig, setSavedConfig] = useState<WechatVideoConfig>(emptyConfig);
+  const [restartRequired, setRestartRequired] = useState(false);
+  const [loading, setLoading] = useState(false);
 
   const applyResult = (result: WechatVideoConfigResult) => {
-    setConfig(result.config)
-    setSavedConfig(result.config)
-    setRestartRequired(result.restartRequired)
-  }
+    setConfig(result.config);
+    setSavedConfig(result.config);
+    setRestartRequired(result.restartRequired);
+  };
 
   const hasChanges = useMemo(
     () => JSON.stringify(config) !== JSON.stringify(savedConfig),
-    [config, savedConfig]
-  )
+    [config, savedConfig],
+  );
 
   useEffect(() => {
-    setLoading(true)
+    setLoading(true);
     wechatVideoService
       .getConfig()
       .then(applyResult)
       .catch((error) => {
         toast.error("配置读取失败", {
           description: error instanceof Error ? error.message : String(error),
-        })
+        });
       })
-      .finally(() => setLoading(false))
-  }, [])
+      .finally(() => setLoading(false));
+  }, []);
 
   const updateConfig = (key: keyof WechatVideoConfig, value: string) => {
-    setConfig((current) => ({ ...current, [key]: value }))
-  }
+    setConfig((current) => ({ ...current, [key]: value }));
+  };
 
   const discardChanges = () => {
-    setConfig(savedConfig)
-  }
+    setConfig(savedConfig);
+  };
 
   const saveConfig = async () => {
-    setLoading(true)
+    setLoading(true);
     try {
-      const result = await wechatVideoService.saveConfig(config)
-      applyResult(result)
+      const result = await wechatVideoService.saveConfig(config);
+      applyResult(result);
       if (result.restartRequired) {
         toast.warning("配置已保存", {
           description: "服务正在运行，请重启服务后生效。",
-        })
+        });
       } else {
-        toast.success("配置已保存")
+        toast.success("配置已保存");
       }
     } catch (error) {
       toast.error("配置保存失败", {
         description: error instanceof Error ? error.message : String(error),
-      })
+      });
     } finally {
-      setLoading(false)
+      setLoading(false);
     }
-  }
+  };
 
   const selectDirectory = async (key: "localEpisodeVideoRoot" | "runDataDir") => {
     try {
       const selectedPath =
         key === "localEpisodeVideoRoot"
           ? await wechatVideoService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-          : await wechatVideoService.selectRunDataDir(config.runDataDir)
+          : await wechatVideoService.selectRunDataDir(config.runDataDir);
 
       if (!selectedPath) {
-        return
+        return;
       }
 
-      updateConfig(key, selectedPath)
+      updateConfig(key, selectedPath);
     } catch (error) {
       toast.error("目录选择失败", {
         description: error instanceof Error ? error.message : String(error),
-      })
+      });
     }
-  }
+  };
 
   return (
     <main className="flex min-h-svh flex-1 flex-col bg-muted/20">
@@ -361,15 +352,15 @@ export function WechatConfigurationPage() {
               }
             >
               {hasChanges ? (
-                <AlertTriangle className="size-3.5" />
+                <DangerTriangle className="size-3.5" />
               ) : (
-                <CheckCircle2 className="size-3.5 text-emerald-600" />
+                <CheckCircle className="size-3.5 text-emerald-600" />
               )}
               {hasChanges ? "未保存" : "已保存"}
             </span>
             {restartRequired ? (
               <span className="inline-flex h-7 items-center gap-1.5 rounded-md border border-orange-300 bg-orange-50 px-2 text-xs font-medium text-orange-900 dark:border-orange-500/30 dark:bg-orange-500/10 dark:text-orange-200">
-                <AlertTriangle className="size-3.5" />
+                <DangerTriangle className="size-3.5" />
                 需重启
               </span>
             ) : null}
@@ -382,7 +373,7 @@ export function WechatConfigurationPage() {
                 onClick={discardChanges}
                 variant="outline"
               >
-                <RotateCcw />
+                <RefreshAlt />
                 放弃
               </Button>
             ) : null}
@@ -424,7 +415,7 @@ export function WechatConfigurationPage() {
         </div>
       </div>
     </main>
-  )
+  );
 }
 
 function ConfigFieldControl({
@@ -433,32 +424,30 @@ function ConfigFieldControl({
   onChange,
   onSelectDirectory,
 }: {
-  config: WechatVideoConfig
-  field: ConfigField
-  onChange: (key: keyof WechatVideoConfig, value: string) => void
-  onSelectDirectory: (key: "localEpisodeVideoRoot" | "runDataDir") => void
+  config: WechatVideoConfig;
+  field: ConfigField;
+  onChange: (key: keyof WechatVideoConfig, value: string) => void;
+  onSelectDirectory: (key: "localEpisodeVideoRoot" | "runDataDir") => void;
 }) {
-  const value = config[field.key]
+  const value = config[field.key];
   const directoryKey =
-    field.key === "localEpisodeVideoRoot" || field.key === "runDataDir"
-      ? field.key
-      : null
+    field.key === "localEpisodeVideoRoot" || field.key === "runDataDir" ? field.key : null;
 
   if (field.kind === "subjects") {
     const selectedSubjects = new Set(
       value
         .split(",")
         .map((subject) => subject.trim())
-        .filter(Boolean)
-    )
+        .filter(Boolean),
+    );
 
     const toggleSubject = (subject: string, checked: boolean) => {
-      const nextSubjects = new Set(selectedSubjects)
+      const nextSubjects = new Set(selectedSubjects);
 
       if (checked) {
-        nextSubjects.add(subject)
+        nextSubjects.add(subject);
       } else {
-        nextSubjects.delete(subject)
+        nextSubjects.delete(subject);
       }
 
       onChange(
@@ -466,23 +455,21 @@ function ConfigFieldControl({
         field.options
           .map((option) => option.value)
           .filter((subject) => nextSubjects.has(subject))
-          .join(",")
-      )
-    }
+          .join(","),
+      );
+    };
 
     return (
       <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
         <FieldContent>
           <FieldLabel>{field.label}</FieldLabel>
-          {field.description ? (
-            <FieldDescription>{field.description}</FieldDescription>
-          ) : null}
+          {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
         </FieldContent>
         <div className="flex min-w-0 flex-wrap gap-2">
           {field.options.map((option) => (
             <label
               key={option.value}
-              className="flex h-8 w-auto min-w-0 items-center gap-2 rounded-lg border border-input bg-background px-2.5 text-sm"
+              className="flex h-8 w-auto min-w-0 items-center gap-2 bg-background px-2.5 text-sm"
             >
               <Checkbox
                 checked={selectedSubjects.has(option.value)}
@@ -493,19 +480,17 @@ function ConfigFieldControl({
           ))}
         </div>
       </Field>
-    )
+    );
   }
 
   if (field.kind === "switch") {
-    const checked = value === "true"
+    const checked = value === "true";
 
     return (
       <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-center">
         <FieldContent>
           <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-          {field.description ? (
-            <FieldDescription>{field.description}</FieldDescription>
-          ) : null}
+          {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
         </FieldContent>
         <div className="flex min-w-0 items-center justify-between gap-3">
           <span className="text-sm text-muted-foreground">
@@ -518,20 +503,21 @@ function ConfigFieldControl({
           />
         </div>
       </Field>
-    )
+    );
   }
 
   return (
     <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
       <FieldContent>
         <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-        {field.description ? (
-          <FieldDescription>{field.description}</FieldDescription>
-        ) : null}
+        {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
       </FieldContent>
       <div className="w-full min-w-0">
         {field.kind === "select" ? (
-          <Select value={value} onValueChange={(nextValue) => onChange(field.key, String(nextValue ?? ""))}>
+          <Select
+            value={value}
+            onValueChange={(nextValue) => onChange(field.key, String(nextValue ?? ""))}
+          >
             <SelectTrigger id={field.key} className="w-full bg-background" size="default">
               <SelectValue placeholder="请选择">
                 {field.options.find((option) => option.value === value)?.label ?? "请选择"}
@@ -565,7 +551,7 @@ function ConfigFieldControl({
                   aria-label={`选择${field.label}`}
                   onClick={() => onSelectDirectory(directoryKey)}
                 >
-                  <FolderOpen />
+                  <Folder />
                   选择
                 </InputGroupButton>
               </InputGroupAddon>
@@ -574,5 +560,5 @@ function ConfigFieldControl({
         )}
       </div>
     </Field>
-  )
+  );
 }

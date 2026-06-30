@@ -1,12 +1,12 @@
 import { useCallback, useEffect, useRef, useState } from "react";
 import {
-  IconCircleCheck,
-  IconDotsVertical,
-  IconFileText,
-  IconPower,
-  IconRefresh,
-  IconUsersGroup,
-} from "@tabler/icons-react";
+  CheckCircle,
+  DotsVertical,
+  FileText,
+  Power,
+  Refresh,
+  UsersGroup,
+} from "@mynaui/icons-react";
 import { toast } from "sonner";
 
 import { buttonVariants } from "@/components/ui/button";
@@ -177,7 +177,7 @@ export function WechatServiceControlPage() {
                   )
                 }
               >
-                <IconPower className="size-5" />
+                <Power className="size-5" />
               </TooltipTrigger>
               <TooltipContent>{serviceActionTooltip}</TooltipContent>
             </Tooltip>
@@ -193,7 +193,7 @@ export function WechatServiceControlPage() {
           <div className="hidden h-7 w-px bg-border xl:block" />
 
           <div className="flex min-w-[220px] flex-1 items-center gap-2.5">
-            <IconCircleCheck className="size-4 shrink-0 text-muted-foreground" />
+            <CheckCircle className="size-4 shrink-0 text-muted-foreground" />
             <span className="shrink-0 text-xs text-muted-foreground">主体</span>
             <div className="flex min-w-0 flex-wrap gap-1">
               {status.contractSubjects.length > 0 ? (
@@ -228,7 +228,7 @@ export function WechatServiceControlPage() {
                 disabled={loading}
                 onClick={() => void refreshStatus()}
               >
-                <IconRefresh className={loading ? "animate-spin" : undefined} />
+                <Refresh className={loading ? "animate-spin" : undefined} />
               </TooltipTrigger>
               <TooltipContent>重新获取服务运行状态</TooltipContent>
             </Tooltip>
@@ -241,7 +241,7 @@ export function WechatServiceControlPage() {
           <div className="flex flex-wrap items-center justify-between gap-2">
             <div className="flex items-center gap-2.5">
               <span className="flex size-8 items-center justify-center rounded-lg border bg-card">
-                <IconUsersGroup className="size-4 text-primary" />
+                <UsersGroup className="size-4 text-primary" />
               </span>
               <div>
                 <h2 className="text-sm font-semibold">视频号页面</h2>
@@ -314,11 +314,11 @@ function VideoAccountStatusCard({
               <DropdownMenuTrigger
                 className={buttonVariants({ size: "icon-sm", variant: "ghost" })}
               >
-                <IconDotsVertical className="size-4" />
+                <DotsVertical className="size-4" />
               </DropdownMenuTrigger>
               <DropdownMenuContent>
                 <DropdownMenuItem onClick={onOpenLog}>
-                  <IconFileText />
+                  <FileText />
                   打开日志文件
                 </DropdownMenuItem>
               </DropdownMenuContent>

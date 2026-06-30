@@ -1,5 +1,109 @@
+:root {
+  --app-titlebar-height: 30px;
+}
+
+html,
+body {
+  height: 100%;
+}
+
 #root {
   min-height: 100vh;
+}
+
+.cet-container #root {
+  height: 100%;
+  min-height: 100%;
+}
+
+.cet-container [data-slot="sidebar-wrapper"] {
+  min-height: 100% !important;
+}
+
+.cet-container .min-h-svh {
+  min-height: 100% !important;
+}
+
+.cet-container [data-slot="sidebar-container"] {
+  top: var(--app-titlebar-height) !important;
+  height: calc(100svh - var(--app-titlebar-height)) !important;
+}
+
+.cet-titlebar {
+  height: var(--app-titlebar-height) !important;
+  border-bottom: 1px solid var(--border);
+  background: color-mix(in oklch, var(--background) 98%, var(--foreground) 2%) !important;
+  color: var(--foreground) !important;
+  font-family: var(--font-sans) !important;
+  line-height: var(--app-titlebar-height) !important;
+}
+
+.cet-titlebar.inactive {
+  color: color-mix(in oklch, var(--foreground) 62%, transparent) !important;
+}
+
+.cet-titlebar .cet-icon {
+  width: 38px;
+  height: var(--app-titlebar-height);
+  opacity: 0.9;
+}
+
+.cet-titlebar .cet-icon img {
+  border-radius: 4px;
+}
+
+.cet-titlebar .cet-title {
+  font-size: 12px !important;
+  font-weight: 560;
+  letter-spacing: 0;
+}
+
+.cet-titlebar .cet-title.cet-title-left {
+  margin-left: 2px;
+}
+
+.cet-titlebar .cet-menubar {
+  display: none !important;
+}
+
+.cet-titlebar .cet-window-controls {
+  height: var(--app-titlebar-height) !important;
+}
+
+.cet-titlebar .cet-control-icon {
+  height: var(--app-titlebar-height) !important;
+  width: 44px;
+  transition: background-color 150ms ease;
+}
+
+.cet-titlebar .cet-control-icon:not(.inactive):hover {
+  background-color: color-mix(in oklch, var(--foreground) 10%, transparent) !important;
+}
+
+.cet-titlebar .cet-control-icon:not(.inactive):active {
+  background-color: color-mix(in oklch, var(--foreground) 16%, transparent) !important;
+}
+
+.cet-titlebar .cet-control-icon:focus-visible {
+  outline: 2px solid var(--ring);
+  outline-offset: -2px;
+}
+
+.cet-titlebar.light .cet-control-icon svg {
+  fill: var(--foreground) !important;
+}
+
+.cet-titlebar .cet-control-close:not(.inactive):hover {
+  background-color: var(--destructive) !important;
+}
+
+.cet-titlebar .cet-control-close:not(.inactive):active {
+  background-color: color-mix(in oklch, var(--destructive) 86%, black) !important;
+}
+
+.cet-titlebar .cet-control-close:not(.inactive):hover svg,
+.cet-titlebar .cet-control-close:not(.inactive):active svg {
+  fill: var(--primary-foreground) !important;
 }
 
 ::-webkit-scrollbar {

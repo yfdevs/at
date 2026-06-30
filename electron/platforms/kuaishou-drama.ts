@@ -1,9 +1,13 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { createRequire } from "node:module";
 import path from "node:path";
+import { pathToFileURL } from "node:url";
 import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
+  openExistingPath,
   playwrightBrowsersPath,
   resolveFromAppRoot,
   RuntimeController,
@@ -16,6 +20,11 @@ type KuaishouDramaRuntimeStatus = {
   loginState: "login-required" | "logged-in" | "unknown";
   activeUrl?: string;
   userDataDir: string;
+  accountProfileName?: string;
+  accountDir?: string;
+  credentialStatePath?: string;
+  assetDownloadDir?: string;
+  logFilePath?: string;
 };
 
 type KuaishouDramaRuntime = {
@@ -24,9 +33,12 @@ type KuaishouDramaRuntime = {
 };
 
 export type KuaishouDramaConfig = {
+  accountProfileName: string;
   headless: string;
   operationDelaySeconds: string;
   runDataDir: string;
+  logRetentionDays: string;
+  mockTaskEnabled: string;
 };
 
 export type KuaishouDramaServiceStatus = KuaishouDramaRuntimeStatus & {
@@ -36,7 +48,18 @@ export type KuaishouDramaServiceStatus = KuaishouDramaRuntimeStatus & {
 type KuaishouDramaConfigResult = {
   config: KuaishouDramaConfig;
   path: string;
+  storagePaths: KuaishouDramaStoragePaths;
   restartRequired: boolean;
+};
+
+type KuaishouDramaStoragePaths = {
+  runDataDir: string;
+  accountDir: string;
+  userDataDir: string;
+  credentialStatePath: string;
+  assetDownloadDir: string;
+  logDir: string;
+  logFilePath: string;
 };
 
 type KuaishouDramaStore = {
@@ -44,13 +67,31 @@ type KuaishouDramaStore = {
 };
 
 const defaultKuaishouDramaConfig: KuaishouDramaConfig = {
+  accountProfileName: "default",
   headless: "false",
-  operationDelaySeconds: "0.02",
+  operationDelaySeconds: "0",
   runDataDir: ".drama-runs/kuaishou-drama",
+  logRetentionDays: "3",
+  mockTaskEnabled: "true",
 };
 
 const runtimeController = new RuntimeController<KuaishouDramaRuntime>();
+const require = createRequire(import.meta.url);
 let store: Store<KuaishouDramaStore> | null = null;
+
+function normalizeOperationDelaySeconds(value: string | undefined) {
+  const nextValue = value?.trim();
+  if (!nextValue || nextValue === "0.02") {
+    return defaultKuaishouDramaConfig.operationDelaySeconds;
+  }
+
+  const numericValue = Number.parseFloat(nextValue);
+  if (!Number.isFinite(numericValue) || numericValue < 0) {
+    return defaultKuaishouDramaConfig.operationDelaySeconds;
+  }
+
+  return nextValue;
+}
 
 function getStore() {
   if (!store) {
@@ -69,13 +110,16 @@ function normalizeConfig(
   config: Partial<KuaishouDramaConfig> & Record<string, string | undefined>,
 ): KuaishouDramaConfig {
   return {
+    accountProfileName:
+      config.accountProfileName?.trim() || defaultKuaishouDramaConfig.accountProfileName,
     headless: config.headless ?? defaultKuaishouDramaConfig.headless,
-    operationDelaySeconds:
-      config.operationDelaySeconds ?? defaultKuaishouDramaConfig.operationDelaySeconds,
+    operationDelaySeconds: normalizeOperationDelaySeconds(config.operationDelaySeconds),
     runDataDir:
       !config.runDataDir || config.runDataDir === ".drama-runs"
         ? defaultKuaishouDramaConfig.runDataDir
         : config.runDataDir,
+    logRetentionDays: config.logRetentionDays ?? defaultKuaishouDramaConfig.logRetentionDays,
+    mockTaskEnabled: config.mockTaskEnabled ?? defaultKuaishouDramaConfig.mockTaskEnabled,
   };
 }
 
@@ -95,20 +139,106 @@ function kuaishouDramaRunDataDir(config = readConfig()) {
   return resolveFromAppRoot(config.runDataDir);
 }
 
-function kuaishouDramaUserDataDir() {
-  return path.join(kuaishouDramaRunDataDir(), "auth", "chromium-profile");
+function encodedAccountProfileName(config = readConfig()) {
+  return encodeURIComponent(config.accountProfileName.trim() || "default");
 }
 
-function kuaishouDramaCredentialStatePath() {
-  return path.join(kuaishouDramaRunDataDir(), "auth", "storage-state.json");
+function kuaishouDramaAccountDir(config = readConfig()) {
+  return path.join(
+    kuaishouDramaRunDataDir(config),
+    "auth",
+    "accounts",
+    encodedAccountProfileName(config),
+  );
+}
+
+function kuaishouDramaUserDataDir(config = readConfig()) {
+  return path.join(kuaishouDramaAccountDir(config), "chromium-profile");
+}
+
+function kuaishouDramaCredentialStatePath(config = readConfig()) {
+  return path.join(kuaishouDramaAccountDir(config), "storage-state.json");
+}
+
+function kuaishouDramaAssetDownloadDir(config = readConfig()) {
+  return path.join(kuaishouDramaRunDataDir(config), "assets");
+}
+
+function kuaishouDramaLogDir(config = readConfig()) {
+  return path.join(kuaishouDramaRunDataDir(config), "logs");
+}
+
+function formatDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function kuaishouDramaLogFile(config = readConfig()) {
+  return path.join(kuaishouDramaLogDir(config), `app-${formatDateKey()}.jsonl`);
+}
+
+function storagePaths(config = readConfig()): KuaishouDramaStoragePaths {
+  return {
+    runDataDir: kuaishouDramaRunDataDir(config),
+    accountDir: kuaishouDramaAccountDir(config),
+    userDataDir: kuaishouDramaUserDataDir(config),
+    credentialStatePath: kuaishouDramaCredentialStatePath(config),
+    assetDownloadDir: kuaishouDramaAssetDownloadDir(config),
+    logDir: kuaishouDramaLogDir(config),
+    logFilePath: kuaishouDramaLogFile(config),
+  };
+}
+
+function ensureStorageDirectories(paths = storagePaths()) {
+  mkdirSync(paths.runDataDir, { recursive: true });
+  mkdirSync(paths.accountDir, { recursive: true });
+  mkdirSync(paths.userDataDir, { recursive: true });
+  mkdirSync(paths.assetDownloadDir, { recursive: true });
+  mkdirSync(paths.logDir, { recursive: true });
+}
+
+async function importKuaishouDramaRuntimePackage() {
+  const packageJsonPath = require.resolve("@drama/kuaishou-drama-automation/package.json");
+  const entryUrl = pathToFileURL(path.join(path.dirname(packageJsonPath), "dist", "index.mjs"));
+  entryUrl.searchParams.set("cacheBust", String(Date.now()));
+
+  return import(/* @vite-ignore */ entryUrl.href) as Promise<{
+    createMockKuaishouDramaTaskInput: () => unknown;
+    startKuaishouDramaRuntime: (
+      options: Record<string, unknown>,
+    ) => Promise<KuaishouDramaRuntime>;
+  }>;
+}
+
+function findLatestLogPath(paths = storagePaths()) {
+  mkdirSync(paths.logDir, { recursive: true });
+  const latestLogFile = readdirSync(paths.logDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^app-\d{4}-\d{2}-\d{2}\.(?:jsonl|log)$/i.test(entry.name))
+    .map((entry) => path.join(paths.logDir, entry.name))
+    .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
+
+  return latestLogFile ?? paths.logDir;
+}
+
+function openPathOrParent(targetPath: string) {
+  return openExistingPath(existsSync(targetPath) ? targetPath : path.dirname(targetPath));
 }
 
 async function defaultStoppedStatus(): Promise<KuaishouDramaServiceStatus> {
+  const config = readConfig();
+  const paths = storagePaths(config);
   return {
     platform: "kuaishou-drama",
     running: false,
     loginState: "unknown",
-    userDataDir: kuaishouDramaUserDataDir(),
+    userDataDir: paths.userDataDir,
+    accountProfileName: config.accountProfileName,
+    accountDir: paths.accountDir,
+    credentialStatePath: paths.credentialStatePath,
+    assetDownloadDir: paths.assetDownloadDir,
+    logFilePath: paths.logFilePath,
     pid: null,
   };
 }
@@ -133,12 +263,25 @@ async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
 
   const config = readConfig();
+  const paths = storagePaths(config);
+  ensureStorageDirectories(paths);
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
-  const runtimePackage = "@drama/kuaishou-drama-automation";
-  const { startKuaishouDramaRuntime } = await import(/* @vite-ignore */ runtimePackage);
+  const logRetentionDays = Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3);
+  const {
+    createMockKuaishouDramaTaskInput,
+    startKuaishouDramaRuntime,
+  } = await importKuaishouDramaRuntimePackage();
+  const task = config.mockTaskEnabled === "true"
+    ? createMockKuaishouDramaTaskInput()
+    : undefined;
   return startKuaishouDramaRuntime({
-    userDataDir: kuaishouDramaUserDataDir(),
-    credentialStatePath: kuaishouDramaCredentialStatePath(),
+    accountProfileName: config.accountProfileName,
+    accountDir: paths.accountDir,
+    userDataDir: paths.userDataDir,
+    credentialStatePath: paths.credentialStatePath,
+    assetDownloadDir: paths.assetDownloadDir,
+    logFilePath: paths.logFilePath,
+    logRetentionDays,
     onLog: (message: string) => {
       console.log(message);
     },
@@ -147,6 +290,7 @@ async function startRuntime() {
         headless: config.headless === "true",
         slowMo: operationDelayMs,
       },
+      task,
     },
   });
 }
@@ -155,6 +299,7 @@ export function registerKuaishouDramaPlatformHandlers() {
   ipcMain.handle("kuaishou-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),
+    storagePaths: storagePaths(),
     restartRequired: false,
   }));
 
@@ -166,6 +311,7 @@ export function registerKuaishouDramaPlatformHandlers() {
       return {
         config: nextConfig,
         path: configPath(),
+        storagePaths: storagePaths(nextConfig),
         restartRequired: runtimeController.running || runtimeController.startingPromise !== null,
       };
     },
@@ -180,6 +326,28 @@ export function registerKuaishouDramaPlatformHandlers() {
 
     return normalizePlatformRunDataDir(selectedPath, "kuaishou-drama");
   });
+
+  ipcMain.handle(
+    "kuaishou-drama:config:open-storage-path",
+    async (_event, key: keyof KuaishouDramaStoragePaths | "configFilePath" | "latestLog") => {
+      const paths = storagePaths();
+      ensureStorageDirectories(paths);
+
+      if (key === "configFilePath") {
+        return openPathOrParent(configPath());
+      }
+
+      if (key === "latestLog") {
+        return openExistingPath(findLatestLogPath(paths));
+      }
+
+      if (key === "credentialStatePath" || key === "logFilePath") {
+        return openPathOrParent(paths[key]);
+      }
+
+      return openExistingPath(paths[key]);
+    },
+  );
 
   ipcMain.handle("kuaishou-drama:service:status", () => status());
 

@@ -1,4 +1,5 @@
 import { app, BrowserWindow, ipcMain, Menu, nativeImage } from 'electron'
+import { setupTitlebar, attachTitlebarToWindow } from 'custom-electron-titlebar/main'
 import windowStateKeeper from 'electron-window-state'
 import { fileURLToPath } from 'node:url'
 import path from 'node:path'
@@ -33,6 +34,12 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL ? path.join(process.env.APP_ROOT, 
 
 let win: BrowserWindow | null
 
+setupTitlebar()
+ipcMain.removeAllListeners('update-window-controls')
+ipcMain.on('update-window-controls', (event) => {
+  event.returnValue = false
+})
+
 function getAppIconPath() {
   return path.join(process.env.VITE_PUBLIC, 'icon.png')
 }
@@ -51,12 +58,17 @@ function createWindow() {
     height: mainWindowState.height,
     minWidth: 1024,
     minHeight: 720,
+    title: 'AutoDrama',
+    titleBarStyle: 'hidden',
     icon: appIcon,
+    autoHideMenuBar: true,
     webPreferences: {
       preload: path.join(__dirname, 'preload.mjs'),
+      sandbox: false,
     },
   })
   mainWindowState.manage(win)
+  attachTitlebarToWindow(win)
   win.setMenu(null)
 
   if (VITE_DEV_SERVER_URL) {
