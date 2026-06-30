@@ -1,6 +1,6 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, Chrome, CloudDownload, Grid, Power } from "@mynaui/icons-react";
+import { Activity, Chrome, CloudDownload, Grid } from "@mynaui/icons-react";
 
 import { Button } from "@/components/ui/button";
 import {
@@ -282,7 +282,6 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
               disabled={actionDisabled}
               onClick={() => onStart(shouldRestart)}
             >
-              <Power className="size-3.5" data-icon="inline-start" aria-hidden="true" />
               {actionPending ? pendingLabel : actionLabel}
             </Button>
           </div>

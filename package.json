@@ -11,6 +11,7 @@
     "preview": "vp preview",
     "wechat-video:install-browsers": "node scripts/install-playwright-browsers.mjs",
     "wechat-video:check": "pnpm --filter @drama/wechat-video-automation check",
+    "wechat-video:build": "pnpm --filter @drama/wechat-video-automation build",
     "meituan-creation:check": "pnpm --filter @drama/meituan-creation-automation check",
     "meituan-creation:build": "pnpm --filter @drama/meituan-creation-automation build",
     "kuaishou-drama:check": "pnpm --filter @drama/kuaishou-drama-automation check",

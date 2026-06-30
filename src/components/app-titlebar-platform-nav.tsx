@@ -92,7 +92,7 @@ export function AppTitlebarPlatformNav() {
             <Tooltip key={platform.id}>
               <TooltipTrigger
                 type="button"
-                aria-label={`打开${platform.title}服务控制`}
+                aria-label={`打开${platform.title}`}
                 aria-pressed={active}
                 className={cn(
                   buttonVariants({ size: "icon-xs", variant: active ? "secondary" : "ghost" }),
@@ -110,7 +110,7 @@ export function AppTitlebarPlatformNav() {
                 />
               </TooltipTrigger>
               <TooltipContent side="bottom" sideOffset={8}>
-                {platform.title}服务控制
+                {platform.title}
               </TooltipContent>
             </Tooltip>
           );

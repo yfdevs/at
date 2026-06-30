@@ -1,5 +1,6 @@
+import { CheckCircle, DangerTriangle, Folder } from "@mynaui/icons-react";
 import { useEffect, useMemo, useState } from "react";
-import { CheckCircle, DangerTriangle, Folder, RefreshAlt, Save } from "@mynaui/icons-react";
+import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
@@ -28,6 +29,7 @@ import {
 } from "@/components/ui/select";
 import { Separator } from "@/components/ui/separator";
 import { Switch } from "@/components/ui/switch";
+import { routePath } from "@/config/navigation";
 import {
   wechatVideoService,
   type WechatVideoConfig,
@@ -261,6 +263,7 @@ const sections: Array<{
 ];
 
 export function WechatConfigurationPage() {
+  const navigate = useNavigate();
   const [config, setConfig] = useState<WechatVideoConfig>(emptyConfig);
   const [savedConfig, setSavedConfig] = useState<WechatVideoConfig>(emptyConfig);
   const [restartRequired, setRestartRequired] = useState(false);
@@ -296,6 +299,11 @@ export function WechatConfigurationPage() {
 
   const discardChanges = () => {
     setConfig(savedConfig);
+  };
+
+  const cancelConfig = () => {
+    discardChanges();
+    navigate(routePath("wechat/service"));
   };
 
   const saveConfig = async () => {
@@ -366,19 +374,10 @@ export function WechatConfigurationPage() {
             ) : null}
           </div>
           <div className="flex items-center gap-2 sm:justify-end">
-            {hasChanges ? (
-              <Button
-                className="w-fit"
-                disabled={loading}
-                onClick={discardChanges}
-                variant="outline"
-              >
-                <RefreshAlt />
-                放弃
-              </Button>
-            ) : null}
+            <Button className="w-fit" disabled={loading} onClick={cancelConfig} variant="outline">
+              取消
+            </Button>
             <Button className="w-fit" disabled={loading || !hasChanges} onClick={saveConfig}>
-              <Save />
               保存配置
             </Button>
           </div>
