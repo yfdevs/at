@@ -6,9 +6,9 @@ import tailwindcss from '@tailwindcss/vite'
 
 // https://vitejs.dev/config/
 export default defineConfig({
-  staged: {
-    "*": "vp check --fix --no-fmt"
-  },
+  // staged: {
+  //   "*": "vp check --fix --no-fmt"
+  // },
   fmt: {
     ignorePatterns: [
       "dist",

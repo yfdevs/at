@@ -1,9 +1,15 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Activity, Chrome, CloudDownload, Grid } from "@mynaui/icons-react";
+import {
+  Activity,
+  Chrome,
+  CloudDownload,
+  Grid,
+} from "@mynaui/icons-react";
 
 import { Button } from "@/components/ui/button";
+import { Input } from "@/components/ui/input";
 import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
@@ -18,8 +24,10 @@ import {
   BAIDU_NETDISK_DEFAULT_DOWNLOAD_DIR,
   controlBaiduNetdiskCdp,
   downloadBaiduNetdiskShare,
+  getBaiduNetdiskConfig,
   getBaiduNetdiskStatus,
   parseBaiduNetdiskShareText,
+  saveBaiduNetdiskConfig,
   type BaiduNetdiskCdpStatus,
 } from "@/platforms/baidu-netdisk/service";
 
@@ -40,7 +48,7 @@ type BaiduDownloadState = "idle" | "downloading" | "success" | "error";
 const titlebarMetricButtonClass =
   "inline-flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md bg-transparent px-1.5 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
 
-const titlebarNetdiskButtonClass =
+const titlebarIconButtonClass =
   "inline-flex h-6 w-7 cursor-pointer select-none items-center justify-center rounded-md bg-transparent text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
 
 function formatBytes(bytes: number) {
@@ -223,10 +231,22 @@ type BaiduNetdiskPopoverProps = {
   error: string | null;
   actionPending: BaiduAction | null;
   onStart: (restart: boolean) => void;
+  onConfigSaved: () => void;
 };
 
-function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNetdiskPopoverProps) {
+function BaiduNetdiskPopover({
+  status,
+  error,
+  actionPending,
+  onStart,
+  onConfigSaved,
+}: BaiduNetdiskPopoverProps) {
   const [shareText, setShareText] = useState("");
+  const [installPath, setInstallPath] = useState("");
+  const [savedInstallPath, setSavedInstallPath] = useState("");
+  const [installPathSaving, setInstallPathSaving] = useState(false);
+  const [installPathMessage, setInstallPathMessage] = useState<string | null>(null);
+  const [installPathError, setInstallPathError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<BaiduDownloadState>("idle");
   const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
   const summary = baiduNetdiskSummary(status, error);
@@ -243,6 +263,33 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
   const pendingLabel = actionPending === "restart" ? "重启中" : "启动中";
   const actionDisabled = actionPending !== null || status?.isWindows === false;
   const downloadDisabled = !status?.ready || !parsedShare || downloadState === "downloading";
+  const normalizedInstallPath = installPath.trim();
+  const installPathDirty = normalizedInstallPath !== savedInstallPath;
+
+  useEffect(() => {
+    let disposed = false;
+
+    void (async () => {
+      try {
+        const result = await getBaiduNetdiskConfig();
+        const nextInstallPath = result.config.executablePath.trim();
+
+        if (!disposed) {
+          setInstallPath(nextInstallPath);
+          setSavedInstallPath(nextInstallPath);
+          setInstallPathError(null);
+        }
+      } catch (configError) {
+        if (!disposed) {
+          setInstallPathError(errorMessage(configError));
+        }
+      }
+    })();
+
+    return () => {
+      disposed = true;
+    };
+  }, []);
 
   const handleShareTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
     setShareText(event.target.value);
@@ -250,6 +297,36 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
       setDownloadState("idle");
       setDownloadMessage(null);
     }
+  };
+
+  const handleInstallPathChange = (event: React.ChangeEvent<HTMLInputElement>) => {
+    setInstallPath(event.target.value);
+    setInstallPathMessage(null);
+    setInstallPathError(null);
+  };
+
+  const handleSaveInstallPath = () => {
+    void (async () => {
+      setInstallPathSaving(true);
+      setInstallPathMessage(null);
+      setInstallPathError(null);
+
+      try {
+        const result = await saveBaiduNetdiskConfig({
+          executablePath: normalizedInstallPath,
+        });
+        const nextInstallPath = result.config.executablePath.trim();
+
+        setInstallPath(nextInstallPath);
+        setSavedInstallPath(nextInstallPath);
+        setInstallPathMessage(nextInstallPath ? "安装目录已保存。" : "已恢复默认自动查找。");
+        onConfigSaved();
+      } catch (saveError) {
+        setInstallPathError(errorMessage(saveError));
+      } finally {
+        setInstallPathSaving(false);
+      }
+    })();
   };
 
   const handleDownload = () => {
@@ -287,7 +364,7 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
               render={
                 <button
                   type="button"
-                  className={titlebarNetdiskButtonClass}
+                  className={titlebarIconButtonClass}
                   aria-label={`百度网盘：${summary}`}
                 />
               }
@@ -314,6 +391,38 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
             </div>
           </div>
         </PopoverHeader>
+
+        <div className="grid gap-1.5">
+          <label htmlFor="baidu-netdisk-install-path" className="text-xs font-medium">
+            安装目录
+          </label>
+          <div className="flex items-center gap-2">
+            <Input
+              id="baidu-netdisk-install-path"
+              value={installPath}
+              onChange={handleInstallPathChange}
+              placeholder="留空自动默认查找"
+              className="h-7 text-xs"
+            />
+            <Button
+              type="button"
+              size="sm"
+              variant="outline"
+              disabled={installPathSaving || !installPathDirty}
+              onClick={handleSaveInstallPath}
+            >
+              {installPathSaving ? "保存中" : "保存"}
+            </Button>
+          </div>
+          <p className="text-xs leading-4 text-muted-foreground">
+            可填写安装目录或完整 exe 路径；留空时使用默认位置自动查找。
+          </p>
+          {installPathError ? (
+            <p className="text-xs leading-4 text-destructive">{installPathError}</p>
+          ) : installPathMessage ? (
+            <p className="text-xs leading-4 text-muted-foreground">{installPathMessage}</p>
+          ) : null}
+        </div>
 
         <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-2 text-xs">
           <div className="flex items-center justify-between gap-3">
@@ -577,6 +686,7 @@ export function AppTitlebarMemory() {
         error={baiduError}
         actionPending={baiduAction}
         onStart={handleBaiduStart}
+        onConfigSaved={refreshBaiduStatus}
       />
     </div>,
     host,

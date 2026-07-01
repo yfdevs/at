@@ -1,5 +1,5 @@
 import { execFile, spawn } from "node:child_process";
-import { access } from "node:fs/promises";
+import { access, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
@@ -53,6 +53,18 @@ async function pathExists(filePath: string) {
   } catch {
     return false;
   }
+}
+
+async function pathKind(filePath: string) {
+  try {
+    const fileStat = await stat(filePath);
+    if (fileStat.isDirectory()) return "directory";
+    if (fileStat.isFile()) return "file";
+  } catch {
+    return null;
+  }
+
+  return null;
 }
 
 async function getJson<T>(url: string, timeoutMs = requestTimeoutMs) {
@@ -146,8 +158,27 @@ export async function findBaiduNetdiskExecutable(explicitPath?: string) {
   const explicit = explicitPath?.trim();
 
   if (explicit) {
-    if (await pathExists(explicit)) return explicit;
-    throw new Error(`百度网盘启动文件不存在：${explicit}`);
+    const explicitKind = await pathKind(explicit);
+
+    if (explicitKind === "file") {
+      return explicit;
+    }
+
+    if (explicitKind === "directory") {
+      const directoryCandidates = [
+        path.join(explicit, "module", "BrowserEngine", "BaiduNetdiskUnite.exe"),
+        path.join(explicit, "BaiduNetdiskUnite.exe"),
+        path.join(explicit, "BaiduNetdisk.exe"),
+      ];
+
+      for (const candidate of directoryCandidates) {
+        if (await pathExists(candidate)) return candidate;
+      }
+
+      throw new Error(`百度网盘安装目录中没有找到启动文件：${explicit}`);
+    }
+
+    throw new Error(`百度网盘安装目录或启动文件不存在：${explicit}`);
   }
 
   for (const candidate of defaultEngineExecutableCandidates()) {

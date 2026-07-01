@@ -4,6 +4,13 @@ import windowStateKeeper from "electron-window-state";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { registerAppUpdaterHandlers } from "./app-updater";
+import {
+  getMainLogDir,
+  logMain,
+  openMainLogDir,
+  registerMainProcessLogging,
+} from "./main-logger";
 import {
   getWechatVideoBrowserInstanceCount,
   getWechatVideoPlatformRuntimeSummary,
@@ -51,6 +58,16 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   ? path.join(process.env.APP_ROOT, "public")
   : RENDERER_DIST;
 
+registerMainProcessLogging();
+logMain("info", "app bootstrap", {
+  version: app.getVersion(),
+  packaged: app.isPackaged,
+  appRoot: process.env.APP_ROOT,
+  mainDist: MAIN_DIST,
+  rendererDist: RENDERER_DIST,
+  logDir: getMainLogDir(),
+});
+
 let win: BrowserWindow | null;
 
 type PlatformId = "wechat-drama" | "meituan-drama" | "kuaishou-drama" | "tiktok-drama";
@@ -66,6 +83,8 @@ function getAppIconPath() {
 }
 
 function createWindow() {
+  logMain("info", "creating main window");
+
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
     width: 480,
@@ -97,18 +116,44 @@ function createWindow() {
       sandbox: false,
     },
   });
+
+  win.webContents.once("did-finish-load", () => {
+    logMain("info", "main window did finish load", {
+      url: win?.webContents.getURL(),
+    });
+  });
+
+  win.webContents.once("dom-ready", () => {
+    logMain("info", "main window dom ready", {
+      url: win?.webContents.getURL(),
+    });
+  });
+
+  win.on("closed", () => {
+    logMain("info", "main window closed");
+  });
+
   mainWindowState.manage(win);
   attachTitlebarToWindow(win);
   win.setMenu(null);
 
   if (VITE_DEV_SERVER_URL) {
-    win.loadURL(VITE_DEV_SERVER_URL);
+    logMain("info", "loading renderer url", { url: VITE_DEV_SERVER_URL });
+    void win.loadURL(VITE_DEV_SERVER_URL).catch((error) => {
+      logMain("error", "main window load url failed", error);
+    });
   } else {
-    win.loadFile(path.join(RENDERER_DIST, "index.html"));
+    const indexPath = path.join(RENDERER_DIST, "index.html");
+    logMain("info", "loading renderer file", { indexPath });
+    void win.loadFile(indexPath).catch((error) => {
+      logMain("error", "main window load file failed", error);
+    });
   }
 }
 
 app.on("window-all-closed", () => {
+  logMain("info", "all windows closed");
+
   if (process.platform !== "darwin") {
     app.quit();
     win = null;
@@ -116,6 +161,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
+  logMain("info", "app before quit");
   stopWechatVideoPlatformRuntime();
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
@@ -129,19 +175,28 @@ app.on("activate", () => {
 });
 
 app.whenReady().then(() => {
-  Menu.setApplicationMenu(null);
-  ipcMainHandleAppRuntimeStatus();
-  registerWechatVideoPlatformHandlers();
-  registerMeituanCreationPlatformHandlers();
-  registerKuaishouDramaPlatformHandlers();
-  registerTiktokDramaCenterPlatformHandlers();
-  registerBaiduNetdiskPlatformHandlers();
+  try {
+    logMain("info", "app ready");
+    Menu.setApplicationMenu(null);
+    ipcMainHandleAppRuntimeStatus();
+    registerWechatVideoPlatformHandlers();
+    registerMeituanCreationPlatformHandlers();
+    registerKuaishouDramaPlatformHandlers();
+    registerTiktokDramaCenterPlatformHandlers();
+    registerBaiduNetdiskPlatformHandlers();
+    registerAppUpdaterHandlers({
+      getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
+    });
 
-  if (process.platform === "darwin" && VITE_DEV_SERVER_URL) {
-    app.dock?.setIcon(getAppIconPath());
+    if (process.platform === "darwin" && VITE_DEV_SERVER_URL) {
+      app.dock?.setIcon(getAppIconPath());
+    }
+
+    createWindow();
+  } catch (error) {
+    logMain("error", "app ready startup failed", error);
+    throw error;
   }
-
-  createWindow();
 });
 
 function ipcMainHandleAppRuntimeStatus() {
@@ -165,6 +220,8 @@ function ipcMainHandleAppRuntimeStatus() {
   ipcMain.handle("app:platform:open-logs", (_event, platformId: PlatformId) =>
     openPlatformLogDir(platformId),
   );
+
+  ipcMain.handle("app:logs:open-main", () => openMainLogDir());
 }
 
 function getPlatformRuntimeSummary(platformId: PlatformId) {

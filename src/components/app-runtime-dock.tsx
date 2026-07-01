@@ -2,6 +2,7 @@ import { useEffect, useMemo, useState } from "react";
 import { Chrome, Folder, Info } from "@mynaui/icons-react";
 import { useLocation } from "react-router-dom";
 
+import { AppUpdateControl } from "@/components/app-update-control";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { defaultRoute, isAppRoute, platformForPath } from "@/config/navigation";
@@ -40,6 +41,7 @@ export function AppRuntimeDock() {
   const currentPath = location.pathname.replace(/^\/+/, "");
   const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
   const activePlatform = platformForPath(activeRoute);
+  const visible = activeRoute === activePlatform.serviceRoute;
   const [runtime, setRuntime] = useState<AppPlatformRuntimeResult | null>(null);
   const [error, setError] = useState<string | null>(null);
   const [openingLogs, setOpeningLogs] = useState(false);
@@ -54,7 +56,7 @@ export function AppRuntimeDock() {
   );
 
   useEffect(() => {
-    if (!window.ipcRenderer) return;
+    if (!window.ipcRenderer || !visible) return;
 
     let disposed = false;
 
@@ -82,9 +84,9 @@ export function AppRuntimeDock() {
       disposed = true;
       window.clearInterval(interval);
     };
-  }, [activePlatform.id]);
+  }, [activePlatform.id, visible]);
 
-  if (!window.ipcRenderer) {
+  if (!window.ipcRenderer || !visible) {
     return null;
   }
 
@@ -110,14 +112,14 @@ export function AppRuntimeDock() {
   return (
     <aside
       aria-label="当前平台运行状态"
-      className="fixed right-2 bottom-2 z-30 flex max-w-[calc(100vw-1rem)] items-center gap-2 rounded-lg border border-border/80 bg-background px-2 py-1.5 text-xs text-foreground [-webkit-app-region:no-drag]"
+      className="fixed right-2 bottom-2 z-30 flex max-w-[calc(100vw-1rem)] items-center gap-1 text-xs text-foreground [-webkit-app-region:no-drag]"
     >
       <Tooltip>
         <TooltipTrigger
           type="button"
-          className="flex min-w-0 items-center gap-2 rounded-md px-1 py-0.5 text-left outline-none transition-colors hover:bg-muted focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="flex h-7 min-w-0 items-center gap-1.5 rounded-md bg-background/90 px-1.5 text-left  outline-none transition-colors hover:bg-background focus-visible:ring-2 focus-visible:ring-ring/50"
         >
-          <span className="relative grid size-6 shrink-0 place-items-center rounded-md border border-border bg-card">
+          <span className="relative grid size-5 shrink-0 place-items-center rounded-sm">
             <img
               src={activePlatform.logoSrc}
               alt=""
@@ -133,13 +135,10 @@ export function AppRuntimeDock() {
               aria-hidden="true"
             />
           </span>
-          <span className="grid min-w-0 gap-0.5">
-            <span className="max-w-28 truncate font-medium leading-4">{activePlatform.title}</span>
-            <span className="flex items-center gap-1 text-[11px] leading-3 text-muted-foreground">
-              <span>{stateLabel}</span>
-              <span aria-hidden="true">·</span>
-              <span className="tabular-nums">{versionText}</span>
-            </span>
+          <span className="flex min-w-0 items-center gap-1">
+            <span className="max-w-20 truncate font-medium leading-none">{activePlatform.title}</span>
+            <span className="text-muted-foreground" aria-hidden="true">/</span>
+            <span className="shrink-0 text-muted-foreground">{stateLabel}</span>
           </span>
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8} className="grid max-w-72 gap-1.5">
@@ -154,10 +153,11 @@ export function AppRuntimeDock() {
         </TooltipContent>
       </Tooltip>
 
+
       <Tooltip>
         <TooltipTrigger
           type="button"
-          className="flex h-7 items-center gap-1 rounded-md px-1.5 text-muted-foreground outline-none transition-colors hover:bg-muted hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
+          className="flex h-7 items-center gap-1 px-1.5 text-muted-foreground outline-none transition-colors hover:bg-background hover:text-foreground focus-visible:ring-2 focus-visible:ring-ring/50"
           aria-label={browserSummary(runtime)}
         >
           {visibleInstances.length > 0 ? (
@@ -165,7 +165,7 @@ export function AppRuntimeDock() {
               {visibleInstances.map((instance) => (
                 <span
                   key={instance.id}
-                  className="grid size-4 place-items-center rounded-sm border border-background bg-secondary text-sky-600"
+                  className="grid size-4 place-items-center rounded-sm bg-secondary text-sky-600"
                   title={instance.label}
                 >
                   <Chrome className="size-3" aria-hidden="true" />
@@ -192,13 +192,13 @@ export function AppRuntimeDock() {
         </TooltipContent>
       </Tooltip>
 
+      <AppUpdateControl />
       <Tooltip>
         <TooltipTrigger
           render={
             <Button
-              type="button"
               size="xs"
-              variant="outline"
+              variant="ghost"
               disabled={openingLogs}
               onClick={handleOpenLogs}
             />

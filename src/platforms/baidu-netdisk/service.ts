@@ -1,5 +1,15 @@
 export const BAIDU_NETDISK_DEFAULT_DOWNLOAD_DIR = "D:\\BaiduNetdiskDownload";
 
+export type BaiduNetdiskConfig = {
+  debugPort: string;
+  executablePath: string;
+};
+
+export type BaiduNetdiskConfigResult = {
+  config: BaiduNetdiskConfig;
+  path: string;
+};
+
 export type BaiduNetdiskCdpStatus = {
   platform: "baidu-netdisk";
   isWindows: boolean;
@@ -82,6 +92,19 @@ export async function getBaiduNetdiskStatus() {
   return requireIpcRenderer("百度网盘状态").invoke(
     "baidu-netdisk:service:status",
   ) as Promise<BaiduNetdiskCdpStatus>;
+}
+
+export async function getBaiduNetdiskConfig() {
+  return requireIpcRenderer("百度网盘配置").invoke(
+    "baidu-netdisk:config:get",
+  ) as Promise<BaiduNetdiskConfigResult>;
+}
+
+export async function saveBaiduNetdiskConfig(config: Partial<BaiduNetdiskConfig>) {
+  return requireIpcRenderer("保存百度网盘配置").invoke(
+    "baidu-netdisk:config:save",
+    config,
+  ) as Promise<BaiduNetdiskConfigResult>;
 }
 
 export async function controlBaiduNetdiskCdp(restart: boolean) {

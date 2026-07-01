@@ -1,6 +1,6 @@
 {
   $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
-  appId: "YourAppID",
+  appId: "com.yfdevs.autodrama",
   asar: true,
   npmRebuild: false,
   nodeGypRebuild: false,
@@ -31,6 +31,14 @@
     ],
     icon: "build/icons/icon.ico",
     artifactName: "${productName}-Windows-${version}-Setup.${ext}",
+    publish: [
+      {
+        provider: "github",
+        owner: "yfdevs",
+        repo: "at",
+        releaseType: "release",
+      },
+    ],
   },
   nsis: {
     oneClick: false,

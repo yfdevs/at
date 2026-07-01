@@ -102,6 +102,10 @@ function readConfig() {
   return normalizeConfig(getStore().get("config"));
 }
 
+function writeConfig(config: BaiduNetdiskConfig) {
+  getStore().set("config", config);
+}
+
 function configPath() {
   return getStore().path;
 }
@@ -200,6 +204,20 @@ export function registerBaiduNetdiskPlatformHandlers() {
     config: readConfig(),
     path: configPath(),
   }));
+
+  ipcMain.handle("baidu-netdisk:config:save", (_event, config: Partial<BaiduNetdiskConfig>) => {
+    const nextConfig = normalizeConfig({
+      ...readConfig(),
+      ...config,
+    });
+
+    writeConfig(nextConfig);
+
+    return {
+      config: nextConfig,
+      path: configPath(),
+    } satisfies BaiduNetdiskConfigResult;
+  });
 
   ipcMain.handle("baidu-netdisk:service:status", () => status());
   ipcMain.handle("baidu-netdisk:service:start-cdp", () => startCdp(false));
