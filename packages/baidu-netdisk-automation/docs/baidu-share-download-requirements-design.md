@@ -66,9 +66,9 @@ Start-Process -WorkingDirectory $engineDir -FilePath "$engineDir\BaiduNetdiskUni
 
 Windows 版百度网盘的 `BaiduNetdisk.exe` 不会把 `--remote-debugging-port` 可靠传给实际 Electron 内核进程；需要直接启动 `module\BrowserEngine\BaiduNetdiskUnite.exe`。脚本只检测指定 CDP 端口是否可用，不负责启动或重启客户端。如果客户端已经用不带调试端口的方式启动，需要先退出百度网盘后手动重启。
 
-### 4.2 输入文件
+### 4.2 输入来源
 
-默认读取项目根目录下的 `baudi.txt`，格式示例：
+Electron 应用通过 IPC 传入分享文本。CLI 调试时必须显式传入 `--share-file`，不再读取默认分享文件。分享文本格式示例：
 
 ```text
 通过网盘分享的文件：寻壶乌龙
@@ -83,24 +83,24 @@ Windows 版百度网盘的 `BaiduNetdisk.exe` 不会把 `--remote-debugging-port
 
 ### 4.3 命令参数
 
-默认命令：
+CLI 调试命令：
 
 ```powershell
-pnpm download:baidu-share
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt
 ```
 
 可选参数：
 
 ```powershell
-pnpm download:baidu-share -- --share-file=baudi.txt
-pnpm download:baidu-share -- --port=9337
-pnpm download:baidu-share -- --wait-complete-ms=0
-pnpm download:baidu-share -- --force-click
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --port=9337
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --wait-complete-ms=0
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --force-click
 ```
 
 参数含义：
 
-- `--share-file`：指定分享文本文件，默认 `baudi.txt`。
+- `--share-file`：指定分享文本文件；CLI 模式必填。
 - `--port`：指定百度网盘 CDP 端口，默认 `9337`。
 - `--wait-complete-ms`：等待本地下载完成的最长时间，默认 1 小时；小于等于 0 时只提交下载任务，不等待完成。
 - `--force-click`：即使检测到本地已有下载目录，也继续走保存和下载点击流程。
@@ -418,6 +418,5 @@ CDP 能做的事情包括：
 ## 11. 当前实现文件
 
 - 核心脚本：`src/download-baidu-folder.ts`
-- 默认分享文件：`baudi.txt`
-- npm 脚本：`package.json` 中的 `download:baidu-share`
+- npm 脚本：`package.json` 中的 `download:share`
 - 相关历史记录：`docs/baidu-netdisk-electron-cdp.md`

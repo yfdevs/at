@@ -87,6 +87,33 @@ export function getKuaishouDramaRunningPlatformCount() {
   return runtimeController.current?.getStatus().running ? 1 : 0;
 }
 
+export function getKuaishouDramaPlatformRuntimeSummary() {
+  const runtimeStatus = runtimeController.current?.getStatus();
+  const running = Boolean(runtimeStatus?.running);
+  const paths = storagePaths();
+
+  return {
+    platform: "kuaishou-drama" as const,
+    running,
+    browserInstanceCount: running ? 1 : 0,
+    browserInstances: running
+      ? [{
+          id: runtimeStatus?.accountProfileName ?? "default",
+          label: runtimeStatus?.accountProfileName ?? "快手短剧",
+          loginState: runtimeStatus?.loginState ?? "unknown",
+          activeUrl: runtimeStatus?.activeUrl,
+        }]
+      : [],
+    logDir: paths.logDir,
+  };
+}
+
+export function openKuaishouDramaLogDir() {
+  const paths = storagePaths();
+  mkdirSync(paths.logDir, { recursive: true });
+  return openExistingPath(paths.logDir);
+}
+
 function normalizeOperationDelaySeconds(value: string | undefined) {
   const nextValue = value?.trim();
   if (!nextValue || nextValue === "0.02") {

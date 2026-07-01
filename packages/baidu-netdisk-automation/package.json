@@ -9,6 +9,11 @@
       "development": "./src/index.ts",
       "default": "./dist/index.mjs"
     },
+    "./download-baidu-folder": {
+      "types": "./src/download-baidu-folder.ts",
+      "development": "./src/download-baidu-folder.ts",
+      "default": "./dist/download-baidu-folder.mjs"
+    },
     "./package.json": "./package.json"
   },
   "scripts": {
@@ -20,7 +25,11 @@
   },
   "devDependencies": {
     "@types/node": "latest",
+    "@types/ws": "^8.18.1",
     "typescript": "latest",
     "vite": "catalog:"
+  },
+  "dependencies": {
+    "ws": "^8.21.0"
   }
 }

@@ -187,7 +187,7 @@ export function ConfigurationPageFrame({
           </div>
           <div className="flex items-center gap-2 sm:justify-end">
             <Button className="w-fit" disabled={loading} onClick={cancelConfig} variant="outline">
-              取消
+              关闭
             </Button>
             <Button className="w-fit" disabled={loading || !hasChanges} onClick={onSave}>
               保存配置

@@ -1,23 +1,44 @@
 import type { Icon } from "@mynaui/icons-react";
 import { FineTune, Terminal } from "@mynaui/icons-react";
 
-export type PlatformId = "wechat" | "meituan" | "kuaishou" | "tiktok-drama-center";
+export type PlatformId =
+  | "wechat-drama"
+  | "meituan-drama"
+  | "kuaishou-drama"
+  | "tiktok-drama";
 
 export type AppRoute =
-  | "wechat/publish"
-  | "wechat/config"
-  | "wechat/accounts"
-  | "wechat/service"
-  | "meituan/service"
-  | "meituan/config"
-  | "kuaishou/service"
-  | "kuaishou/config"
-  | "kuaishou/projects"
-  | "kuaishou/schedule"
-  | "kuaishou/analytics"
-  | "kuaishou/settings"
-  | "tiktok-drama-center/service"
-  | "tiktok-drama-center/config";
+  | "wechat-drama/publish"
+  | "wechat-drama/config"
+  | "wechat-drama/accounts"
+  | "wechat-drama/service"
+  | "meituan-drama/service"
+  | "meituan-drama/config"
+  | "kuaishou-drama/service"
+  | "kuaishou-drama/config"
+  | "kuaishou-drama/projects"
+  | "kuaishou-drama/schedule"
+  | "kuaishou-drama/analytics"
+  | "kuaishou-drama/settings"
+  | "tiktok-drama/service"
+  | "tiktok-drama/config";
+
+const appRoutes = [
+  "wechat-drama/publish",
+  "wechat-drama/config",
+  "wechat-drama/accounts",
+  "wechat-drama/service",
+  "meituan-drama/service",
+  "meituan-drama/config",
+  "kuaishou-drama/service",
+  "kuaishou-drama/config",
+  "kuaishou-drama/projects",
+  "kuaishou-drama/schedule",
+  "kuaishou-drama/analytics",
+  "kuaishou-drama/settings",
+  "tiktok-drama/service",
+  "tiktok-drama/config",
+] as const satisfies readonly AppRoute[];
 
 export type NavigationItem = {
   title: string;
@@ -39,7 +60,7 @@ export type PlatformNavigationItem = {
   logoSrc: string;
 };
 
-export const defaultRoute: AppRoute = "wechat/service";
+export const defaultRoute: AppRoute = "wechat-drama/service";
 
 export function routePath(route: AppRoute) {
   return `/${route}`;
@@ -47,35 +68,35 @@ export function routePath(route: AppRoute) {
 
 export const platformNavigation: PlatformNavigationItem[] = [
   {
-    id: "wechat",
+    id: "wechat-drama",
     title: "微信视频号",
-    routePrefix: "wechat",
-    serviceRoute: "wechat/service",
-    configRoute: "wechat/config",
+    routePrefix: "wechat-drama",
+    serviceRoute: "wechat-drama/service",
+    configRoute: "wechat-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}wx.svg`,
   },
   {
-    id: "meituan",
+    id: "meituan-drama",
     title: "美团创作平台",
-    routePrefix: "meituan",
-    serviceRoute: "meituan/service",
-    configRoute: "meituan/config",
+    routePrefix: "meituan-drama",
+    serviceRoute: "meituan-drama/service",
+    configRoute: "meituan-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}meituan.svg`,
   },
   {
-    id: "kuaishou",
+    id: "kuaishou-drama",
     title: "快手短剧",
-    routePrefix: "kuaishou",
-    serviceRoute: "kuaishou/service",
-    configRoute: "kuaishou/config",
+    routePrefix: "kuaishou-drama",
+    serviceRoute: "kuaishou-drama/service",
+    configRoute: "kuaishou-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}kuaishou.svg`,
   },
   {
-    id: "tiktok-drama-center",
-    title: "TikTok Drama Center",
-    routePrefix: "tiktok-drama-center",
-    serviceRoute: "tiktok-drama-center/service",
-    configRoute: "tiktok-drama-center/config",
+    id: "tiktok-drama",
+    title: "TikTok",
+    routePrefix: "tiktok-drama",
+    serviceRoute: "tiktok-drama/service",
+    configRoute: "tiktok-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}tiktok.svg`,
   },
 ];
@@ -86,12 +107,12 @@ export const navigationGroups: NavigationGroup[] = [
     items: [
       {
         title: "服务控制",
-        route: "wechat/service",
+        route: "wechat-drama/service",
         icon: Terminal,
       },
       {
         title: "配置管理",
-        route: "wechat/config",
+        route: "wechat-drama/config",
         icon: FineTune,
       },
     ],
@@ -101,12 +122,12 @@ export const navigationGroups: NavigationGroup[] = [
     items: [
       {
         title: "服务控制",
-        route: "meituan/service",
+        route: "meituan-drama/service",
         icon: Terminal,
       },
       {
         title: "配置管理",
-        route: "meituan/config",
+        route: "meituan-drama/config",
         icon: FineTune,
       },
     ],
@@ -116,27 +137,27 @@ export const navigationGroups: NavigationGroup[] = [
     items: [
       {
         title: "服务控制",
-        route: "kuaishou/service",
+        route: "kuaishou-drama/service",
         icon: Terminal,
       },
       {
         title: "配置管理",
-        route: "kuaishou/config",
+        route: "kuaishou-drama/config",
         icon: FineTune,
       },
     ],
   },
   {
-    title: "TikTok Drama Center",
+    title: "TikTok",
     items: [
       {
         title: "服务控制",
-        route: "tiktok-drama-center/service",
+        route: "tiktok-drama/service",
         icon: Terminal,
       },
       {
         title: "配置管理",
-        route: "tiktok-drama-center/config",
+        route: "tiktok-drama/config",
         icon: FineTune,
       },
     ],
@@ -144,7 +165,7 @@ export const navigationGroups: NavigationGroup[] = [
 ];
 
 export function isAppRoute(route: string): route is AppRoute {
-  return navigationGroups.some((group) => group.items.some((item) => item.route === route));
+  return appRoutes.includes(route as AppRoute);
 }
 
 export function platformForPath(route: string) {

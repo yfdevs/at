@@ -6,28 +6,36 @@ import path from "node:path";
 
 import {
   getWechatVideoBrowserInstanceCount,
+  getWechatVideoPlatformRuntimeSummary,
   getWechatVideoRunningPlatformCount,
+  openWechatVideoLogDir,
   registerWechatVideoPlatformHandlers,
   stopWechatVideoPlatformRuntime,
-} from "./platforms/wechat-video";
+} from "./platforms/wechat-drama";
 import {
   getMeituanCreationBrowserInstanceCount,
+  getMeituanCreationPlatformRuntimeSummary,
   getMeituanCreationRunningPlatformCount,
+  openMeituanCreationLogDir,
   registerMeituanCreationPlatformHandlers,
   stopMeituanCreationPlatformRuntime,
-} from "./platforms/meituan-creation";
+} from "./platforms/meituan-drama";
 import {
   getKuaishouDramaBrowserInstanceCount,
+  getKuaishouDramaPlatformRuntimeSummary,
   getKuaishouDramaRunningPlatformCount,
+  openKuaishouDramaLogDir,
   registerKuaishouDramaPlatformHandlers,
   stopKuaishouDramaPlatformRuntime,
 } from "./platforms/kuaishou-drama";
 import {
   getTiktokDramaCenterBrowserInstanceCount,
+  getTiktokDramaCenterPlatformRuntimeSummary,
   getTiktokDramaCenterRunningPlatformCount,
+  openTiktokDramaCenterLogDir,
   registerTiktokDramaCenterPlatformHandlers,
   stopTiktokDramaCenterPlatformRuntime,
-} from "./platforms/tiktok-drama-center";
+} from "./platforms/tiktok-drama";
 import { registerBaiduNetdiskPlatformHandlers } from "./platforms/baidu-netdisk";
 import { readMemoryStatus } from "./platforms/shared";
 
@@ -45,6 +53,8 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
 
 let win: BrowserWindow | null;
 
+type PlatformId = "wechat-drama" | "meituan-drama" | "kuaishou-drama" | "tiktok-drama";
+
 setupTitlebar();
 ipcMain.removeAllListeners("update-window-controls");
 ipcMain.on("update-window-controls", (event) => {
@@ -58,7 +68,7 @@ function getAppIconPath() {
 function createWindow() {
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
-    width: 720,
+    width: 480,
     height: 680,
   };
   const mainWindowState = windowStateKeeper({
@@ -146,6 +156,45 @@ function ipcMainHandleAppRuntimeStatus() {
       memory: await readMemoryStatus(),
     };
   });
+
+  ipcMain.handle("app:platform:runtime", (_event, platformId: PlatformId) => ({
+    appVersion: app.getVersion(),
+    platform: getPlatformRuntimeSummary(platformId),
+  }));
+
+  ipcMain.handle("app:platform:open-logs", (_event, platformId: PlatformId) =>
+    openPlatformLogDir(platformId),
+  );
+}
+
+function getPlatformRuntimeSummary(platformId: PlatformId) {
+  switch (platformId) {
+    case "wechat-drama":
+      return getWechatVideoPlatformRuntimeSummary();
+    case "meituan-drama":
+      return getMeituanCreationPlatformRuntimeSummary();
+    case "kuaishou-drama":
+      return getKuaishouDramaPlatformRuntimeSummary();
+    case "tiktok-drama":
+      return getTiktokDramaCenterPlatformRuntimeSummary();
+    default:
+      throw new Error(`未知平台：${String(platformId)}`);
+  }
+}
+
+function openPlatformLogDir(platformId: PlatformId) {
+  switch (platformId) {
+    case "wechat-drama":
+      return openWechatVideoLogDir();
+    case "meituan-drama":
+      return openMeituanCreationLogDir();
+    case "kuaishou-drama":
+      return openKuaishouDramaLogDir();
+    case "tiktok-drama":
+      return openTiktokDramaCenterLogDir();
+    default:
+      throw new Error(`未知平台：${String(platformId)}`);
+  }
 }
 
 function getGlobalBrowserInstanceCount() {

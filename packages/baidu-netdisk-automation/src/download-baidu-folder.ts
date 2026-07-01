@@ -1,19 +1,15 @@
 import { spawn } from "node:child_process";
-import { access, readdir, readFile, stat } from "node:fs/promises";
+import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
+import WebSocket from "ws";
 
-const args = process.argv.slice(2).filter((arg) => arg !== "--");
-const shareFile = getArg("--share-file") ?? "baudi.txt";
-const debugPort = numberArg("--port") ?? 9337;
-const waitCompleteMs = numberArg("--wait-complete-ms") ?? 60 * 60 * 1000;
-const forceClick = args.includes("--force-click");
-const downloadStrategy = parseDownloadStrategy(
-  getArg("--strategy") ?? getArg("--download-strategy") ?? "auto",
-);
 const debugHost = "127.0.0.1";
 const requestTimeoutMs = 2500;
 
-type DownloadStrategy = "auto" | "direct" | "save";
+export const DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR = "D:\\BaiduNetdiskDownload";
+
+export type DownloadStrategy = "auto" | "direct" | "save";
 
 type CdpTarget = {
   id: string;
@@ -36,10 +32,30 @@ type Rect = {
   height: number;
 };
 
-type ShareInfo = {
+export type BaiduNetdiskShareInfo = {
   link: string;
   pwd: string;
   name: string;
+};
+
+type ShareInfo = BaiduNetdiskShareInfo;
+
+export type BaiduNetdiskShareDownloadOptions = {
+  shareText?: string;
+  shareFile?: string;
+  port?: number;
+  waitCompleteMs?: number;
+  forceClick?: boolean;
+  strategy?: DownloadStrategy;
+  downloadDir?: string;
+};
+
+export type BaiduNetdiskShareDownloadResult = {
+  share: BaiduNetdiskShareInfo;
+  downloadRoot?: string;
+  localPath?: string;
+  completed: boolean;
+  skippedExisting: boolean;
 };
 
 type DownloadStatus = {
@@ -53,7 +69,7 @@ type DownloadStatus = {
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (message: string) => console.log(`[baidu] ${message}`);
 
-function getArg(name: string) {
+function getArg(args: string[], name: string) {
   const equalArg = args.find((arg) => arg.startsWith(`${name}=`));
   if (equalArg) return equalArg.slice(name.length + 1);
 
@@ -62,8 +78,8 @@ function getArg(name: string) {
   return undefined;
 }
 
-function numberArg(name: string) {
-  const value = getArg(name);
+function numberArg(args: string[], name: string) {
+  const value = getArg(args, name);
   if (!value) return undefined;
 
   const parsed = Number(value);
@@ -74,6 +90,19 @@ function numberArg(name: string) {
 function parseDownloadStrategy(value: string): DownloadStrategy {
   if (value === "auto" || value === "direct" || value === "save") return value;
   throw new Error("--strategy 必须是 auto、direct 或 save。");
+}
+
+function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
+  return {
+    shareFile: getArg(args, "--share-file"),
+    port: numberArg(args, "--port") ?? 9337,
+    waitCompleteMs: numberArg(args, "--wait-complete-ms") ?? 60 * 60 * 1000,
+    forceClick: args.includes("--force-click"),
+    strategy: parseDownloadStrategy(
+      getArg(args, "--strategy") ?? getArg(args, "--download-strategy") ?? "auto",
+    ),
+    downloadDir: getArg(args, "--download-dir") ?? DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
+  };
 }
 
 async function pathExists(filePath: string) {
@@ -97,17 +126,22 @@ async function getJson<T>(url: string, timeoutMs = requestTimeoutMs) {
   }
 }
 
-async function readShareInfo(): Promise<ShareInfo> {
-  const fullPath = path.resolve(process.cwd(), shareFile);
-  const content = await readFile(fullPath, "utf8");
-  const link = content.match(/https?:\/\/pan\.baidu\.com\/s\/[^\s"'<>]+/)?.[0];
-  if (!link) throw new Error(`${shareFile} 中没有找到百度网盘分享链接。`);
+function trimShareLink(value: string) {
+  return value.replace(/[),，。；;、\]]+$/g, "");
+}
+
+export function parseBaiduNetdiskShareText(
+  content: string,
+  sourceLabel = "分享文本",
+): BaiduNetdiskShareInfo {
+  const link = trimShareLink(content.match(/https?:\/\/pan\.baidu\.com\/s\/[^\s"'<>]+/)?.[0] ?? "");
+  if (!link) throw new Error(`${sourceLabel} 中没有找到百度网盘分享链接。`);
 
   const url = new URL(link);
   const pwd =
     url.searchParams.get("pwd") ??
     content.match(/(?:提取码|密码|pwd)[:：\s]*([a-zA-Z0-9]{4})/)?.[1];
-  if (!pwd) throw new Error(`${shareFile} 中没有找到提取码。`);
+  if (!pwd) throw new Error(`${sourceLabel} 中没有找到提取码。`);
 
   const name =
     content.match(/通过网盘分享的文件[:：]\s*([^\r\n]+)/)?.[1]?.trim() ??
@@ -117,9 +151,33 @@ async function readShareInfo(): Promise<ShareInfo> {
   return { link, pwd, name: sanitizeWindowsName(name) };
 }
 
+async function readShareInfo(shareFile: string) {
+  const fullPath = path.resolve(process.cwd(), shareFile);
+  const content = await readFile(fullPath, "utf8");
+  return {
+    content,
+    share: parseBaiduNetdiskShareText(content, shareFile),
+  };
+}
+
 function sanitizeWindowsName(value: string) {
   const sanitized = value.replace(/[\\/:*?"<>|]/g, "_").trim();
   return sanitized || "百度网盘分享";
+}
+
+function websocketDataToString(data: unknown) {
+  if (typeof data === "string") return data;
+  if (Buffer.isBuffer(data)) return data.toString("utf8");
+  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
+  if (Array.isArray(data)) {
+    return Buffer.concat(
+      data.map((item) =>
+        Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer),
+      ),
+    ).toString("utf8");
+  }
+
+  return String(data);
 }
 
 async function copyToClipboard(text: string) {
@@ -184,30 +242,35 @@ class CdpPage {
 
   constructor(url: string) {
     this.socket = new WebSocket(url);
-    this.socket.addEventListener("close", () => {
+    this.socket.on("close", () => {
       this.closed = true;
     });
   }
 
   async open() {
     await new Promise<void>((resolve, reject) => {
-      const timeout = setTimeout(() => reject(new Error("CDP WebSocket 连接超时。")), 10000);
-      this.socket.addEventListener(
-        "open",
-        () => {
-          clearTimeout(timeout);
-          resolve();
-        },
-        { once: true },
-      );
-      this.socket.addEventListener(
-        "error",
-        () => {
-          clearTimeout(timeout);
-          reject(new Error("CDP WebSocket 连接失败。"));
-        },
-        { once: true },
-      );
+      let timeout: ReturnType<typeof setTimeout>;
+      const cleanup = () => {
+        clearTimeout(timeout);
+        this.socket.off("open", onOpen);
+        this.socket.off("error", onError);
+      };
+      const onOpen = () => {
+        cleanup();
+        resolve();
+      };
+      const onError = () => {
+        cleanup();
+        reject(new Error("CDP WebSocket 连接失败。"));
+      };
+
+      timeout = setTimeout(() => {
+        cleanup();
+        reject(new Error("CDP WebSocket 连接超时。"));
+      }, 10000);
+
+      this.socket.once("open", onOpen);
+      this.socket.once("error", onError);
     });
     await this.send("Runtime.enable");
     await this.send("Page.enable").catch(() => undefined);
@@ -228,15 +291,15 @@ class CdpPage {
     return new Promise<T>((resolve, reject) => {
       const cleanup = () => {
         clearTimeout(timeout);
-        this.socket.removeEventListener("message", onMessage);
-        this.socket.removeEventListener("close", onClose);
+        this.socket.off("message", onMessage);
+        this.socket.off("close", onClose);
       };
       const onClose = () => {
         cleanup();
         reject(new Error("CDP 页面已关闭。"));
       };
-      const onMessage = (event: MessageEvent) => {
-        const message = JSON.parse(String(event.data)) as CdpMessage;
+      const onMessage = (data: unknown) => {
+        const message = JSON.parse(websocketDataToString(data)) as CdpMessage;
         if (message.id !== id) return;
 
         cleanup();
@@ -248,9 +311,15 @@ class CdpPage {
         reject(new Error(`${method} 超时。`));
       }, timeoutMs);
 
-      this.socket.addEventListener("message", onMessage);
-      this.socket.addEventListener("close", onClose);
-      this.socket.send(JSON.stringify({ id, method, params }));
+      this.socket.on("message", onMessage);
+      this.socket.once("close", onClose);
+
+      try {
+        this.socket.send(JSON.stringify({ id, method, params }));
+      } catch (error) {
+        cleanup();
+        reject(error);
+      }
     });
   }
 
@@ -282,8 +351,8 @@ class CdpPage {
     return response.result.value as T;
   }
 
-  async navigate(url: string) {
-    await this.send("Page.navigate", { url }, 15000);
+  async navigate(url: string, timeoutMs = 15000) {
+    await this.send("Page.navigate", { url }, timeoutMs);
   }
 
   async clickPoint(x: number, y: number, allowPageClose = false) {
@@ -313,6 +382,23 @@ class CdpPage {
     } catch (error) {
       if (!allowPageClose) throw error;
     }
+  }
+
+  async pressEnter() {
+    await this.send("Input.dispatchKeyEvent", {
+      type: "keyDown",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
+    await this.send("Input.dispatchKeyEvent", {
+      type: "keyUp",
+      key: "Enter",
+      code: "Enter",
+      windowsVirtualKeyCode: 13,
+      nativeVirtualKeyCode: 13,
+    });
   }
 }
 
@@ -368,15 +454,51 @@ function shareId(link: string) {
   return id.replace(/^1/, "");
 }
 
+function isShareTarget(target: CdpTarget, id: string) {
+  return (
+    target.url.includes("pan.baidu.com") &&
+    (target.url.includes(id) || target.url.includes(encodeURIComponent(id)))
+  );
+}
+
+async function findShareTarget(port: number, id: string) {
+  const targets = await getTargets(port);
+  return targets.find((target) => target.webSocketDebuggerUrl && isShareTarget(target, id));
+}
+
+async function waitForShareTarget(port: number, id: string, timeoutMs = 20000) {
+  return waitForTarget(port, (target) => isShareTarget(target, id), timeoutMs);
+}
+
+async function navigateToShareBestEffort(target: CdpTarget, share: ShareInfo) {
+  await withPage(target, async (page) => {
+    if (target.url.includes("pan.baidu.com")) {
+      await page
+        .evaluate(
+          `(() => {
+  location.assign(${JSON.stringify(share.link)});
+  return location.href;
+})()`,
+          5000,
+        )
+        .catch((error) => {
+          log(
+            `通过页面脚本打开分享链接未返回：${error instanceof Error ? error.message : String(error)}`,
+          );
+        });
+      return;
+    }
+
+    await page.navigate(share.link, 8000).catch((error) => {
+      log(`Page.navigate 未返回，继续等待目标页面：${error instanceof Error ? error.message : String(error)}`);
+    });
+  });
+}
+
 async function openSharePage(port: number, share: ShareInfo) {
   const id = shareId(share.link);
   const targets = await getTargets(port);
-  const existing = targets.find(
-    (target) =>
-      target.webSocketDebuggerUrl &&
-      target.url.includes("pan.baidu.com") &&
-      (target.url.includes(id) || target.url.includes(encodeURIComponent(id))),
-  );
+  const existing = targets.find((target) => target.webSocketDebuggerUrl && isShareTarget(target, id));
   if (existing) return existing;
 
   const reusable =
@@ -396,71 +518,280 @@ async function openSharePage(port: number, share: ShareInfo) {
   if (!reusable) throw new Error("没有找到可导航的百度网盘页面。");
 
   log("通过 CDP 打开分享链接");
-  await withPage(reusable, async (page) => {
-    await page.navigate(share.link);
-  });
+  await navigateToShareBestEffort(reusable, share);
 
-  return waitForTarget(
-    port,
-    (target) =>
-      target.url.includes("pan.baidu.com") &&
-      (target.url.includes(id) || target.url.includes("share/init")),
-    20000,
-  );
-}
+  const navigated = await findShareTarget(port, id);
+  if (navigated) return navigated;
 
-async function enterShareCode(target: CdpTarget, pwd: string) {
-  await withPage(target, async (page) => {
-    await waitForDocumentBody(page);
-
-    const state = await page.evaluate<{ url: string; text: string }>(
-      `({ url: location.href, text: document.body ? document.body.innerText : "" })`,
-    );
-
-    if (!state.url.includes("share/init")) return;
-
-    log("输入提取码并提取文件");
-    const clicked = await page.evaluate<{ clicked: boolean; url: string; text: string }>(`
-(async () => {
-  const text = () => (document.body ? document.body.innerText : "");
-  const started = Date.now();
-
-  while (Date.now() - started < 15000) {
-    if (!location.href.includes("share/init")) {
-      return { clicked: true, url: location.href, text: text() };
-    }
-
-    const input = document.querySelector("#accessCode");
-    const button = document.querySelector("#submitBtn");
-    if (input instanceof HTMLInputElement && button instanceof HTMLElement) {
-      input.focus();
-      const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
-      setter?.call(input, ${JSON.stringify(pwd)});
-      input.dispatchEvent(new Event("input", { bubbles: true }));
-      input.dispatchEvent(new Event("change", { bubbles: true }));
-
-      button.scrollIntoView({ block: "center", inline: "center" });
-      const rect = button.getBoundingClientRect();
-      for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-        button.dispatchEvent(new MouseEvent(type, {
-          bubbles: true,
-          cancelable: true,
-          view: window,
-          clientX: rect.x + rect.width / 2,
-          clientY: rect.y + rect.height / 2,
-        }));
-      }
-      return { clicked: true, url: location.href, text: text() };
-    }
-
-    await new Promise((resolve) => setTimeout(resolve, 200));
+  if (reusable.url.includes("pan.baidu.com")) {
+    await withPage(reusable, async (page) => {
+      await page.navigate(share.link, 8000).catch((error) => {
+        log(
+          `Page.navigate 兜底未返回，继续等待目标页面：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+    });
   }
 
-  return { clicked: false, url: location.href, text: text() };
-})()
-`);
-    if (!clicked.clicked) throw new Error("没有找到提取文件按钮。");
+  return waitForShareTarget(port, id, 25000);
+}
+
+async function enterShareCode(target: CdpTarget, share: ShareInfo) {
+  await withPage(target, async (page) => {
+    await waitForDocumentBody(page);
+    const { pwd } = share;
+
+    const state = await page.evaluate<{
+      url: string;
+      text: string;
+      needsCode: boolean;
+    }>(
+      `({
+  url: location.href,
+  text: document.body ? document.body.innerText : "",
+  needsCode: Boolean(document.querySelector("#accessCode") && document.querySelector("#submitBtn")),
+})`,
+    );
+
+    if (!state.needsCode && !state.url.includes("share/init")) return;
+
+    log("输入提取码并提取文件");
+    let lastState: { url: string; text: string } | undefined;
+
+    const readState = async () =>
+      page
+        .evaluate<{ url: string; text: string }>(
+          `({ url: location.href, text: document.body ? document.body.innerText : "" })`,
+          5000,
+        )
+        .catch((error) => {
+          if (isNavigationDuringEvaluate(error)) return undefined;
+          return undefined;
+        });
+
+    const waitForExtracted = async (timeoutMs: number) => {
+      const started = Date.now();
+      while (Date.now() - started < timeoutMs) {
+        await sleep(700);
+        const nextState = await readState();
+        if (!nextState) return true;
+        lastState = nextState;
+
+        if (nextState.url.includes("#list") || nextState.text.includes("全部文件")) return true;
+        if (!nextState.url.includes("share/init")) return true;
+        if (nextState.text.includes("请输入验证码")) {
+          throw new Error("分享页要求验证码，CDP 无法自动完成。");
+        }
+        if (/提取码错误|密码错误|分享不存在|链接不存在|分享已取消|分享已过期/.test(nextState.text)) {
+          throw new Error(`分享页提取失败：${compactText(nextState.text)}`);
+        }
+      }
+
+      return false;
+    };
+
+    const verified = await page
+      .evaluate<{ ok: boolean; errno?: number; message?: string; text: string; url: string }>(
+        `
+(async () => {
+  const shareLink = ${JSON.stringify(share.link)};
+  const pwd = ${JSON.stringify(pwd)};
+  const text = () => (document.body ? document.body.innerText : "");
+  const currentUrl = new URL(location.href);
+  const shareUrl = new URL(shareLink);
+  const surl =
+    currentUrl.searchParams.get("surl") ||
+    shareUrl.pathname.split("/").pop()?.replace(/^1/, "") ||
+    "";
+  if (!surl) return { ok: false, message: "missing surl", url: location.href, text: text() };
+
+  const getLocal = (key) => {
+    try {
+      return globalThis.locals?.get?.(key) ?? "";
+    } catch {
+      return "";
+    }
+  };
+  const token = String(globalThis.yunData?.bdstoken || getLocal("bdstoken") || "");
+  const params = new URLSearchParams({
+    surl,
+    t: String(Date.now()),
+    channel: "chunlei",
+    web: "1",
+    app_id: "250528",
+    bdstoken: token,
+    clienttype: "0",
   });
+  const body = new URLSearchParams({
+    pwd,
+    vcode: "",
+    vcode_str: "",
+  });
+  const response = await fetch("/share/verify?" + params.toString(), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body,
+  });
+  const data = await response.json().catch(() => ({ errno: response.status, errmsg: response.statusText }));
+  if (data.errno !== 0) {
+    return {
+      ok: false,
+      errno: data.errno,
+      message: data.errmsg || data.show_msg || JSON.stringify(data).slice(0, 240),
+      url: location.href,
+      text: text(),
+    };
+  }
+
+  const randsk = String(data.randsk || data.sekey || data.bdclnd || "");
+  if (randsk) {
+    localStorage.setItem(surl + "_bdclnd", randsk);
+    document.cookie = "BDCLND=" + encodeURIComponent(randsk) + "; path=/";
+  }
+  location.assign(shareLink);
+  return { ok: true, errno: 0, url: location.href, text: text() };
+})()
+`,
+        20000,
+      )
+      .catch((error) => {
+        if (isNavigationDuringEvaluate(error)) {
+          return { ok: true, errno: 0, url: state.url, text: state.text };
+        }
+        return {
+          ok: false,
+          message: error instanceof Error ? error.message : String(error),
+          url: state.url,
+          text: state.text,
+        };
+      });
+
+    lastState = verified;
+    if (verified.ok) {
+      if (await waitForExtracted(12000)) return;
+      await page.navigate(share.link, 8000).catch((error) => {
+        log(
+          `提取码接口已通过，重新打开分享列表未返回：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
+      if (await waitForExtracted(45000)) return;
+    } else {
+      log(`分享提取接口未直接完成，回退页面按钮：${verified.errno ?? ""} ${verified.message ?? ""}`.trim());
+    }
+
+    const prepared = await page.evaluate<{
+      ready: boolean;
+      rect?: Rect;
+      submittedBy?: string;
+      url: string;
+      text: string;
+    }>(`
+(() => {
+  const text = () => (document.body ? document.body.innerText : "");
+  if (!location.href.includes("share/init") && !document.querySelector("#accessCode")) {
+    return { ready: true, url: location.href, text: text() };
+  }
+
+  const input = document.querySelector("#accessCode");
+  const button = document.querySelector("#submitBtn");
+  if (!(input instanceof HTMLInputElement) || !(button instanceof HTMLElement)) {
+    return { ready: false, url: location.href, text: text() };
+  }
+
+  input.focus();
+  const setter = Object.getOwnPropertyDescriptor(HTMLInputElement.prototype, "value")?.set;
+  setter?.call(input, ${JSON.stringify(pwd)});
+  input.dispatchEvent(new Event("input", { bubbles: true }));
+  input.dispatchEvent(new Event("change", { bubbles: true }));
+  input.dispatchEvent(new KeyboardEvent("keyup", {
+    key: ${JSON.stringify(pwd.at(-1) ?? "")},
+    bubbles: true,
+    cancelable: true,
+  }));
+
+  button.scrollIntoView({ block: "center", inline: "center" });
+  const rect = button.getBoundingClientRect();
+  return {
+    ready: true,
+    submittedBy: "cdp-click",
+    url: location.href,
+    text: text(),
+    rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
+  };
+})()
+`).catch((error) => {
+      if (isNavigationDuringEvaluate(error)) {
+        return {
+          ready: true,
+          rect: undefined,
+          submittedBy: "navigation",
+          url: state.url,
+          text: state.text,
+        };
+      }
+
+      throw error;
+    });
+    lastState = prepared;
+    if (!prepared.ready) throw new Error("没有找到提取文件按钮。");
+    if (!prepared.url.includes("share/init")) return;
+
+    if (prepared.rect && prepared.rect.x >= 0 && prepared.rect.y >= 0) {
+      try {
+        await page.clickPoint(
+          prepared.rect.x + prepared.rect.width / 2,
+          prepared.rect.y + prepared.rect.height / 2,
+        );
+      } catch (error) {
+        if (isNavigationDuringEvaluate(error)) return;
+        throw error;
+      }
+    }
+
+    if (await waitForExtracted(12000)) return;
+
+    if (prepared.rect && prepared.rect.x >= 0 && prepared.rect.y >= 0) {
+      await page.pressEnter().catch(() => undefined);
+      await page
+        .clickPoint(prepared.rect.x + prepared.rect.width / 2, prepared.rect.y + prepared.rect.height / 2)
+        .catch(() => undefined);
+    }
+
+    if (await waitForExtracted(45000)) return;
+
+    if (lastState?.text.includes("提取中")) {
+      throw new Error(
+        `分享页长时间停在提取中，可能是百度接口响应慢或账号风控。url=${
+          lastState.url
+        }；页面文本=${compactText(lastState.text)}`,
+      );
+    }
+
+    throw new Error(
+      `提取码已填写但分享页没有跳转。url=${lastState?.url ?? state.url}；页面文本=${compactText(
+        lastState?.text ?? state.text,
+      )}`,
+    );
+  });
+}
+
+function compactText(text: string, maxLength = 240) {
+  return text.replace(/\s+/g, " ").trim().slice(0, maxLength);
+}
+
+function isNavigationDuringEvaluate(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("Execution context was destroyed") ||
+    message.includes("Cannot find context") ||
+    message.includes("Inspected target navigated") ||
+    message.includes("Target closed")
+  );
 }
 
 async function waitForShareList(port: number, share: ShareInfo) {
@@ -471,8 +802,7 @@ async function waitForShareList(port: number, share: ShareInfo) {
     const target = targets.find(
       (item) =>
         item.webSocketDebuggerUrl &&
-        item.url.includes("pan.baidu.com") &&
-        (item.url.includes(id) || item.url.includes("share/init")),
+        isShareTarget(item, id),
     );
     if (!target) {
       await sleep(500);
@@ -605,6 +935,7 @@ type SavedShareResult = {
   savedPath: string;
   fsId: number | string;
   alreadySaved: boolean;
+  locateSource: string;
 };
 
 async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
@@ -647,20 +978,76 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
     return data;
   };
 
-  const exactOwnItem = async () => {
-    const data = await jsonFetch(
-      "/api/search?recursion=1&key=" + encodeURIComponent(expectedName) + "&" + baseQuery,
-    );
-    if (data.errno !== 0) {
-      throw new Error("搜索自有网盘失败：" + JSON.stringify(data));
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const compactJson = (value) => {
+    try {
+      return JSON.stringify(value).replace(/\\s+/g, " ").slice(0, 800);
+    } catch {
+      return String(value).slice(0, 800);
     }
-    return (data.list || []).find(
-      (item) => item.server_filename === expectedName || item.path === "/" + expectedName,
-    );
+  };
+  const attempts = [];
+  const rootPath = "/" + expectedName;
+  const itemName = (item) => String(item?.server_filename || item?.path?.split("/")?.pop() || "");
+  const isExactItem = (item) => itemName(item) === expectedName || item?.path === rootPath;
+  const isLikelyNewCopy = (item) => {
+    const name = itemName(item);
+    return name === expectedName ||
+      name.startsWith(expectedName + "(") ||
+      name.startsWith(expectedName + "（") ||
+      name.startsWith(expectedName + " - ") ||
+      name.startsWith(expectedName + "_");
   };
 
-  let ownRoot = await exactOwnItem();
+  const searchOwnItem = async (allowCopyName = false) => {
+    try {
+      const data = await jsonFetch(
+        "/api/search?recursion=1&key=" + encodeURIComponent(expectedName) + "&" + baseQuery,
+      );
+      if (data.errno !== 0) {
+        attempts.push("search errno=" + data.errno + " " + compactJson(data));
+        return undefined;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      return list.find(isExactItem) || (allowCopyName ? list.find(isLikelyNewCopy) : undefined);
+    } catch (error) {
+      attempts.push("search error=" + String(error?.message || error));
+      return undefined;
+    }
+  };
+
+  const listOwnRootItem = async (allowCopyName = false) => {
+    try {
+      const data = await jsonFetch(
+        "/api/list?dir=%2F&order=time&desc=1&num=100&page=1&" + baseQuery,
+      );
+      if (data.errno !== 0) {
+        attempts.push("list errno=" + data.errno + " " + compactJson(data));
+        return undefined;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      return list.find(isExactItem) || (allowCopyName ? list.find(isLikelyNewCopy) : undefined);
+    } catch (error) {
+      attempts.push("list error=" + String(error?.message || error));
+      return undefined;
+    }
+  };
+
+  const locateOwnItem = async (allowCopyName = false) => {
+    const byList = await listOwnRootItem(allowCopyName);
+    if (byList) return { item: byList, source: "list" };
+
+    const bySearch = await searchOwnItem(allowCopyName);
+    if (bySearch) return { item: bySearch, source: "search" };
+
+    return undefined;
+  };
+
+  let located = await locateOwnItem(false);
+  let ownRoot = located?.item;
+  let locateSource = located?.source || "";
   let alreadySaved = Boolean(ownRoot);
+  let transferResponse;
   if (!ownRoot) {
     const surl = location.pathname.split("/s/")[1] || "";
     const sekey =
@@ -688,22 +1075,41 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body,
     });
+    transferResponse = saved;
     if (saved.errno !== 0) {
       throw new Error("保存分享到网盘失败：" + JSON.stringify(saved));
     }
-    ownRoot = await exactOwnItem();
+
+    const started = Date.now();
+    while (Date.now() - started < 70000) {
+      located = await locateOwnItem(true);
+      if (located?.item) {
+        ownRoot = located.item;
+        locateSource = located.source;
+        break;
+      }
+      await sleep(1000);
+    }
   }
-  if (!ownRoot) throw new Error("保存后没有在自有网盘中找到目标文件。");
+  if (!ownRoot) {
+    throw new Error(
+      "保存后没有在自有网盘中找到目标文件。transfer=" +
+        compactJson(transferResponse || {}) +
+        "；attempts=" +
+        attempts.slice(-12).join(" | "),
+    );
+  }
 
   return {
     fileName: ownRoot.server_filename || expectedName,
-    savedPath: ownRoot.path,
+    savedPath: ownRoot.path || "/" + (ownRoot.server_filename || expectedName),
     fsId: ownRoot.fs_id,
     alreadySaved,
+    locateSource,
   };
 })()
 `,
-      30000,
+      90000,
     );
 
     if (!result.savedPath) throw new Error("没有拿到保存后的网盘路径。");
@@ -711,7 +1117,14 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
   });
 }
 
-async function openOwnFileList(port: number) {
+function parentNetdiskPath(filePath: string) {
+  const normalized = filePath.startsWith("/") ? filePath : `/${filePath}`;
+  const withoutTrailingSlash = normalized.replace(/\/+$/g, "") || "/";
+  const index = withoutTrailingSlash.lastIndexOf("/");
+  return index > 0 ? withoutTrailingSlash.slice(0, index) : "/";
+}
+
+async function openOwnFileList(port: number, dirPath = "/") {
   const targets = await getTargets(port);
   const target =
     targets.find(
@@ -731,7 +1144,9 @@ async function openOwnFileList(port: number) {
   if (!target) throw new Error("没有找到百度网盘客户端原生页面。");
 
   await withPage(target, async (page) => {
-    await page.evaluate(`location.hash = "/?category=all&path=%2F"`);
+    await page.evaluate(
+      `location.hash = "/?category=all&path=${encodeURIComponent(dirPath || "/")}"`,
+    );
   });
 
   return waitForTarget(
@@ -739,15 +1154,16 @@ async function openOwnFileList(port: number) {
     (item) =>
       item.url.includes("core.asar") &&
       item.url.includes("#/?category=all") &&
-      (item.url.includes("path=%2F") || item.url.includes("path=")),
+      item.url.includes("path="),
     15000,
   );
 }
 
-async function downloadOwnFolderFromClientPage(port: number, targetName: string) {
-  const target = await openOwnFileList(port);
+async function downloadOwnFolderFromClientPage(port: number, targetName: string, savedPath?: string) {
+  const dirPath = savedPath ? parentNetdiskPath(savedPath) : "/";
+  const target = await openOwnFileList(port, dirPath);
   await withPage(target, async (page) => {
-    log(`选择客户端目录：${targetName}`);
+    log(`从客户端文件列表下载目录：${savedPath || targetName}`);
     const selected = await page.evaluate<{ selected: boolean; text: string }>(
       `
 (async () => {
@@ -762,9 +1178,18 @@ async function downloadOwnFolderFromClientPage(port: number, targetName: string)
     String(row?.className || "").includes("selected") ||
     String(row?.className || "").includes("active");
   const started = Date.now();
-  while (Date.now() - started < 15000) {
+  while (Date.now() - started < 25000) {
     const row = [...document.querySelectorAll(".itemWrap,.fileItemWrapSearch,tr.u-table__row,dd,.vdAfKMb,.NHcGw")]
-      .find((item) => item instanceof HTMLElement && normalizedText(item).includes(wanted));
+      .find((item) => {
+        if (!(item instanceof HTMLElement)) return false;
+        const filename = item.querySelector(".filename,[title]");
+        const exactName =
+          filename instanceof HTMLElement
+            ? String(filename.getAttribute("title") || normalizedText(filename)).trim()
+            : "";
+        const text = normalizedText(item);
+        return exactName === wanted || text.includes(wanted);
+      });
     if (row instanceof HTMLElement) {
       if (!isSelected(row)) {
         const checkbox =
@@ -791,7 +1216,7 @@ async function downloadOwnFolderFromClientPage(port: number, targetName: string)
   return { selected: false, text: bodyText() };
 })()
 `,
-      20000,
+      30000,
     );
     if (!selected.selected) throw new Error("没有在客户端文件列表中选中目标目录。");
 
@@ -995,7 +1420,7 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
   });
 }
 
-async function confirmDownloadSetting(port: number) {
+async function confirmDownloadSetting(port: number, downloadDir?: string) {
   const settingTarget = await waitForTarget(
     port,
     (target) => target.url.includes("#/downloadingSetting"),
@@ -1005,28 +1430,62 @@ async function confirmDownloadSetting(port: number) {
   return withPage(settingTarget, async (page) => {
     let rect: Rect | undefined;
     let downloadRoot: string | undefined;
+    let downloadDirApplied = false;
 
     for (let attempt = 0; attempt < 50; attempt++) {
-      const state = await page.evaluate<{ rect?: Rect; text: string }>(`
-(() => {
+      const state = await page.evaluate<{ rect?: Rect; text: string; downloadDirApplied: boolean }>(`
+(async () => {
+  const desiredDownloadDir = ${JSON.stringify(downloadDir ?? "")};
+  let downloadDirApplied = false;
+  const setValue = (input, value) => {
+    const setter = Object.getOwnPropertyDescriptor(Object.getPrototypeOf(input), "value")?.set;
+    if (setter) setter.call(input, value);
+    else input.value = value;
+    input.dispatchEvent(new Event("input", { bubbles: true }));
+    input.dispatchEvent(new Event("change", { bubbles: true }));
+  };
+
+  if (desiredDownloadDir) {
+    const inputs = [...document.querySelectorAll("input")];
+    const pathInput = inputs.find((input) => {
+      const value = String(input.value || input.getAttribute("value") || "");
+      const placeholder = String(input.getAttribute("placeholder") || "");
+      const aria = String(input.getAttribute("aria-label") || "");
+      const containerText = String(input.closest("div,section,form")?.textContent || "");
+      return /[a-zA-Z]:\\\\/.test(value) ||
+        value.includes("\\\\") ||
+        /下载|路径|存储|保存|目录|download|path/i.test(placeholder + aria + containerText);
+    });
+
+    if (pathInput instanceof HTMLInputElement) {
+      pathInput.focus();
+      setValue(pathInput, desiredDownloadDir);
+      downloadDirApplied = pathInput.value === desiredDownloadDir;
+      await new Promise((resolve) => setTimeout(resolve, 200));
+    }
+  }
+
   const button = document.querySelector(".down-btn");
   const rect = button instanceof HTMLElement ? button.getBoundingClientRect() : undefined;
   return {
     text: document.body ? document.body.innerText : "",
     rect: rect ? { x: rect.x, y: rect.y, width: rect.width, height: rect.height } : undefined,
+    downloadDirApplied,
   };
 })()
 `);
       downloadRoot = parseDownloadRoot(state.text) ?? downloadRoot;
+      downloadDirApplied = state.downloadDirApplied || downloadDirApplied;
       rect = state.rect ?? rect;
       if (rect) break;
       await sleep(100);
     }
 
     if (!rect) throw new Error("没有找到确认下载按钮。");
-    log(downloadRoot ? `确认下载路径：${downloadRoot}` : "确认下载路径");
+    const resolvedDownloadRoot = downloadDirApplied ? downloadDir : (downloadRoot ?? downloadDir);
+    log(resolvedDownloadRoot ? `确认下载路径：${resolvedDownloadRoot}` : "确认下载路径");
     await page.clickPoint(rect.x + rect.width / 2, rect.y + rect.height / 2, true);
-    return downloadRoot;
+    return resolvedDownloadRoot;
   });
 }
 
@@ -1114,11 +1573,11 @@ async function sharePageNeedsDownloadCaptcha(port: number, targetName: string) {
   return false;
 }
 
-function candidateDownloadRoots(rootFromDialog?: string) {
+function candidateDownloadRoots(rootFromDialog?: string, downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR) {
   const roots = [
+    downloadDir,
     rootFromDialog,
     process.env.BAIDU_DOWNLOAD_DIR,
-    "D:\\BaiduNetdiskDownload",
     process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "Downloads") : undefined,
     process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "BaiduNetdiskDownload") : undefined,
     "C:\\BaiduNetdiskDownload",
@@ -1127,8 +1586,12 @@ function candidateDownloadRoots(rootFromDialog?: string) {
   return [...new Set(roots)];
 }
 
-async function findExistingDownloadPath(targetName: string, rootFromDialog?: string) {
-  for (const root of candidateDownloadRoots(rootFromDialog)) {
+async function findExistingDownloadPath(
+  targetName: string,
+  rootFromDialog?: string,
+  downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
+) {
+  for (const root of candidateDownloadRoots(rootFromDialog, downloadDir)) {
     const candidate = path.join(root, targetName);
     if (await pathExists(candidate)) return candidate;
   }
@@ -1201,12 +1664,13 @@ function isPartialName(fileName: string) {
 async function waitForLocalDownloadComplete(
   targetName: string,
   rootFromDialog?: string,
-  timeoutMs = waitCompleteMs,
+  timeoutMs = 60 * 60 * 1000,
+  downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
 ) {
-  const explicitPath = await findExistingDownloadPath(targetName, rootFromDialog);
+  const explicitPath = await findExistingDownloadPath(targetName, rootFromDialog, downloadDir);
   const targetPath =
     explicitPath ??
-    path.join(candidateDownloadRoots(rootFromDialog)[0] ?? process.cwd(), targetName);
+    path.join(candidateDownloadRoots(rootFromDialog, downloadDir)[0] ?? process.cwd(), targetName);
 
   if (timeoutMs <= 0) {
     log(`跳过完整下载等待：${targetPath}`);
@@ -1253,11 +1717,16 @@ async function waitForLocalDownloadComplete(
   );
 }
 
-async function submitDirectDownload(port: number, listTarget: CdpTarget, share: ShareInfo) {
+async function submitDirectDownload(
+  port: number,
+  listTarget: CdpTarget,
+  share: ShareInfo,
+  downloadDir?: string,
+) {
   await downloadShareFolderFromSharePage(listTarget, share.name);
   let downloadRoot: string | undefined;
   try {
-    downloadRoot = await confirmDownloadSetting(port);
+    downloadRoot = await confirmDownloadSetting(port, downloadDir);
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error);
     if (message.includes("没有找到目标页面")) {
@@ -1271,55 +1740,100 @@ async function submitDirectDownload(port: number, listTarget: CdpTarget, share: 
   return downloadRoot;
 }
 
-async function submitSavedDownload(port: number, listTarget: CdpTarget, share: ShareInfo) {
+async function submitSavedDownload(
+  port: number,
+  listTarget: CdpTarget,
+  share: ShareInfo,
+  downloadDir?: string,
+) {
   const saved = await saveShareToOwnNetdisk(listTarget, share.name);
   log(
     saved.alreadySaved
-      ? `网盘中已存在目录：${saved.savedPath}`
-      : `已保存到网盘：${saved.savedPath}`,
+      ? `网盘中已存在目录：${saved.savedPath} (${saved.locateSource})`
+      : `已保存到网盘：${saved.savedPath} (${saved.locateSource})`,
   );
 
-  await downloadSavedFolderFromClientSearch(port, saved.fileName || share.name);
-  const downloadRoot = await confirmDownloadSetting(port);
+  try {
+    await downloadOwnFolderFromClientPage(port, saved.fileName || share.name, saved.savedPath);
+  } catch (error) {
+    log(
+      `客户端文件列表下载未触发，回退搜索页：${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+    await downloadSavedFolderFromClientSearch(port, saved.fileName || share.name);
+  }
+  const downloadRoot = await confirmDownloadSetting(port, downloadDir);
   await waitForDownloadSubmitted(port);
   return downloadRoot;
 }
 
-async function main() {
+export async function downloadBaiduNetdiskShare(
+  options: BaiduNetdiskShareDownloadOptions,
+): Promise<BaiduNetdiskShareDownloadResult> {
   if (process.platform !== "win32") {
     throw new Error("当前脚本实现的是 Windows 百度网盘 CDP 下载流程。");
   }
 
-  const share = await readShareInfo();
+  const port = options.port ?? 9337;
+  const waitCompleteMs = options.waitCompleteMs ?? 60 * 60 * 1000;
+  const downloadStrategy = options.strategy ?? "auto";
+  const downloadDir = options.downloadDir?.trim() || DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR;
+
+  let content: string;
+  let share: ShareInfo;
+  if (typeof options.shareText === "string" && options.shareText.trim()) {
+    content = options.shareText;
+    share = parseBaiduNetdiskShareText(content);
+  } else if (typeof options.shareFile === "string" && options.shareFile.trim()) {
+    const loaded = await readShareInfo(options.shareFile);
+    content = loaded.content;
+    share = loaded.share;
+  } else {
+    throw new Error("必须提供 shareText 或 --share-file，不能使用默认分享文件。");
+  }
+
+  await mkdir(downloadDir, { recursive: true });
+
   log(`读取分享：${share.name}`);
   log(`下载策略：${downloadStrategy}`);
+  log(`默认下载目录：${downloadDir}`);
 
-  const existingPath = await findExistingDownloadPath(share.name);
-  if (existingPath && !forceClick) {
+  const existingPath = await findExistingDownloadPath(share.name, undefined, downloadDir);
+  if (existingPath && !options.forceClick) {
     const status = await getDownloadStatus(existingPath);
     if (status.files > 0) {
       log(`检测到已有本地下载目录：${existingPath}`);
-      await waitForLocalDownloadComplete(share.name, path.dirname(existingPath));
-      console.log("成功");
-      return;
+      const localPath = await waitForLocalDownloadComplete(
+        share.name,
+        path.dirname(existingPath),
+        waitCompleteMs,
+        downloadDir,
+      );
+      return {
+        share,
+        downloadRoot: path.dirname(localPath),
+        localPath,
+        completed: true,
+        skippedExisting: true,
+      };
     }
   }
 
-  await copyToClipboard(await readFile(path.resolve(process.cwd(), shareFile), "utf8"));
+  await copyToClipboard(content);
   log("已复制分享内容到剪贴板");
 
-  const port = debugPort;
   await ensureBaiduCdpPort(port);
   log(`使用百度网盘 CDP 端口：${port}`);
 
   const shareTarget = await openSharePage(port, share);
-  await enterShareCode(shareTarget, share.pwd);
+  await enterShareCode(shareTarget, share);
   const listTarget = await waitForShareList(port, share);
 
   let downloadRoot: string | undefined;
   if (downloadStrategy === "direct") {
     try {
-      downloadRoot = await submitDirectDownload(port, listTarget, share);
+      downloadRoot = await submitDirectDownload(port, listTarget, share, downloadDir);
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error);
       if (message.includes("验证码") || (await sharePageNeedsDownloadCaptcha(port, share.name))) {
@@ -1330,15 +1844,14 @@ async function main() {
       throw error;
     }
   } else if (downloadStrategy === "save") {
-    downloadRoot = await submitSavedDownload(port, listTarget, share);
+    downloadRoot = await submitSavedDownload(port, listTarget, share, downloadDir);
   } else {
     try {
-      downloadRoot = await submitDirectDownload(port, listTarget, share);
+      downloadRoot = await submitDirectDownload(port, listTarget, share, downloadDir);
     } catch (directError) {
       if (await isCompletedInClient(port, share.name)) {
         log("客户端已完成列表中存在目标文件");
-        console.log("成功");
-        return;
+        return { share, completed: true, skippedExisting: false };
       }
 
       log(
@@ -1348,12 +1861,11 @@ async function main() {
       );
 
       try {
-        downloadRoot = await submitSavedDownload(port, listTarget, share);
+        downloadRoot = await submitSavedDownload(port, listTarget, share, downloadDir);
       } catch (saveError) {
         if (await isCompletedInClient(port, share.name)) {
           log("客户端已完成列表中存在目标文件");
-          console.log("成功");
-          return;
+          return { share, completed: true, skippedExisting: false };
         }
 
         if (await sharePageNeedsDownloadCaptcha(port, share.name)) {
@@ -1375,8 +1887,7 @@ async function main() {
 
   if (!downloadRoot && (await isCompletedInClient(port, share.name))) {
     log("客户端已完成列表中存在目标文件");
-    console.log("成功");
-    return;
+    return { share, completed: true, skippedExisting: false };
   }
 
   if (!downloadRoot) {
@@ -1389,15 +1900,51 @@ async function main() {
 
   if (await isCompletedInClient(port, share.name)) {
     log("客户端已完成列表中存在目标文件");
-    console.log("成功");
-    return;
+    return { share, downloadRoot, completed: true, skippedExisting: false };
   }
 
-  await waitForLocalDownloadComplete(share.name, downloadRoot);
+  const predictedLocalPath = path.join(downloadRoot, share.name);
+  if (waitCompleteMs <= 0) {
+    log(`下载任务已提交，不等待本地完成：${predictedLocalPath}`);
+    return {
+      share,
+      downloadRoot,
+      localPath: predictedLocalPath,
+      completed: false,
+      skippedExisting: false,
+    };
+  }
+
+  const localPath = await waitForLocalDownloadComplete(
+    share.name,
+    downloadRoot,
+    waitCompleteMs,
+    downloadDir,
+  );
+
+  return {
+    share,
+    downloadRoot: downloadRoot ?? path.dirname(localPath),
+    localPath,
+    completed: true,
+    skippedExisting: false,
+  };
+}
+
+function isCliEntrypoint() {
+  const entryPath = process.argv[1] ? path.resolve(process.argv[1]) : "";
+  return entryPath === fileURLToPath(import.meta.url);
+}
+
+async function main() {
+  const args = process.argv.slice(2).filter((arg) => arg !== "--");
+  await downloadBaiduNetdiskShare(parseCliOptions(args));
   console.log("成功");
 }
 
-main().catch((error) => {
-  console.error(error instanceof Error ? error.message : error);
-  process.exit(1);
-});
+if (isCliEntrypoint()) {
+  main().catch((error) => {
+    console.error(error instanceof Error ? error.message : error);
+    process.exit(1);
+  });
+}

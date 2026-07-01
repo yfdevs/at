@@ -8,5 +8,5 @@ exports CDP status and launch helpers used by the Electron main process.
 ```powershell
 pnpm --filter @drama/baidu-netdisk-automation check
 pnpm --filter @drama/baidu-netdisk-automation build
-pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=baudi.example.txt
+pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt
 ```

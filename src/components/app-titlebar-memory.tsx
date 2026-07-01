@@ -1,8 +1,10 @@
+import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
 import { Activity, Chrome, CloudDownload, Grid } from "@mynaui/icons-react";
 
 import { Button } from "@/components/ui/button";
+import { Textarea } from "@/components/ui/textarea";
 import {
   Popover,
   PopoverContent,
@@ -12,6 +14,14 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import {
+  BAIDU_NETDISK_DEFAULT_DOWNLOAD_DIR,
+  controlBaiduNetdiskCdp,
+  downloadBaiduNetdiskShare,
+  getBaiduNetdiskStatus,
+  parseBaiduNetdiskShareText,
+  type BaiduNetdiskCdpStatus,
+} from "@/platforms/baidu-netdisk/service";
 
 type AppRuntimeStatus = {
   browserInstanceCount: number;
@@ -24,26 +34,14 @@ type AppRuntimeStatus = {
   };
 };
 
-type BaiduNetdiskCdpStatus = {
-  platform: "baidu-netdisk";
-  isWindows: boolean;
-  port: number;
-  appRunning: boolean;
-  cdpRunning: boolean;
-  ready: boolean;
-  executablePath?: string;
-  targetCount: number;
-  checkedAt: string;
-  message: string;
-};
-
-type BaiduNetdiskLaunchResult = {
-  status: BaiduNetdiskCdpStatus;
-  executablePath: string;
-  restarted: boolean;
-};
-
 type BaiduAction = "start" | "restart";
+type BaiduDownloadState = "idle" | "downloading" | "success" | "error";
+
+const titlebarMetricButtonClass =
+  "inline-flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md bg-transparent px-1.5 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
+
+const titlebarNetdiskButtonClass =
+  "inline-flex h-6 w-7 cursor-pointer select-none items-center justify-center rounded-md bg-transparent text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -158,26 +156,6 @@ async function getAppRuntimeStatus() {
   return window.ipcRenderer.invoke("app:runtime:status") as Promise<AppRuntimeStatus>;
 }
 
-async function getBaiduNetdiskStatus() {
-  if (!window.ipcRenderer) {
-    throw new Error("百度网盘状态仅在 Electron 应用内可用。");
-  }
-
-  return window.ipcRenderer.invoke(
-    "baidu-netdisk:service:status",
-  ) as Promise<BaiduNetdiskCdpStatus>;
-}
-
-async function controlBaiduNetdiskCdp(restart: boolean) {
-  if (!window.ipcRenderer) {
-    throw new Error("百度网盘 CDP 控制仅在 Electron 应用内可用。");
-  }
-
-  return window.ipcRenderer.invoke(
-    restart ? "baidu-netdisk:service:restart-cdp" : "baidu-netdisk:service:start-cdp",
-  ) as Promise<BaiduNetdiskLaunchResult>;
-}
-
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
@@ -203,6 +181,43 @@ function ensureTitlebarMemoryHost() {
   return host;
 }
 
+type TitlebarMetricTooltipProps = {
+  ariaLabel: string;
+  icon: ReactNode;
+  label: string;
+  value: ReactNode;
+  tooltipLabel: string;
+  tooltipValue: ReactNode;
+};
+
+function TitlebarMetricTooltip({
+  ariaLabel,
+  icon,
+  label,
+  value,
+  tooltipLabel,
+  tooltipValue,
+}: TitlebarMetricTooltipProps) {
+  return (
+    <Tooltip>
+      <TooltipTrigger
+        aria-label={ariaLabel}
+        render={<button type="button" className={titlebarMetricButtonClass} />}
+      >
+        <div className="flex items-center gap-1.5">
+        {icon}
+        <span className="font-medium text-muted-foreground max-[840px]:hidden">{label}</span>
+        <span className="font-medium tabular-nums text-foreground">{value}</span>
+        </div>
+      </TooltipTrigger>
+      <TooltipContent side="bottom" sideOffset={8} className="z-50">
+        <span className="text-background/70">{tooltipLabel}</span>
+        <span className="font-medium tabular-nums">{tooltipValue}</span>
+      </TooltipContent>
+    </Tooltip>
+  );
+}
+
 type BaiduNetdiskPopoverProps = {
   status: BaiduNetdiskCdpStatus | null;
   error: string | null;
@@ -211,11 +226,15 @@ type BaiduNetdiskPopoverProps = {
 };
 
 function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNetdiskPopoverProps) {
+  const [shareText, setShareText] = useState("");
+  const [downloadState, setDownloadState] = useState<BaiduDownloadState>("idle");
+  const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
   const summary = baiduNetdiskSummary(status, error);
   const description = baiduNetdiskDescription(status);
   const iconClass = baiduNetdiskIconClass(status, error, actionPending);
   const openOnHover = Boolean(error || (status && !status.ready));
   const shouldRestart = Boolean(status?.appRunning);
+  const parsedShare = parseBaiduNetdiskShareText(shareText);
   const actionLabel = status?.ready
     ? "重启 CDP 模式"
     : shouldRestart
@@ -223,24 +242,67 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
       : "启动 CDP 模式";
   const pendingLabel = actionPending === "restart" ? "重启中" : "启动中";
   const actionDisabled = actionPending !== null || status?.isWindows === false;
+  const downloadDisabled = !status?.ready || !parsedShare || downloadState === "downloading";
+
+  const handleShareTextChange = (event: React.ChangeEvent<HTMLTextAreaElement>) => {
+    setShareText(event.target.value);
+    if (downloadState !== "downloading") {
+      setDownloadState("idle");
+      setDownloadMessage(null);
+    }
+  };
+
+  const handleDownload = () => {
+    void (async () => {
+      setDownloadState("downloading");
+      setDownloadMessage("正在保存到网盘，并从客户端提交下载任务。");
+
+      try {
+        const result = await downloadBaiduNetdiskShare(shareText);
+        const target = result.localPath ?? result.downloadRoot ?? result.downloadDir;
+        setDownloadState("success");
+        if (result.skippedExisting) {
+          setDownloadMessage(`检测到已存在下载：${target}`);
+        } else if (result.completed) {
+          setDownloadMessage(`下载完成：${target}`);
+        } else {
+          setDownloadMessage(`下载任务已提交：${target}`);
+        }
+      } catch (downloadError) {
+        setDownloadState("error");
+        setDownloadMessage(errorMessage(downloadError));
+      }
+    })();
+  };
 
   return (
     <Popover>
-      <PopoverTrigger
-        openOnHover={openOnHover}
-        delay={120}
-        closeDelay={150}
-        render={
-          <button
-            type="button"
-            className="app-titlebar-netdisk-button"
-            aria-label={`百度网盘：${summary}`}
-          />
-        }
-      >
-        <CloudDownload className={`size-3.5 shrink-0 ${iconClass}`} aria-hidden="true" />
-      </PopoverTrigger>
-      <PopoverContent side="bottom" align="end" sideOffset={8} className="z-[100000] w-80">
+      <Tooltip disabled={openOnHover}>
+        <TooltipTrigger
+          render={
+            <PopoverTrigger
+              openOnHover={openOnHover}
+              delay={80}
+              closeDelay={150}
+              render={
+                <button
+                  type="button"
+                  className={titlebarNetdiskButtonClass}
+                  aria-label={`百度网盘：${summary}`}
+                />
+              }
+            />
+          }
+        >
+          <CloudDownload className={`size-3.5 shrink-0 ${iconClass}`} aria-hidden="true" />
+        </TooltipTrigger>
+        {!openOnHover ? (
+          <TooltipContent side="bottom" align="end" sideOffset={8} className="z-[100000]">
+            百度网盘：{summary}
+          </TooltipContent>
+        ) : null}
+      </Tooltip>
+      <PopoverContent side="bottom" align="end" sideOffset={8} className="z-[100000] w-96">
         <PopoverHeader>
           <div className="flex items-start gap-2">
             <CloudDownload className={`mt-0.5 size-4 shrink-0 ${iconClass}`} aria-hidden="true" />
@@ -284,6 +346,60 @@ function BaiduNetdiskPopover({ status, error, actionPending, onStart }: BaiduNet
             >
               {actionPending ? pendingLabel : actionLabel}
             </Button>
+          </div>
+        ) : null}
+
+        {status?.ready ? (
+          <div className="grid gap-2">
+            <div className="grid gap-1">
+              <label htmlFor="baidu-netdisk-share-text" className="text-xs font-medium">
+                分享文本
+              </label>
+              <Textarea
+                id="baidu-netdisk-share-text"
+                value={shareText}
+                onChange={handleShareTextChange}
+                placeholder="粘贴百度网盘分享文本，需包含链接和提取码"
+                className="max-h-32 min-h-24 resize-none text-xs leading-5"
+              />
+            </div>
+
+            <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-2 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">匹配结果</span>
+                <span className="max-w-60 truncate font-medium">
+                  {parsedShare ? parsedShare.name : "未匹配"}
+                </span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">提取码</span>
+                <span className="font-medium tabular-nums">{parsedShare?.pwd ?? "--"}</span>
+              </div>
+              <div className="flex items-center justify-between gap-3">
+                <span className="text-muted-foreground">下载到</span>
+                <span className="max-w-60 truncate font-medium">
+                  {BAIDU_NETDISK_DEFAULT_DOWNLOAD_DIR}
+                </span>
+              </div>
+            </div>
+
+            {downloadMessage ? (
+              <div
+                className={
+                  downloadState === "error"
+                    ? "rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-xs leading-5 text-destructive"
+                    : "rounded-md border border-border/80 bg-muted/35 px-2 py-1.5 text-xs leading-5 text-muted-foreground"
+                }
+              >
+                {downloadMessage}
+              </div>
+            ) : null}
+
+            <div className="flex items-center justify-end gap-2">
+              <Button type="button" size="sm" disabled={downloadDisabled} onClick={handleDownload}>
+                {downloadState === "downloading" ? "下载中" : "下载分享"}
+              </Button>
+            </div>
           </div>
         ) : null}
       </PopoverContent>
@@ -408,62 +524,54 @@ export function AppTitlebarMemory() {
   const runningPlatformCount = runtimeStatus?.runningPlatformCount ?? 0;
   const totalPlatformCount = runtimeStatus?.totalPlatformCount ?? 4;
   const runningPlatformText = `${runningPlatformCount}/${totalPlatformCount}`;
-  const title = memory
-    ? `系统内存：${formatBytes(memory.systemUsedBytes)} / ${formatBytes(memory.systemTotalBytes)}（${percentText}）；运行平台：${runningPlatformText}；浏览器实例：${browserInstanceCount} 个`
-    : `系统内存：读取中；运行平台：${runningPlatformText}；浏览器实例：${browserInstanceCount} 个`;
   const memoryText = memory
     ? `${formatBytes(memory.systemUsedBytes)} / ${formatBytes(memory.systemTotalBytes)}（${percentText}）`
     : "读取中";
 
   return createPortal(
-    <div className="app-titlebar-memory">
-      <Tooltip>
-        <TooltipTrigger
-          aria-label={title}
-          render={<button type="button" className="app-titlebar-metrics-button" />}
-        >
-          <span className="app-titlebar-status-item">
+    <div className="flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap px-1.5 text-[11px] leading-none text-muted-foreground">
+      <div className="flex h-6 items-center gap-1">
+        <TitlebarMetricTooltip
+          ariaLabel={`系统内存：${memoryText}`}
+          icon={
             <Activity
               className={`size-3.5 shrink-0 ${memoryIconClass(percent)}`}
               aria-hidden="true"
             />
-            <span className="font-medium tabular-nums text-foreground">{percentText}</span>
-          </span>
-          <span className="app-titlebar-status-divider" aria-hidden="true" />
-          <span className="app-titlebar-status-item">
+          }
+          label="内存"
+          value={percentText}
+          tooltipLabel="系统内存"
+          tooltipValue={memoryText}
+        />
+        <TitlebarMetricTooltip
+          ariaLabel={`运行平台：${runningPlatformText}`}
+          icon={
             <Grid
               className={`size-3.5 shrink-0 ${runningPlatformIconClass(runningPlatformCount)}`}
               aria-hidden="true"
             />
-            <span className="font-medium tabular-nums text-foreground">{runningPlatformText}</span>
-          </span>
-          <span className="app-titlebar-status-divider" aria-hidden="true" />
-          <span className="app-titlebar-status-item">
+          }
+          label="平台"
+          value={runningPlatformText}
+          tooltipLabel="运行平台"
+          tooltipValue={runningPlatformText}
+        />
+        <TitlebarMetricTooltip
+          ariaLabel={`浏览器实例：${browserInstanceCount} 个`}
+          icon={
             <Chrome
               className={`size-3.5 shrink-0 ${browserIconClass(browserInstanceCount)}`}
               aria-hidden="true"
             />
-            <span className="font-medium tabular-nums text-foreground">{browserInstanceCount}</span>
-          </span>
-        </TooltipTrigger>
-        <TooltipContent side="bottom" align="end" sideOffset={8} className="z-[100000]">
-          <div className="grid gap-1 text-left">
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-background/70">系统内存</span>
-              <span className="font-medium tabular-nums">{memoryText}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-background/70">运行平台</span>
-              <span className="font-medium tabular-nums">{runningPlatformText}</span>
-            </div>
-            <div className="flex items-center justify-between gap-4">
-              <span className="text-background/70">浏览器实例</span>
-              <span className="font-medium tabular-nums">{browserInstanceCount} 个</span>
-            </div>
-          </div>
-        </TooltipContent>
-      </Tooltip>
-      <span className="app-titlebar-status-divider" aria-hidden="true" />
+          }
+          label="页面"
+          value={browserInstanceCount}
+          tooltipLabel="浏览器实例"
+          tooltipValue={`${browserInstanceCount} 个`}
+        />
+      </div>
+      <div className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
       <BaiduNetdiskPopover
         status={baiduStatus}
         error={baiduError}

@@ -1,10 +1,8 @@
-import { useCallback, useEffect, useRef, useState, type ReactNode } from "react"
-import { Power, Refresh } from "@mynaui/icons-react"
+import { useCallback, useEffect, useRef, useState } from "react"
+import { Power } from "@mynaui/icons-react"
 import { toast } from "sonner"
 
-import { buttonVariants } from "@/components/ui/button"
-import { Card, CardContent } from "@/components/ui/card"
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip"
+import { Button } from "@/components/ui/button"
 import { cn } from "@/lib/utils"
 
 type RuntimeStatus = {
@@ -27,22 +25,17 @@ export function useServiceControl<TStatus extends RuntimeStatus>({
   successMessage: (status: TStatus) => string
 }) {
   const [status, setStatus] = useState<TStatus>(initialStatus)
-  const [loading, setLoading] = useState(false)
-  const [lastRefreshedAt, setLastRefreshedAt] = useState<Date | null>(null)
+  const [pendingAction, setPendingAction] = useState<"start" | "stop" | null>(null)
   const statusRefreshInFlightRef = useRef(false)
 
   const applyStatus = (nextStatus: TStatus) => {
     setStatus(nextStatus)
-    setLastRefreshedAt(new Date())
   }
 
   const refreshStatus = useCallback(async (silent = false) => {
     if (statusRefreshInFlightRef.current) return
 
     statusRefreshInFlightRef.current = true
-    if (!silent) {
-      setLoading(true)
-    }
 
     try {
       applyStatus(await service.status())
@@ -54,14 +47,15 @@ export function useServiceControl<TStatus extends RuntimeStatus>({
       }
     } finally {
       statusRefreshInFlightRef.current = false
-      if (!silent) {
-        setLoading(false)
-      }
     }
   }, [service])
 
   const toggleService = useCallback(async () => {
-    setLoading(true)
+    if (pendingAction) return
+
+    const action = status.running ? "stop" : "start"
+    setPendingAction(action)
+
     try {
       const nextStatus = await (status.running ? service.stop() : service.start())
       applyStatus(nextStatus)
@@ -71,9 +65,9 @@ export function useServiceControl<TStatus extends RuntimeStatus>({
         description: error instanceof Error ? error.message : String(error),
       })
     } finally {
-      setLoading(false)
+      setPendingAction(null)
     }
-  }, [service, status.running, successMessage])
+  }, [pendingAction, service, status.running, successMessage])
 
   useEffect(() => {
     void refreshStatus()
@@ -88,134 +82,57 @@ export function useServiceControl<TStatus extends RuntimeStatus>({
   }, [refreshStatus])
 
   return {
-    lastRefreshedAt,
-    loading,
+    loading: pendingAction !== null,
+    pendingAction,
     refreshStatus,
     status,
     toggleService,
   }
 }
 
-export function ServiceControlToolbar({
-  activeLabel = "页面",
-  activeText,
-  activeTitle,
-  accentClassName,
-  lastRefreshedAt,
+export function ServiceControlButtonPage({
   loading,
-  loginText,
-  refreshTooltip = "重新获取服务运行状态",
+  pendingAction,
   running,
-  toggleTooltip,
-  onRefresh,
+  startLabel = "启动服务",
+  stopLabel = "关闭服务",
   onToggle,
 }: {
-  activeLabel?: string
-  activeText: string
-  activeTitle?: string
-  accentClassName: string
-  lastRefreshedAt: Date | null
   loading: boolean
-  loginText: string
-  refreshTooltip?: string
+  pendingAction: "start" | "stop" | null
   running: boolean
-  toggleTooltip: string
-  onRefresh: () => void
+  startLabel?: string
+  stopLabel?: string
   onToggle: () => void
 }) {
+  const label =
+    pendingAction === "start"
+      ? "启动中"
+      : pendingAction === "stop"
+        ? "关闭中"
+        : running
+          ? stopLabel
+          : startLabel
+
   return (
-    <Card className={cn("rounded-lg py-3 [--card-spacing:--spacing(3)]", accentClassName)}>
-      <CardContent className="flex min-h-16 flex-wrap items-center gap-x-4 gap-y-3 px-4">
-        <div className="flex min-w-24 items-center gap-3">
-          <Tooltip>
-            <TooltipTrigger
-              className={cn(
-                buttonVariants({
-                  size: "icon-lg",
-                  variant: running ? "destructive" : "outline",
-                }),
-                "size-11 bg-background/80 [&_svg]:size-5"
-              )}
-              disabled={loading}
-              onClick={onToggle}
-            >
-              <Power className="size-5" />
-            </TooltipTrigger>
-            <TooltipContent>{toggleTooltip}</TooltipContent>
-          </Tooltip>
-          <span
-            className={
-              running
-                ? "size-2.5 rounded-full bg-emerald-500"
-                : "size-2.5 rounded-full bg-muted-foreground/40"
-            }
-          />
-        </div>
-
-        <div className="flex min-w-32 items-center gap-1.5 text-xs">
-          <span className="text-muted-foreground">登录</span>
-          <span className="font-medium">{loginText}</span>
-        </div>
-
-        <div className="flex min-w-0 flex-1 items-center gap-1.5 text-xs">
-          <span className="text-muted-foreground">{activeLabel}</span>
-          <span className="truncate font-medium" title={activeTitle ?? activeText}>
-            {activeText}
-          </span>
-        </div>
-
-        <div className="ml-auto flex items-center gap-2">
-          <span className="text-xs text-muted-foreground">
-            刷新 {formatTime(lastRefreshedAt)}
-          </span>
-          <Tooltip>
-            <TooltipTrigger
-              aria-label="刷新服务状态"
-              className={cn(buttonVariants({ size: "icon-sm", variant: "outline" }), "bg-background/80")}
-              disabled={loading}
-              onClick={onRefresh}
-            >
-              <Refresh className={loading ? "animate-spin" : undefined} />
-            </TooltipTrigger>
-            <TooltipContent>{refreshTooltip}</TooltipContent>
-          </Tooltip>
-        </div>
-      </CardContent>
-    </Card>
+    <main className="flex min-h-svh flex-1 items-center justify-center bg-transparent p-6">
+      <Button
+        aria-busy={loading}
+        aria-label={label}
+        aria-pressed={running}
+        className={cn(
+          "h-12 min-w-36 gap-2 rounded-lg px-6 text-base",
+          running && "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20"
+        )}
+        disabled={loading}
+        size="lg"
+        type="button"
+        variant={running ? "destructive" : "default"}
+        onClick={onToggle}
+      >
+        <Power className={cn("size-5", loading && "animate-pulse")} />
+        <span>{label}</span>
+      </Button>
+    </main>
   )
-}
-
-export function ServiceDetailCard({
-  rows,
-  title = "启动行为",
-}: {
-  rows: Array<{ label: string; value: ReactNode }>
-  title?: string
-}) {
-  return (
-    <section className="grid gap-4">
-      <Card className="rounded-lg py-0 shadow-none">
-        <CardContent className="space-y-3 p-4 text-sm">
-          <h2 className="text-sm font-semibold">{title}</h2>
-          <div className="grid gap-2 text-xs text-muted-foreground">
-            {rows.map((row) => (
-              <div key={row.label} className="rounded-md bg-muted px-3 py-2">
-                {row.label}：{row.value}
-              </div>
-            ))}
-          </div>
-        </CardContent>
-      </Card>
-    </section>
-  )
-}
-
-function formatTime(value: Date | null) {
-  if (!value) return "-"
-
-  return value.toLocaleTimeString("zh-CN", {
-    hour: "2-digit",
-    minute: "2-digit",
-    second: "2-digit",
-  })
 }

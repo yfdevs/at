@@ -42,15 +42,15 @@ importers:
       '@drama/kuaishou-drama-automation':
         specifier: workspace:*
         version: link:packages/kuaishou-drama-automation
-      '@drama/meituan-creation-automation':
+      '@drama/meituan-drama-automation':
         specifier: workspace:*
-        version: link:packages/meituan-creation-automation
-      '@drama/tiktok-drama-center-automation':
+        version: link:packages/meituan-drama-automation
+      '@drama/tiktok-drama-automation':
         specifier: workspace:*
-        version: link:packages/tiktok-drama-center-automation
-      '@drama/wechat-video-automation':
+        version: link:packages/tiktok-drama-automation
+      '@drama/wechat-drama-automation':
         specifier: workspace:*
-        version: link:packages/wechat-video-automation
+        version: link:packages/wechat-drama-automation
       '@fontsource-variable/geist':
         specifier: ^5.2.9
         version: 5.2.9
@@ -199,10 +199,17 @@ importers:
         version: 0.2.1(@types/node@25.9.4)(@voidzero-dev/vite-plus-core@0.2.1(@types/node@25.9.4)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@5.9.3))(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@5.9.3)
 
   packages/baidu-netdisk-automation:
+    dependencies:
+      ws:
+        specifier: ^8.21.0
+        version: 8.21.0
     devDependencies:
       '@types/node':
         specifier: latest
         version: 26.0.1
+      '@types/ws':
+        specifier: ^8.18.1
+        version: 8.18.1
       typescript:
         specifier: latest
         version: 6.0.3
@@ -229,7 +236,7 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.2.1(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)'
 
-  packages/meituan-creation-automation:
+  packages/meituan-drama-automation:
     dependencies:
       dayjs:
         specifier: ^1.11.21
@@ -254,7 +261,7 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.2.1(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)'
 
-  packages/tiktok-drama-center-automation:
+  packages/tiktok-drama-automation:
     dependencies:
       pino:
         specifier: ^10.3.1
@@ -279,15 +286,15 @@ importers:
         specifier: npm:@voidzero-dev/vite-plus-core@latest
         version: '@voidzero-dev/vite-plus-core@0.2.1(@types/node@26.0.1)(esbuild@0.28.1)(jiti@2.7.0)(tsx@4.22.4)(typescript@6.0.3)'
 
-  packages/wechat-video-automation:
+  packages/wechat-drama-automation:
     dependencies:
+      '@drama/axios':
+        specifier: workspace:*
+        version: link:../axios
       playwright:
         specifier: latest
         version: 1.61.1
     devDependencies:
-      '@drama/axios':
-        specifier: workspace:*
-        version: link:../axios
       '@types/fs-extra':
         specifier: ^11.0.4
         version: 11.0.4
@@ -1555,6 +1562,9 @@ packages:
 
   '@types/verror@1.10.11':
     resolution: {integrity: sha512-RlDm9K7+o5stv0Co8i8ZRGxDbrTxhJtgjqjFyVh/tXQyl/rYtTKlnTvZ88oSTeYREWurwx20Js4kTuKCsFkUtg==}
+
+  '@types/ws@8.18.1':
+    resolution: {integrity: sha512-ThVF6DCVhA8kUGy+aazFQ4kXQ7E1Ty7A3ypFOe0IcJV8O/M511G99AW24irKrW56Wt44yG9+ij8FaqoBGkuBXg==}
 
   '@types/yargs-parser@21.0.3':
     resolution: {integrity: sha512-I4q9QU9MQv4oEOz4tAHJtNz1cwuLxn2F3xcc2iV5WdqLPpUnj30aUuxt1mAxYTG+oe8CZMV/+6rU4S4gRDzqtQ==}
@@ -5574,6 +5584,10 @@ snapshots:
 
   '@types/verror@1.10.11':
     optional: true
+
+  '@types/ws@8.18.1':
+    dependencies:
+      '@types/node': 26.0.1
 
   '@types/yargs-parser@21.0.3': {}
 

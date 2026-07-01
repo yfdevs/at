@@ -1,15 +1,31 @@
 :root {
   --app-titlebar-height: 37px;
+  --app-shell-background: radial-gradient(
+      circle at 0 0,
+      rgba(150, 195, 255, 0.28) 0%,
+      rgba(190, 220, 255, 0.18) 25%,
+      rgba(220, 235, 255, 0.12) 45%,
+      rgba(240, 248, 255, 0.08) 65%,
+      rgba(255, 255, 255, 0) 75%
+    ),
+    #ffffff;
+}
+
+.dark {
+  --app-shell-background:#F8F9FD;
 }
 
 html,
 body {
   height: 100%;
+  background: var(--app-shell-background);
+  background-attachment: fixed;
 }
 
 #root {
   height: 100vh;
   min-height: 100vh;
+  background: transparent;
 }
 
 .cet-container #root {
@@ -31,9 +47,10 @@ body {
 }
 
 .cet-titlebar {
+  z-index: 0;
   height: var(--app-titlebar-height) !important;
-  border-bottom: 1px solid var(--border);
-  background: color-mix(in oklch, var(--background) 98%, var(--foreground) 2%) !important;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 52%, transparent);
+  background: transparent !important;
   color: var(--foreground) !important;
   font-family: var(--font-sans) !important;
   line-height: var(--app-titlebar-height) !important;
@@ -69,6 +86,7 @@ body {
 
 .cet-container {
   top: var(--app-titlebar-height) !important;
+  background: transparent !important;
 }
 
 .app-titlebar-memory-host {
@@ -79,7 +97,7 @@ body {
   height: var(--app-titlebar-height);
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-right: 10px;
   -webkit-app-region: no-drag;
 }
 
@@ -97,11 +115,7 @@ body {
   display: inline-flex;
   height: 30px;
   align-items: center;
-  gap: 2px;
-  border: 1px solid color-mix(in oklch, var(--foreground) 8%, transparent);
-  border-radius: 7px;
-  background: color-mix(in oklch, var(--background) 94%, var(--foreground) 6%);
-  padding: 1px;
+  gap: 3px;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
@@ -112,12 +126,14 @@ body {
   height: 28px;
   border-radius: 6px;
   pointer-events: auto;
+  cursor: pointer;
   -webkit-app-region: no-drag;
 }
 
 .app-titlebar-platform-button-active {
-  border-color: color-mix(in oklch, var(--foreground) 12%, transparent);
-  background: var(--background);
+  border-color: color-mix(in oklch, var(--primary) 20%, transparent);
+  background: var(--card);
+  color: var(--primary);
 }
 
 .app-titlebar-config-host {
@@ -129,65 +145,6 @@ body {
   align-items: center;
   pointer-events: auto;
   -webkit-app-region: no-drag;
-}
-
-.app-titlebar-memory {
-  display: flex;
-  height: 26px;
-  align-items: center;
-  gap: 4px;
-  overflow: hidden;
-  border-radius: 5px;
-  background: color-mix(in oklch, var(--foreground) 6%, transparent);
-  padding: 0 5px;
-  color: color-mix(in oklch, var(--foreground) 68%, transparent);
-  font-size: 11px;
-  line-height: 1;
-  white-space: nowrap;
-}
-
-.app-titlebar-metrics-button,
-.app-titlebar-netdisk-button {
-  display: inline-flex;
-  height: 20px;
-  align-items: center;
-  justify-content: center;
-  border: 0;
-  border-radius: 4px;
-  background: transparent;
-  color: inherit;
-  font: inherit;
-  line-height: 1;
-  -webkit-app-region: no-drag;
-}
-
-.app-titlebar-metrics-button {
-  gap: 6px;
-  padding: 0 3px;
-}
-
-.app-titlebar-netdisk-button {
-  width: 22px;
-  padding: 0;
-  cursor: pointer;
-}
-
-.app-titlebar-metrics-button:focus-visible,
-.app-titlebar-netdisk-button:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -1px;
-}
-
-.app-titlebar-status-item {
-  display: inline-flex;
-  align-items: center;
-  gap: 4px;
-}
-
-.app-titlebar-status-divider {
-  width: 1px;
-  height: 12px;
-  background: color-mix(in oklch, var(--foreground) 12%, transparent);
 }
 
 .cet-titlebar .cet-control-icon {

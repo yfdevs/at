@@ -37,10 +37,31 @@ type BaiduNetdiskConfigResult = {
   path: string;
 };
 
+type BaiduNetdiskShareInfo = {
+  link: string;
+  pwd: string;
+  name: string;
+};
+
+type BaiduNetdiskShareDownloadResult = {
+  share: BaiduNetdiskShareInfo;
+  downloadRoot?: string;
+  localPath?: string;
+  completed: boolean;
+  skippedExisting: boolean;
+  downloadDir: string;
+};
+
+type BaiduNetdiskShareDownloadRequest = {
+  shareText?: string;
+};
+
 const defaultBaiduNetdiskConfig: BaiduNetdiskConfig = {
   debugPort: "9337",
   executablePath: "",
 };
+
+const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
 
 const require = createRequire(import.meta.url);
 let store: Store<BaiduNetdiskStore> | null = null;
@@ -107,6 +128,24 @@ async function importBaiduNetdiskRuntimePackage() {
   }>;
 }
 
+async function importBaiduNetdiskDownloadRuntimePackage() {
+  const packageJsonPath = require.resolve("@drama/baidu-netdisk-automation/package.json");
+  const entryUrl = pathToFileURL(
+    path.join(path.dirname(packageJsonPath), "dist", "download-baidu-folder.mjs"),
+  );
+  entryUrl.searchParams.set("cacheBust", String(Date.now()));
+
+  return import(/* @vite-ignore */ entryUrl.href) as Promise<{
+    downloadBaiduNetdiskShare: (options: {
+      shareText: string;
+      port: number;
+      downloadDir: string;
+      strategy?: "auto" | "direct" | "save";
+      waitCompleteMs?: number;
+    }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
+  }>;
+}
+
 async function status() {
   const config = readConfig();
   const { checkBaiduNetdiskCdpStatus } = await importBaiduNetdiskRuntimePackage();
@@ -128,6 +167,34 @@ async function startCdp(restart: boolean) {
   });
 }
 
+function normalizeShareText(request: BaiduNetdiskShareDownloadRequest | undefined) {
+  const shareText = request?.shareText?.trim();
+
+  if (!shareText) {
+    throw new Error("请先粘贴包含百度网盘链接和提取码的分享文本。");
+  }
+
+  return shareText;
+}
+
+async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
+  const shareText = normalizeShareText(request);
+  const config = readConfig();
+  const { downloadBaiduNetdiskShare } = await importBaiduNetdiskDownloadRuntimePackage();
+  const result = await downloadBaiduNetdiskShare({
+    shareText,
+    port: cdpPort(config),
+    downloadDir: defaultBaiduNetdiskDownloadDir,
+    strategy: "save",
+    waitCompleteMs: 0,
+  });
+
+  return {
+    ...result,
+    downloadDir: defaultBaiduNetdiskDownloadDir,
+  } satisfies BaiduNetdiskShareDownloadResult;
+}
+
 export function registerBaiduNetdiskPlatformHandlers() {
   ipcMain.handle("baidu-netdisk:config:get", (): BaiduNetdiskConfigResult => ({
     config: readConfig(),
@@ -137,4 +204,7 @@ export function registerBaiduNetdiskPlatformHandlers() {
   ipcMain.handle("baidu-netdisk:service:status", () => status());
   ipcMain.handle("baidu-netdisk:service:start-cdp", () => startCdp(false));
   ipcMain.handle("baidu-netdisk:service:restart-cdp", () => startCdp(true));
+  ipcMain.handle("baidu-netdisk:share:download", (_event, request) =>
+    downloadShare(request as BaiduNetdiskShareDownloadRequest | undefined),
+  );
 }

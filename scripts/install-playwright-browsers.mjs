@@ -6,16 +6,16 @@ import { createRequire } from "node:module";
 import { fileURLToPath } from "node:url";
 
 const root = path.resolve(path.dirname(fileURLToPath(import.meta.url)), "..");
-const wechatVideoPackageRoot = path.join(root, "packages", "wechat-video-automation");
+const wechatDramaPackageRoot = path.join(root, "packages", "wechat-drama-automation");
 const browserPath = path.join(root, ".cache", "playwright-browsers");
-const wechatVideoRequire = createRequire(path.join(wechatVideoPackageRoot, "package.json"));
+const wechatDramaRequire = createRequire(path.join(wechatDramaPackageRoot, "package.json"));
 let playwrightPackageJson;
 
 try {
-  playwrightPackageJson = wechatVideoRequire.resolve("playwright/package.json");
+  playwrightPackageJson = wechatDramaRequire.resolve("playwright/package.json");
 } catch (error) {
   throw new Error(
-    "Cannot resolve playwright from packages/wechat-video-automation. Run `pnpm install` from the repository root first.",
+    "Cannot resolve playwright from packages/wechat-drama-automation. Run `pnpm install` from the repository root first.",
     { cause: error },
   );
 }

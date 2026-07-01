@@ -8,30 +8,30 @@ import { KuaishouDramaServiceControlPage } from "@/pages/kuaishou-drama/service-
 import { KuaishouProjectsPage } from "@/pages/kuaishou-drama/projects"
 import { KuaishouSchedulePage } from "@/pages/kuaishou-drama/schedule"
 import { KuaishouSettingsPage } from "@/pages/kuaishou-drama/settings"
-import { WechatAccountsPage } from "@/pages/wechat-video/accounts"
-import { WechatConfigurationPage } from "@/pages/wechat-video/configuration"
-import { WechatPublishTasksPage } from "@/pages/wechat-video/publish-tasks"
-import { WechatServiceControlPage } from "@/pages/wechat-video/service-control"
-import { MeituanCreationConfigurationPage } from "@/pages/meituan-creation/configuration"
-import { MeituanCreationServiceControlPage } from "@/pages/meituan-creation/service-control"
-import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama-center/configuration"
-import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama-center/service-control"
+import { WechatAccountsPage } from "@/pages/wechat-drama/accounts"
+import { WechatConfigurationPage } from "@/pages/wechat-drama/configuration"
+import { WechatPublishTasksPage } from "@/pages/wechat-drama/publish-tasks"
+import { WechatServiceControlPage } from "@/pages/wechat-drama/service-control"
+import { MeituanCreationConfigurationPage } from "@/pages/meituan-drama/configuration"
+import { MeituanCreationServiceControlPage } from "@/pages/meituan-drama/service-control"
+import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama/configuration"
+import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama/service-control"
 
 const appRouteComponents: Record<AppRoute, ComponentType> = {
-  "wechat/publish": WechatPublishTasksPage,
-  "wechat/config": WechatConfigurationPage,
-  "wechat/accounts": WechatAccountsPage,
-  "wechat/service": WechatServiceControlPage,
-  "meituan/service": MeituanCreationServiceControlPage,
-  "meituan/config": MeituanCreationConfigurationPage,
-  "kuaishou/service": KuaishouDramaServiceControlPage,
-  "kuaishou/config": KuaishouDramaConfigurationPage,
-  "kuaishou/projects": KuaishouProjectsPage,
-  "kuaishou/schedule": KuaishouSchedulePage,
-  "kuaishou/analytics": KuaishouAnalyticsPage,
-  "kuaishou/settings": KuaishouSettingsPage,
-  "tiktok-drama-center/service": TiktokDramaCenterServiceControlPage,
-  "tiktok-drama-center/config": TiktokDramaCenterConfigurationPage,
+  "wechat-drama/publish": WechatPublishTasksPage,
+  "wechat-drama/config": WechatConfigurationPage,
+  "wechat-drama/accounts": WechatAccountsPage,
+  "wechat-drama/service": WechatServiceControlPage,
+  "meituan-drama/service": MeituanCreationServiceControlPage,
+  "meituan-drama/config": MeituanCreationConfigurationPage,
+  "kuaishou-drama/service": KuaishouDramaServiceControlPage,
+  "kuaishou-drama/config": KuaishouDramaConfigurationPage,
+  "kuaishou-drama/projects": KuaishouProjectsPage,
+  "kuaishou-drama/schedule": KuaishouSchedulePage,
+  "kuaishou-drama/analytics": KuaishouAnalyticsPage,
+  "kuaishou-drama/settings": KuaishouSettingsPage,
+  "tiktok-drama/service": TiktokDramaCenterServiceControlPage,
+  "tiktok-drama/config": TiktokDramaCenterConfigurationPage,
 }
 
 export function AppRoutes() {

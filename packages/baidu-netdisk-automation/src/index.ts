@@ -248,8 +248,14 @@ export async function startBaiduNetdiskCdp(
     };
   }
 
+  if (currentStatus.appRunning && !currentStatus.ready && !options.restart) {
+    throw new Error(
+      "百度网盘已启动，但不是 CDP 模式。请显式点击“重启为 CDP 模式”，该操作会先关闭当前百度网盘客户端再重新打开。",
+    );
+  }
+
   const executablePath = await findBaiduNetdiskExecutable(options.executablePath);
-  const shouldRestart = options.restart || currentStatus.appRunning;
+  const shouldRestart = Boolean(options.restart);
 
   if (shouldRestart) {
     await stopBaiduNetdiskProcesses();

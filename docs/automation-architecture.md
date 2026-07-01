@@ -11,21 +11,21 @@
 
 The currently implemented automation platform is WeChat Video Channel:
 
-- Renderer pages: `src/pages/wechat-video/`
-- Renderer service: `src/platforms/wechat-video/service.ts`
-- Main-process platform module: `electron/platforms/wechat-video.ts`
-- Runtime package: `packages/wechat-video-automation/`
-- Package name: `@drama/wechat-video-automation`
+- Renderer pages: `src/pages/wechat-drama/`
+- Renderer service: `src/platforms/wechat-drama/service.ts`
+- Main-process platform module: `electron/platforms/wechat-drama.ts`
+- Runtime package: `packages/wechat-drama-automation/`
+- Package name: `@drama/wechat-drama-automation`
 
 ## IPC Boundary
 
 IPC channels are platform-prefixed:
 
-- `wechat-video:service:start`
-- `wechat-video:service:stop`
-- `wechat-video:service:status`
-- `wechat-video:config:get`
-- `wechat-video:config:save`
+- `wechat-drama:service:start`
+- `wechat-drama:service:stop`
+- `wechat-drama:service:status`
+- `wechat-drama:config:get`
+- `wechat-drama:config:save`
 
 Do not add generic `automation:*` IPC channels for platform-specific behavior. Future platforms should add their own channel namespace, for example `kuaishou-drama:*`.
 
@@ -53,14 +53,14 @@ Renderer pages must call platform services from `src/platforms/<platform>/`. The
 For WeChat Video Channel:
 
 ```ts
-import { wechatVideoService } from "@/platforms/wechat-video/service"
+import { wechatVideoService } from "@/platforms/wechat-drama/service"
 ```
 
 ## Configuration
 
 App configuration persistence uses `electron-store`. Do not add hand-rolled JSON cache files for desktop settings.
 
-The WeChat Video Channel config is stored in `wechat-video-config` through `electron-store`. The UI exposes all duration values in seconds. The Electron platform module reads the store and injects a camelCase settings object into the automation runtime.
+The WeChat Video Channel config is stored in `wechat-drama-config` through `electron-store`. The UI exposes all duration values in seconds. The Electron platform module reads the store and injects a camelCase settings object into the automation runtime.
 
 Business configuration must not be read from environment files or `process.env`. Environment variables are reserved for infrastructure concerns at the boot boundary, such as `PLAYWRIGHT_BROWSERS_PATH`.
 
@@ -69,8 +69,8 @@ Business configuration must not be read from environment files or `process.env`.
 Root scripts are platform-prefixed:
 
 ```bash
-pnpm wechat-video:check
-pnpm wechat-video:install-browsers
+pnpm wechat-drama:check
+pnpm wechat-drama:install-browsers
 ```
 
 Service start/stop is controlled by Electron IPC and the renderer UI, not by package CLI scripts. No app runtime path shells out to `pnpm`, `npm`, or a user-installed Node binary.
