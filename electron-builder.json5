@@ -15,6 +15,7 @@
     {
       from: ".cache/playwright-browsers",
       to: "playwright-browsers",
+      filter: ["**/*", "!winldd-*", "!winldd-*/**"],
     },
   ],
   mac: {
