@@ -4,7 +4,7 @@
 
 本文说明当前 `src/download-baidu-folder.ts` 的需求背景、功能边界、实现思路和核心原理，方便后续维护、排查和扩展。
 
-当前实现的目标不是做一个通用网盘爬虫，而是在 Windows 环境中，借助百度网盘客户端自身的 Electron 页面和 Chromium DevTools Protocol（CDP），自动完成“读取分享链接 -> 输入提取码 -> 保存到我的网盘 -> 调用客户端下载 -> 等待本地下载完成”的流程。
+当前实现的目标不是做一个通用网盘爬虫，而是在 Windows 环境中，借助百度网盘客户端自身的 Electron 页面和 Chromium DevTools Protocol（CDP），自动完成“读取分享链接 -> 输入提取码 -> 保存到我的网盘 -> 客户端搜索精确目录名 -> 调用客户端下载 -> 确认传输任务已创建”的流程。
 
 ## 2. 背景与问题
 
@@ -14,10 +14,10 @@
 2. 输入提取码。
 3. 进入分享文件列表。
 4. 将分享目录保存到自己的网盘。
-5. 回到百度网盘客户端文件列表。
-6. 选择保存后的目录并点击下载。
+5. 回到百度网盘客户端并搜索保存后的目录名。
+6. 精确匹配目录名并点击下载。
 7. 在下载路径确认窗口中确认。
-8. 等待客户端下载完成。
+8. 进入传输页面并确认该目录正在下载。
 
 如果用固定坐标或键盘模拟实现，稳定性会受窗口位置、缩放比例、弹窗遮挡、焦点状态影响。当前实现改为直接连接百度网盘 Electron 的 CDP 调试端口，通过 DOM、页面内数据和客户端页面事件完成操作，尽量减少对屏幕坐标的依赖。
 
@@ -33,11 +33,10 @@
 - 自动输入提取码并进入分享文件列表。
 - 将分享目录保存到用户自己的百度网盘根目录。
 - 如果目标目录已经在自己网盘中存在，则跳过重复保存。
-- 在百度网盘客户端文件列表中定位保存后的目录。
-- 选择该目录并点击客户端下载按钮。
+- 在百度网盘客户端搜索保存后的目录名。
+- 精确匹配目录名并点击客户端下载按钮。
 - 识别独立下载设置窗口并确认下载。
-- 根据客户端已完成列表或本地文件系统状态判断下载是否完成。
-- 支持已有本地目录的幂等处理，避免无意义重复点击下载。
+- 在客户端传输页面和内部下载器任务列表中确认目标目录下载任务已创建。
 
 ### 3.2 非目标
 
@@ -94,16 +93,13 @@ pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\
 ```powershell
 pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt
 pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --port=9337
-pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --wait-complete-ms=0
-pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\path\share.txt --force-click
 ```
 
 参数含义：
 
 - `--share-file`：指定分享文本文件；CLI 模式必填。
 - `--port`：指定百度网盘 CDP 端口，默认 `9337`。
-- `--wait-complete-ms`：等待本地下载完成的最长时间，默认 1 小时；小于等于 0 时只提交下载任务，不等待完成。
-- `--force-click`：即使检测到本地已有下载目录，也继续走保存和下载点击流程。
+- `--download-dir`：指定下载设置窗口中的保存目录，默认 `D:\BaiduNetdiskDownload`。
 
 ## 5. 总体流程
 
@@ -112,20 +108,19 @@ pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\
 ```text
 读取分享文本
   -> 解析分享链接、提取码、文件名
-  -> 检查本地是否已有目标下载目录
   -> 将分享文本复制到剪贴板
   -> 校验 CDP 端口是否属于百度网盘
   -> 打开或复用分享页
   -> 输入提取码
   -> 等待分享文件列表
   -> 调用页面内接口保存到我的网盘
-  -> 打开客户端文件列表
-  -> 选中保存后的目录
+  -> 客户端搜索保存后的目录名
+  -> 精确匹配目标目录
   -> 点击客户端下载
   -> 等待下载设置窗口
   -> 点击确认下载
-  -> 判断客户端是否已完成
-  -> 轮询本地文件系统直到下载完成
+  -> 进入传输页面
+  -> 通过客户端内部下载器任务列表确认该目录正在下载
 ```
 
 ## 6. 模块设计
@@ -250,61 +245,35 @@ pnpm --filter @drama/baidu-netdisk-automation download:share -- --share-file=D:\
 
 相关函数：
 
-- `openOwnFileList`
-- `downloadOwnFolderFromClientPage`
+- `findClientPage`
+- `downloadSavedFolderFromClientSearch`
 - `confirmDownloadSetting`
 - `waitForDownloadSubmitted`
+- `isPresentInClientTransfers`
 
 实现逻辑：
 
 1. 找到百度网盘客户端原生页面，即 URL 包含 `core.asar` 的 target。
-2. 将页面 hash 切到 `#/?category=all&path=`，进入全部文件列表。
-3. 在 `.itemWrap` 行中查找包含目标目录名的行。
-4. 点击该行的 checkbox 或行本身，使目录进入选中状态。
-5. 点击 `.downloadBtn`。
-6. 等待独立的 `#/downloadingSetting` target 出现。
-7. 在该 target 中读取下载路径文本，并点击 `.down-btn` 确认下载。
-8. 等待下载设置窗口关闭，确认下载任务已提交。
+2. 在客户端搜索框输入保存后的目录名并触发搜索。
+3. 在搜索结果中查找文件名精确等于目标名、且类型为文件夹的行。
+4. 点击该行内的下载按钮；找不到行内按钮时，选中该行后点击工具栏下载按钮。
+5. 等待独立的 `#/downloadingSetting` target 出现。
+6. 在该 target 中读取下载路径文本，并点击 `.down-btn` 确认下载。
+7. 等待下载设置窗口关闭。
+8. 在传输页面确认该目录名对应的正在下载任务出现。
 
 关键点：
 
 - 百度网盘的下载设置窗口不是原页面内的普通弹层，而是一个独立 Electron 页面。
 - 所以点击下载后不能继续在原 target 中查找确认按钮，必须重新扫描 CDP target。
 - 点击确认后该 target 可能立即关闭，脚本允许页面关闭作为正常结果。
+- 传输页面只按精确目录名和正在下载状态判断任务创建，不把同名历史完成项当成成功。
 
-### 6.7 下载完成判断
+### 6.7 下载完成边界
 
-相关函数：
+当前桌面入口只确认“客户端已经创建正在下载的传输任务”，不等待本地目录下载完成。这样避免把客户端长时间下载过程阻塞在 Electron IPC 调用里，也避免用本地文件稳定性去误判大目录是否完整。
 
-- `isCompletedInClient`
-- `sharePageNeedsDownloadCaptcha`
-- `candidateDownloadRoots`
-- `findExistingDownloadPath`
-- `getDownloadStatus`
-- `walkDownload`
-- `isPartialName`
-- `waitForLocalDownloadComplete`
-
-判断分两层：
-
-1. 客户端层：如果传输页面“已完成”列表中已经出现目标文件名，则认为成功。
-2. 文件系统层：轮询本地下载目录，直到文件存在、文件数大于 0、没有临时下载文件，并且连续两次状态稳定。
-
-候选下载目录按优先级包括：
-
-- 下载设置窗口中解析出的路径。
-- 环境变量 `BAIDU_DOWNLOAD_DIR`。
-- `D:\BaiduNetdiskDownload`。
-- `%USERPROFILE%\Downloads`。
-- `%USERPROFILE%\BaiduNetdiskDownload`。
-- `C:\BaiduNetdiskDownload`。
-
-临时文件判断包括：
-
-- 文件名包含 `.downloading`。
-- 文件名以 `.baiduyun.p.downloading` 结尾。
-- 文件名以 `.bdtmp` 结尾。
-- 文件名以 `.tmp` 结尾。
+如果后续需要“下载完成后再继续业务”的能力，应单独增加传输任务监控模块，而不是把完成等待重新塞回分享下载提交函数。
 
 ## 7. 核心原理
 
@@ -345,18 +314,17 @@ CDP 能做的事情包括：
 
 脚本调用的是客户端页面已经具备权限访问的接口，不做额外鉴权绕过。
 
-### 7.4 为什么还要监控本地文件
+### 7.4 为什么只确认传输任务
 
 客户端下载任务提交成功不等于下载完成。尤其是大目录下载时，客户端可能已经关闭设置窗口，但文件还在持续写入。
 
-因此脚本在提交任务后继续检查本地目录：
+当前脚本的职责边界是“创建下载任务”，所以确认下载设置窗口关闭后，还会进入传输页面检查：
 
-- 目录是否存在。
-- 是否已有实际文件。
-- 是否还存在下载临时文件。
-- 文件数、总大小、最后写入时间是否稳定。
+- 传输页面确实处于下载视图。
+- 目标目录名精确出现。
+- 目标行附近有“正在下载 / 等待中 / 已暂停 / 进度 / 速度”等传输信号。
 
-连续稳定两次后才认为本地下载完成，降低误判概率。
+脚本不会继续等待本地文件稳定。完整下载完成应由后续独立监控流程负责。
 
 ## 8. 异常与边界处理
 
@@ -390,7 +358,7 @@ CDP 能做的事情包括：
 
 ### 8.5 重复下载
 
-默认情况下，如果本地已经存在目标目录且其中有文件，脚本会优先等待该目录完成，而不是再次点击下载。需要强制重新触发客户端时，可以传 `--force-click`。
+当前脚本不读取本地已有目录，也不根据本地文件跳过下载。它只按分享文本执行一次“保存到网盘并提交客户端下载任务”的流程。重复提交时由百度网盘客户端自身处理同名任务、已存在文件或用户侧确认。
 
 ## 9. 安全与合规原则
 

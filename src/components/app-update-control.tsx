@@ -100,10 +100,10 @@ function updateDescription(status: AppUpdateStatus | null) {
   }
 
   if (status.state === "not-available") {
-    return "GitHub Releases 上没有比当前安装包更新的正式版本。";
+    return "没有比当前安装包更新的正式版本。";
   }
 
-  return "应用通过 GitHub Releases 检查 Windows 安装包更新。";
+  return "检查 Windows 安装包更新。";
 }
 
 function updateIconClass(status: AppUpdateStatus | null, actionPending: UpdateAction | null) {
@@ -201,10 +201,7 @@ export function AppUpdateControl() {
     };
   }, []);
 
-  const runUpdateAction = (
-    action: UpdateAction,
-    task: () => Promise<AppUpdateStatus>,
-  ) => {
+  const runUpdateAction = (action: UpdateAction, task: () => Promise<AppUpdateStatus>) => {
     void (async () => {
       setActionPending(action);
 
@@ -231,10 +228,13 @@ export function AppUpdateControl() {
 
   const summary = updateSummary(status);
   const description = updateDescription(status);
-  const busy = actionPending !== null || status?.state === "checking" || status?.state === "downloading";
+  const busy =
+    actionPending !== null || status?.state === "checking" || status?.state === "downloading";
   const enabled = Boolean(status?.enabled);
   const canDownload =
-    enabled && !busy && (status?.state === "available" || (status?.state === "error" && Boolean(status.latestVersion)));
+    enabled &&
+    !busy &&
+    (status?.state === "available" || (status?.state === "error" && Boolean(status.latestVersion)));
   const canInstall = enabled && !busy && status?.state === "downloaded";
   const progress = status?.progress;
   const versionText = status?.latestVersion
@@ -333,7 +333,10 @@ export function AppUpdateControl() {
             disabled={!enabled || busy}
             onClick={() => runUpdateAction("check", checkForAppUpdate)}
           >
-            <Refresh className={actionPending === "check" ? "animate-spin" : ""} aria-hidden="true" />
+            <Refresh
+              className={actionPending === "check" ? "animate-spin" : ""}
+              aria-hidden="true"
+            />
             <span>{actionPending === "check" ? "检查中" : "检查"}</span>
           </Button>
           {canDownload ? (

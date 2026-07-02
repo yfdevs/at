@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, mkdir, readdir, readFile, stat } from "node:fs/promises";
+import { mkdir, readFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 import WebSocket from "ws";
@@ -8,8 +8,6 @@ const debugHost = "127.0.0.1";
 const requestTimeoutMs = 2500;
 
 export const DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR = "D:\\BaiduNetdiskDownload";
-
-export type DownloadStrategy = "auto" | "direct" | "save";
 
 type CdpTarget = {
   id: string;
@@ -44,9 +42,6 @@ export type BaiduNetdiskShareDownloadOptions = {
   shareText?: string;
   shareFile?: string;
   port?: number;
-  waitCompleteMs?: number;
-  forceClick?: boolean;
-  strategy?: DownloadStrategy;
   downloadDir?: string;
 };
 
@@ -56,14 +51,6 @@ export type BaiduNetdiskShareDownloadResult = {
   localPath?: string;
   completed: boolean;
   skippedExisting: boolean;
-};
-
-type DownloadStatus = {
-  exists: boolean;
-  files: number;
-  partials: number;
-  bytes: number;
-  latestWriteMs: number;
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -87,31 +74,12 @@ function numberArg(args: string[], name: string) {
   return parsed;
 }
 
-function parseDownloadStrategy(value: string): DownloadStrategy {
-  if (value === "auto" || value === "direct" || value === "save") return value;
-  throw new Error("--strategy 必须是 auto、direct 或 save。");
-}
-
 function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
   return {
     shareFile: getArg(args, "--share-file"),
     port: numberArg(args, "--port") ?? 9337,
-    waitCompleteMs: numberArg(args, "--wait-complete-ms") ?? 60 * 60 * 1000,
-    forceClick: args.includes("--force-click"),
-    strategy: parseDownloadStrategy(
-      getArg(args, "--strategy") ?? getArg(args, "--download-strategy") ?? "auto",
-    ),
     downloadDir: getArg(args, "--download-dir") ?? DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
   };
-}
-
-async function pathExists(filePath: string) {
-  try {
-    await access(filePath);
-    return true;
-  } catch {
-    return false;
-  }
 }
 
 async function getJson<T>(url: string, timeoutMs = requestTimeoutMs) {
@@ -454,38 +422,164 @@ function shareId(link: string) {
   return id.replace(/^1/, "");
 }
 
+function shareIdTokens(id: string) {
+  return [id, `1${id}`, encodeURIComponent(id), encodeURIComponent(`1${id}`)].filter(Boolean);
+}
+
+function includesShareId(value: string, id: string) {
+  return shareIdTokens(id).some((token) => value.includes(token));
+}
+
 function isShareTarget(target: CdpTarget, id: string) {
-  return (
-    target.url.includes("pan.baidu.com") &&
-    (target.url.includes(id) || target.url.includes(encodeURIComponent(id)))
+  const value = `${target.url}\n${target.title}`;
+  return value.includes("pan.baidu.com") && includesShareId(value, id);
+}
+
+function isPanTarget(target: CdpTarget) {
+  return `${target.url}\n${target.title}`.includes("pan.baidu.com");
+}
+
+function isChromeErrorUrl(url: string | undefined) {
+  return Boolean(url?.startsWith("chrome-error://"));
+}
+
+function isCoreTarget(target: CdpTarget) {
+  return target.webSocketDebuggerUrl && target.url.includes("core.asar");
+}
+
+function uniqueTargets(targets: CdpTarget[]) {
+  const seen = new Set<string>();
+  return targets.filter((target) => {
+    const key = target.id || target.webSocketDebuggerUrl || target.url;
+    if (seen.has(key)) return false;
+    seen.add(key);
+    return true;
+  });
+}
+
+function openShareCandidates(targets: CdpTarget[]) {
+  const coreTargets = targets.filter((target) => isCoreTarget(target) && target.type === "page");
+  const primaryCoreTargets = coreTargets.filter(
+    (target) => !target.url.includes("#/bubble_menu") && !target.url.includes("#/workspace"),
   );
+  const panTargets = targets.filter((target) => target.webSocketDebuggerUrl && isPanTarget(target));
+
+  return uniqueTargets([...panTargets, ...primaryCoreTargets, ...coreTargets]);
 }
 
-async function findShareTarget(port: number, id: string) {
+type ShareTargetState = {
+  url: string;
+  title: string;
+};
+
+type ShareReadyState = ShareTargetState & {
+  text: string;
+  needsCode: boolean;
+  captcha: boolean;
+  readyForList: boolean;
+  failureText: string;
+};
+
+async function readTargetShareState(target: CdpTarget) {
+  if (!target.webSocketDebuggerUrl) return undefined;
+
+  try {
+    return await withPage(target, (page) =>
+      page.evaluate<ShareTargetState>(
+        `({ url: location.href, title: document.title })`,
+        4000,
+      ),
+    );
+  } catch {
+    return undefined;
+  }
+}
+
+function shareStateMatches(state: ShareTargetState | undefined, id: string) {
+  if (!state) return false;
+  const value = `${state.url}\n${state.title}`;
+  return value.includes("pan.baidu.com") && includesShareId(value, id);
+}
+
+function prioritizeTargets(targets: CdpTarget[], preferredTargets: CdpTarget[]) {
+  const preferred = preferredTargets
+    .map((preferredTarget) => targets.find((target) => target.id === preferredTarget.id) ?? preferredTarget)
+    .filter((target) => target.webSocketDebuggerUrl);
+  return uniqueTargets([...preferred, ...targets]);
+}
+
+async function findShareTarget(port: number, id: string, preferredTargets: CdpTarget[] = []) {
   const targets = await getTargets(port);
-  return targets.find((target) => target.webSocketDebuggerUrl && isShareTarget(target, id));
+  const candidates = prioritizeTargets(targets, preferredTargets);
+  const target = candidates.find((item) => item.webSocketDebuggerUrl && isShareTarget(item, id));
+  if (target) {
+    const state = await readTargetShareState(target);
+    if (!state) return target;
+    if (!isChromeErrorUrl(state.url) && shareStateMatches(state, id)) {
+      return {
+        ...target,
+        title: state.title || target.title,
+        url: state.url || target.url,
+      };
+    }
+  }
+
+  for (const candidate of candidates) {
+    if (!candidate.webSocketDebuggerUrl) continue;
+    if (!isPanTarget(candidate) && !preferredTargets.some((target) => target.id === candidate.id)) continue;
+
+    const state = await readTargetShareState(candidate);
+    if (shareStateMatches(state, id)) {
+      return {
+        ...candidate,
+        title: state?.title || candidate.title,
+        url: state?.url || candidate.url,
+      };
+    }
+  }
+
+  return undefined;
 }
 
-async function waitForShareTarget(port: number, id: string, timeoutMs = 20000) {
-  return waitForTarget(port, (target) => isShareTarget(target, id), timeoutMs);
+async function waitForShareTarget(
+  port: number,
+  id: string,
+  timeoutMs = 20000,
+  preferredTargets: CdpTarget[] = [],
+) {
+  const started = Date.now();
+  while (Date.now() - started < timeoutMs) {
+    const target = await findShareTarget(port, id, preferredTargets);
+    if (target) return target;
+    await sleep(500);
+  }
+
+  const targets = await getTargets(port).catch(() => []);
+  const summary = targets
+    .map((target) => `${target.type}:${compactText(target.title || target.url, 80)}`)
+    .join(" | ");
+  throw new Error(`没有找到目标页面。当前页面：${summary || "无"}`);
 }
 
 async function navigateToShareBestEffort(target: CdpTarget, share: ShareInfo) {
   await withPage(target, async (page) => {
-    if (target.url.includes("pan.baidu.com")) {
-      await page
-        .evaluate(
-          `(() => {
-  location.assign(${JSON.stringify(share.link)});
-  return location.href;
-})()`,
-          5000,
-        )
-        .catch((error) => {
-          log(
-            `通过页面脚本打开分享链接未返回：${error instanceof Error ? error.message : String(error)}`,
-          );
-        });
+    await page.send("Page.stopLoading", {}, 1500).catch(() => undefined);
+    const state = await page
+      .evaluate<{ url: string }>(`({ url: location.href })`, 3000)
+      .catch(() => undefined);
+
+    if (
+      target.url.includes("pan.baidu.com") ||
+      state?.url.includes("pan.baidu.com") ||
+      isChromeErrorUrl(state?.url)
+    ) {
+      await page.navigate(share.link, 8000).catch((error) => {
+        log(
+          `Page.navigate 打开分享链接未返回，继续等待目标页面：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+        );
+      });
       return;
     }
 
@@ -497,45 +591,23 @@ async function navigateToShareBestEffort(target: CdpTarget, share: ShareInfo) {
 
 async function openSharePage(port: number, share: ShareInfo) {
   const id = shareId(share.link);
-  const targets = await getTargets(port);
-  const existing = targets.find((target) => target.webSocketDebuggerUrl && isShareTarget(target, id));
+  const existing = await findShareTarget(port, id);
   if (existing) return existing;
 
-  const reusable =
-    targets.find(
-      (target) =>
-        target.webSocketDebuggerUrl &&
-        target.type === "webview" &&
-        target.url.includes("pan.baidu.com"),
-    ) ??
-    targets.find(
-      (target) =>
-        target.webSocketDebuggerUrl &&
-        target.type === "page" &&
-        target.url.includes("core.asar"),
-    );
+  const targets = await getTargets(port);
+  const reusableTargets = openShareCandidates(targets);
 
-  if (!reusable) throw new Error("没有找到可导航的百度网盘页面。");
+  if (reusableTargets.length <= 0) throw new Error("没有找到可导航的百度网盘页面。");
 
   log("通过 CDP 打开分享链接");
-  await navigateToShareBestEffort(reusable, share);
+  for (const reusable of reusableTargets) {
+    await navigateToShareBestEffort(reusable, share);
 
-  const navigated = await findShareTarget(port, id);
-  if (navigated) return navigated;
-
-  if (reusable.url.includes("pan.baidu.com")) {
-    await withPage(reusable, async (page) => {
-      await page.navigate(share.link, 8000).catch((error) => {
-        log(
-          `Page.navigate 兜底未返回，继续等待目标页面：${
-            error instanceof Error ? error.message : String(error)
-          }`,
-        );
-      });
-    });
+    const navigated = await waitForShareTarget(port, id, 12000, [reusable]).catch(() => undefined);
+    if (navigated) return navigated;
   }
 
-  return waitForShareTarget(port, id, 25000);
+  return waitForShareTarget(port, id, 25000, reusableTargets);
 }
 
 async function enterShareCode(target: CdpTarget, share: ShareInfo) {
@@ -794,140 +866,94 @@ function isNavigationDuringEvaluate(error: unknown) {
   );
 }
 
-async function waitForShareList(port: number, share: ShareInfo) {
+async function readShareReadyState(target: CdpTarget) {
+  if (!target.webSocketDebuggerUrl) return undefined;
+
+  try {
+    return await withPage(target, (page) =>
+      page.evaluate<ShareReadyState>(
+        `
+(() => {
+  const text = document.body ? document.body.innerText : "";
+  const failureText =
+    text.match(/(提取码错误|密码错误|分享不存在|链接不存在|分享已取消|分享已过期|文件已被删除)[^\\n]*/)?.[0] || "";
+
+  return {
+    url: location.href,
+    title: document.title,
+    text,
+    needsCode: Boolean(document.querySelector("#accessCode") && document.querySelector("#submitBtn")),
+    captcha: text.includes("请输入验证码"),
+    readyForList: location.href.includes("#list") || text.includes("全部文件"),
+    failureText,
+  };
+})()
+`,
+        6000,
+      ),
+    );
+  } catch (error) {
+    if (isNavigationDuringEvaluate(error)) return undefined;
+    return undefined;
+  }
+}
+
+function targetWithShareState(target: CdpTarget, state: ShareReadyState) {
+  return {
+    ...target,
+    title: state.title || target.title,
+    url: state.url || target.url,
+  };
+}
+
+async function waitForShareReadyTarget(
+  port: number,
+  share: ShareInfo,
+  preferredTargets: CdpTarget[] = [],
+  timeoutMs = 45000,
+) {
   const id = shareId(share.link);
   const started = Date.now();
-  while (Date.now() - started < 30000) {
-    const targets = await getTargets(port);
-    const target = targets.find(
-      (item) =>
-        item.webSocketDebuggerUrl &&
-        isShareTarget(item, id),
-    );
+  let lastState: ShareReadyState | undefined;
+  let sawTarget = false;
+
+  while (Date.now() - started < timeoutMs) {
+    const target = await findShareTarget(port, id, preferredTargets);
     if (!target) {
       await sleep(500);
       continue;
     }
 
-    const state = await withPage(target, (page) =>
-      page.evaluate<{ url: string; title: string; text: string }>(
-        `({ url: location.href, title: document.title, text: document.body ? document.body.innerText : "" })`,
-      ),
-    );
-
-    if (state.url.includes("#list") || state.text.includes("全部文件")) return target;
-    if (state.text.includes("请输入验证码")) {
-      throw new Error("分享页要求验证码，CDP 无法自动完成。");
+    sawTarget = true;
+    const state = await readShareReadyState(target);
+    if (!state) {
+      await sleep(500);
+      continue;
     }
+    lastState = state;
+
+    if (state.captcha) throw new Error("分享页要求验证码，CDP 无法自动完成。");
+    if (state.failureText) throw new Error(`分享页提取失败：${state.failureText}`);
+
+    if (state.readyForList) return targetWithShareState(target, state);
 
     await sleep(500);
   }
 
-  throw new Error("没有进入分享文件列表。");
+  const stateSummary = lastState
+    ? `url=${lastState.url}；readyForList=${lastState.readyForList}；needsCode=${lastState.needsCode}；页面文本=${compactText(lastState.text)}`
+    : sawTarget
+      ? "已找到分享页，但页面状态无法读取。"
+      : "没有找到分享页 target。";
+  throw new Error(`没有进入分享文件列表。${stateSummary}`);
 }
 
-async function downloadShareFolderFromSharePage(target: CdpTarget, targetName: string) {
-  return withPage(target, async (page) => {
-    await waitForDocumentBody(page);
-    log("从分享页直接点击下载");
-
-    const clicked = await page.evaluate<{
-      clicked: boolean;
-      selected: boolean;
-      captcha: boolean;
-      text: string;
-    }>(
-      `
-(async () => {
-  const wanted = ${JSON.stringify(targetName)};
-  const bodyText = () => (document.body ? document.body.innerText : "");
-  const normalizedText = (item) =>
-    String(item?.innerText || item?.textContent || item?.getAttribute?.("title") || "")
-      .replace(/\\s+/g, " ")
-      .trim();
-  const isVisible = (item) => {
-    if (!(item instanceof HTMLElement)) return false;
-    const rect = item.getBoundingClientRect();
-    const style = getComputedStyle(item);
-    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
-  };
-  const fireClick = (item, offsetX) => {
-    if (!(item instanceof HTMLElement)) return false;
-    item.scrollIntoView({ block: "center", inline: "center" });
-    const rect = item.getBoundingClientRect();
-    const clientX = offsetX == null ? rect.x + rect.width / 2 : rect.x + offsetX;
-    const clientY = rect.y + rect.height / 2;
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-      item.dispatchEvent(new MouseEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        clientX,
-        clientY,
-      }));
-    }
-    return true;
-  };
-  const isSelected = () => /已选中|已选择/.test(bodyText());
-
-  if (!isSelected()) {
-    const row = [...document.querySelectorAll("dd,tr,.u-table__row,.vdAfKMb,.NHcGw,.itemWrap,.fileItemWrapSearch")]
-      .find((item) => item instanceof HTMLElement && normalizedText(item).includes(wanted));
-    if (row instanceof HTMLElement) {
-      const checkbox =
-        row.querySelector(".u-checkbox,.checkbox,.file-select,[class*=checkbox],[class*=Checkbox]") ||
-        row;
-      fireClick(checkbox instanceof HTMLElement ? checkbox : row, 20);
-      await new Promise((resolve) => setTimeout(resolve, 500));
-    }
-  }
-
-  const candidates = [
-    ...document.querySelectorAll(".bottom_download_btn,.downloadBtn,a,button,div,span"),
-  ];
-  const button = candidates.find((item) => {
-    if (!(item instanceof HTMLElement) || !isVisible(item)) return false;
-    const text = normalizedText(item);
-    const title = String(item.getAttribute("title") || "").trim();
-    const className = String(item.className || "");
-    if (/disabled|g-disabled|is-disabled/.test(className)) return false;
-    if (/客户端下载|极速下载/.test(text + title)) return false;
-    return className.includes("bottom_download_btn") ||
-      className.includes("downloadBtn") ||
-      text === "下载" ||
-      title === "下载";
-  });
-
-  if (!(button instanceof HTMLElement)) {
-    return { clicked: false, selected: isSelected(), captcha: false, text: bodyText() };
-  }
-
-  fireClick(button);
-  let captcha = false;
-  const clickedAt = Date.now();
-  while (Date.now() - clickedAt < 10000) {
-    const text = bodyText();
-    captcha = text.includes("请输入验证码");
-    if (captcha || !text.includes("正在获取下载链接")) break;
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-
-  if (captcha) {
-    const cancel = [...document.querySelectorAll("a,button,div,span")]
-      .find((item) => item instanceof HTMLElement && isVisible(item) && normalizedText(item) === "取消");
-    if (cancel instanceof HTMLElement) fireClick(cancel);
-  }
-
-  return { clicked: true, selected: isSelected(), captcha, text: bodyText() };
-})()
-`,
-      20000,
-    );
-
-    if (!clicked.clicked) throw new Error("分享页没有找到可点击的下载按钮。");
-    if (clicked.captcha) throw new Error("分享页直接下载要求验证码。");
-    return clicked;
-  });
+async function waitForShareList(
+  port: number,
+  share: ShareInfo,
+  preferredTargets: CdpTarget[] = [],
+) {
+  return waitForShareReadyTarget(port, share, preferredTargets, 45000);
 }
 
 type SavedShareResult = {
@@ -938,7 +964,7 @@ type SavedShareResult = {
   locateSource: string;
 };
 
-async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
+async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   return withPage(target, async (page) => {
     log("保存分享目录到我的网盘");
     const result = await page.evaluate<SavedShareResult>(
@@ -950,35 +976,25 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
     if (item instanceof HTMLElement) item.click();
   }
 
-  const meta = globalThis.metaData;
-  const yun = globalThis.yunData || {};
-  const locals = globalThis.locals;
-  if (!meta?.file) throw new Error("分享页没有暴露文件元数据，无法拉起客户端下载。");
+  const shareLink = ${JSON.stringify(share.link)};
+  const pwd = ${JSON.stringify(share.pwd)};
+  const expectedName = ${JSON.stringify(share.name)};
+  const shareUrl = new URL(shareLink);
+  const surl = shareUrl.pathname.split("/s/")[1]?.replace(/^1/, "") || "";
+  if (!surl) throw new Error("分享链接没有解析出 surl。");
 
   const getLocal = (key) => {
     try {
-      return locals?.get?.(key) ?? "";
+      return globalThis.locals?.get?.(key) ?? "";
     } catch {
       return "";
     }
   };
-  const token = String(yun.bdstoken || getLocal("bdstoken") || "");
-  const shareId = String(yun.shareid || getLocal("shareid") || "");
-  const shareUk = String(yun.share_uk || getLocal("share_uk") || "");
-  const file = meta.file;
-  const expectedName = ${JSON.stringify(targetName)};
-  const baseQuery =
-    "channel=chunlei&web=1&app_id=250528&bdstoken=" +
-    encodeURIComponent(token) +
-    "&clienttype=0";
-
   const jsonFetch = async (url, init) => {
     const response = await fetch(url, { credentials: "include", ...init });
     const data = await response.json();
     return data;
   };
-
-  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const compactJson = (value) => {
     try {
       return JSON.stringify(value).replace(/\\s+/g, " ").slice(0, 800);
@@ -986,6 +1002,136 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
       return String(value).slice(0, 800);
     }
   };
+  const readBalancedObject = (text, marker, fromIndex = 0) => {
+    const markerIndex = text.indexOf(marker, fromIndex);
+    if (markerIndex < 0) return undefined;
+    const start = text.indexOf("{", markerIndex + marker.length);
+    if (start < 0) return undefined;
+
+    let depth = 0;
+    let quote = "";
+    let escaped = false;
+    for (let index = start; index < text.length; index += 1) {
+      const char = text[index];
+      if (quote) {
+        if (escaped) {
+          escaped = false;
+        } else if (char === "\\\\") {
+          escaped = true;
+        } else if (char === quote) {
+          quote = "";
+        }
+        continue;
+      }
+      if (char === '"' || char === "'") {
+        quote = char;
+        continue;
+      }
+      if (char === "{") depth += 1;
+      else if (char === "}") {
+        depth -= 1;
+        if (depth === 0) return { value: text.slice(start, index + 1), nextIndex: index + 1 };
+      }
+    }
+    return undefined;
+  };
+  const parseLocalsFromHtml = (html) => {
+    const parsed = [];
+    let fromIndex = 0;
+    while (fromIndex < html.length) {
+      const objectText = readBalancedObject(html, "locals.mset(", fromIndex);
+      if (!objectText) break;
+      fromIndex = objectText.nextIndex;
+      try {
+        parsed.push(JSON.parse(objectText.value));
+      } catch {
+        // Ignore non-JSON locals blocks.
+      }
+    }
+    return parsed;
+  };
+  const pickString = (...values) => {
+    for (const value of values) {
+      if (value !== undefined && value !== null && String(value)) return String(value);
+    }
+    return "";
+  };
+  const matchString = (text, pattern) => text.match(pattern)?.[1] || "";
+
+  const verifyParams = new URLSearchParams({
+    surl,
+    t: String(Date.now()),
+    channel: "chunlei",
+    web: "1",
+    app_id: "250528",
+    bdstoken: String(getLocal("bdstoken") || ""),
+    clienttype: "0",
+  });
+  const verifyBody = new URLSearchParams({
+    pwd,
+    vcode: "",
+    vcode_str: "",
+  });
+  const verified = await jsonFetch("/share/verify?" + verifyParams.toString(), {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body: verifyBody,
+  });
+  if (verified.errno !== 0) {
+    throw new Error("分享提取码校验失败：" + compactJson(verified));
+  }
+
+  const randsk = String(verified.randsk || verified.sekey || verified.bdclnd || "");
+  if (randsk) {
+    localStorage.setItem(surl + "_bdclnd", randsk);
+    document.cookie = "BDCLND=" + encodeURIComponent(randsk) + "; path=/";
+  }
+
+  const sharePageResponse = await fetch(shareLink, { credentials: "include" });
+  const sharePageHtml = await sharePageResponse.text();
+  if (!sharePageResponse.ok) {
+    throw new Error("分享页 HTML 请求失败：" + sharePageResponse.status + " " + sharePageResponse.statusText);
+  }
+
+  const localsBlocks = parseLocalsFromHtml(sharePageHtml);
+  const shareLocals =
+    localsBlocks.find((item) => Array.isArray(item.file_list) && item.file_list.length > 0) ||
+    localsBlocks.find((item) => item.shareid || item.share_uk) ||
+    {};
+  const fileList = Array.isArray(shareLocals.file_list) ? shareLocals.file_list : [];
+  const token = pickString(
+    shareLocals.bdstoken,
+    getLocal("bdstoken"),
+    matchString(sharePageHtml, /bdstoken["']?\\s*[:=]\\s*["']([^"']+)/),
+  );
+  const shareId = pickString(
+    shareLocals.shareid,
+    matchString(sharePageHtml, /shareid["']?\\s*[:=]\\s*["']?(\\d+)/),
+  );
+  const shareUk = pickString(
+    shareLocals.share_uk,
+    shareLocals.shareuk,
+    matchString(sharePageHtml, /share_uk["']?\\s*[:=]\\s*["']?(\\d+)/),
+  );
+  const fileNameOf = (item) => String(item?.server_filename || item?.filename || item?.path?.split("/")?.pop() || "");
+  const fileFsIdOf = (item) => item?.fs_id || item?.fsid || item?.id;
+  const file =
+    fileList.find((item) => fileNameOf(item) === expectedName) ||
+    fileList.find((item) => fileNameOf(item).includes(expectedName) || expectedName.includes(fileNameOf(item))) ||
+    fileList[0];
+  const fileFsId = fileFsIdOf(file);
+  if (!fileFsId) {
+    throw new Error("分享页 HTML 没有解析到文件元数据，无法保存到我的网盘。");
+  }
+  if (!shareId || !shareUk) {
+    throw new Error("分享页 HTML 没有解析到 shareid/share_uk，无法保存到我的网盘。");
+  }
+  const baseQuery =
+    "channel=chunlei&web=1&app_id=250528&bdstoken=" +
+    encodeURIComponent(token) +
+    "&clienttype=0";
+
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const attempts = [];
   const rootPath = "/" + expectedName;
   const itemName = (item) => String(item?.server_filename || item?.path?.split("/")?.pop() || "");
@@ -1049,7 +1195,6 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
   let alreadySaved = Boolean(ownRoot);
   let transferResponse;
   if (!ownRoot) {
-    const surl = location.pathname.split("/s/")[1] || "";
     const sekey =
       localStorage.getItem(surl + "_bdclnd") ||
       (document.cookie.match(/(?:^|; )BDCLND=([^;]+)/) || [])[1] ||
@@ -1067,7 +1212,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
       clienttype: "0",
     });
     const body = new URLSearchParams({
-      fsidlist: JSON.stringify([file.fs_id]),
+      fsidlist: JSON.stringify([fileFsId]),
       path: "/",
     });
     const saved = await jsonFetch("/share/transfer?" + params.toString(), {
@@ -1117,163 +1262,83 @@ async function saveShareToOwnNetdisk(target: CdpTarget, targetName: string) {
   });
 }
 
-function parentNetdiskPath(filePath: string) {
-  const normalized = filePath.startsWith("/") ? filePath : `/${filePath}`;
-  const withoutTrailingSlash = normalized.replace(/\/+$/g, "") || "/";
-  const index = withoutTrailingSlash.lastIndexOf("/");
-  return index > 0 ? withoutTrailingSlash.slice(0, index) : "/";
-}
-
-async function openOwnFileList(port: number, dirPath = "/") {
-  const targets = await getTargets(port);
-  const target =
-    targets.find(
-      (item) =>
-        item.webSocketDebuggerUrl &&
-        item.url.includes("core.asar") &&
-        item.url.includes("#/?category=all"),
-    ) ??
-    targets.find(
-      (item) =>
-        item.webSocketDebuggerUrl &&
-        item.url.includes("core.asar") &&
-        item.url.includes("#/downloading"),
-    ) ??
-    targets.find((item) => item.webSocketDebuggerUrl && item.url.includes("core.asar"));
-
-  if (!target) throw new Error("没有找到百度网盘客户端原生页面。");
-
-  await withPage(target, async (page) => {
-    await page.evaluate(
-      `location.hash = "/?category=all&path=${encodeURIComponent(dirPath || "/")}"`,
-    );
-  });
-
-  return waitForTarget(
-    port,
-    (item) =>
-      item.url.includes("core.asar") &&
-      item.url.includes("#/?category=all") &&
-      item.url.includes("path="),
-    15000,
-  );
-}
-
-async function downloadOwnFolderFromClientPage(port: number, targetName: string, savedPath?: string) {
-  const dirPath = savedPath ? parentNetdiskPath(savedPath) : "/";
-  const target = await openOwnFileList(port, dirPath);
-  await withPage(target, async (page) => {
-    log(`从客户端文件列表下载目录：${savedPath || targetName}`);
-    const selected = await page.evaluate<{ selected: boolean; text: string }>(
-      `
-(async () => {
-  const wanted = ${JSON.stringify(targetName)};
-  const bodyText = () => (document.body ? document.body.innerText : "");
-  const normalizedText = (item) =>
-    String(item?.innerText || item?.textContent || item?.getAttribute?.("title") || "")
-      .replace(/\\s+/g, " ")
-      .trim();
-  const isSelected = (row) =>
-    /已选中|已选择/.test(bodyText()) ||
-    String(row?.className || "").includes("selected") ||
-    String(row?.className || "").includes("active");
-  const started = Date.now();
-  while (Date.now() - started < 25000) {
-    const row = [...document.querySelectorAll(".itemWrap,.fileItemWrapSearch,tr.u-table__row,dd,.vdAfKMb,.NHcGw")]
-      .find((item) => {
-        if (!(item instanceof HTMLElement)) return false;
-        const filename = item.querySelector(".filename,[title]");
-        const exactName =
-          filename instanceof HTMLElement
-            ? String(filename.getAttribute("title") || normalizedText(filename)).trim()
-            : "";
-        const text = normalizedText(item);
-        return exactName === wanted || text.includes(wanted);
-      });
-    if (row instanceof HTMLElement) {
-      if (!isSelected(row)) {
-        const checkbox =
-          row.querySelector(".u-checkbox,.checkbox,.file-select,[class*=checkbox],[class*=Checkbox]") ||
-          row;
-        const rect = checkbox instanceof HTMLElement
-          ? checkbox.getBoundingClientRect()
-          : row.getBoundingClientRect();
-        for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-          (checkbox instanceof HTMLElement ? checkbox : row).dispatchEvent(new MouseEvent(type, {
-            bubbles: true,
-            cancelable: true,
-            view: window,
-            clientX: rect.x + 12,
-            clientY: rect.y + rect.height / 2,
-          }));
-        }
-      }
-      await new Promise((resolve) => setTimeout(resolve, 500));
-      return { selected: isSelected(row), text: bodyText() };
-    }
-    await new Promise((resolve) => setTimeout(resolve, 500));
-  }
-  return { selected: false, text: bodyText() };
-})()
-`,
-      30000,
-    );
-    if (!selected.selected) throw new Error("没有在客户端文件列表中选中目标目录。");
-
-    log("点击客户端目录下载");
-    const clicked = await page.evaluate<{ clicked: boolean; text: string }>(
-      `
-(() => {
-  const button = document.querySelector(".downloadBtn,.bottom_download_btn");
-  if (!(button instanceof HTMLElement)) {
-    return { clicked: false, text: document.body ? document.body.innerText : "" };
-  }
-  const rect = button.getBoundingClientRect();
-  for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-    button.dispatchEvent(new MouseEvent(type, {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-      clientX: rect.x + rect.width / 2,
-      clientY: rect.y + rect.height / 2,
-    }));
-  }
-  return { clicked: true, text: document.body ? document.body.innerText : "" };
-})()
-`,
-      10000,
-    );
-    if (!clicked.clicked) throw new Error("没有找到客户端目录下载按钮。");
-  });
-}
-
 async function findClientPage(port: number) {
   const targets = await getTargets(port);
-  const target =
-    targets.find(
-      (item) =>
-        item.webSocketDebuggerUrl &&
-        item.url.includes("core.asar") &&
-        item.url.includes("#/searchNew"),
-    ) ??
-    targets.find(
+  const coreTargets = uniqueTargets(
+    targets.filter(
       (item) =>
         item.webSocketDebuggerUrl &&
         item.url.includes("core.asar") &&
         !item.url.includes("#/bubble_menu") &&
-        !item.url.includes("#/workspace"),
-    ) ??
-    targets.find((item) => item.webSocketDebuggerUrl && item.url.includes("core.asar"));
+        !item.url.includes("#/sestonMenu"),
+    ),
+  );
+  const candidates = uniqueTargets([
+    ...coreTargets.filter((target) => target.url.includes("#/searchNew")),
+    ...coreTargets.filter((target) => target.url.includes("#/downloading")),
+    ...coreTargets.filter((target) => target.url.includes("#/?category=all")),
+    ...coreTargets.filter(
+      (target) => !target.url.includes("#/workspace") && !target.url.includes("#/seston"),
+    ),
+    ...coreTargets,
+  ]);
+  const summaries: string[] = [];
 
-  if (!target) throw new Error("没有找到百度网盘客户端页面。");
-  return target;
+  for (const candidate of candidates) {
+    const state = await withPage(candidate, (page) =>
+      page
+        .evaluate<{
+          href: string;
+          body: string;
+          input?: { id: string; placeholder: string };
+        }>(
+          `
+(() => {
+  const input = document.querySelector("#tags-input-ipt,input[placeholder*='网盘文件'],input[placeholder*='网盘'],input[placeholder*='搜']");
+  return {
+    href: location.href,
+    body: document.body ? document.body.innerText.replace(/\\s+/g, " ").trim().slice(0, 120) : "",
+    input: input instanceof HTMLInputElement
+      ? { id: input.id || "", placeholder: input.getAttribute("placeholder") || "" }
+      : undefined,
+  };
+})()
+`,
+          5000,
+        )
+        .catch(() => undefined),
+    );
+    summaries.push(
+      `${candidate.url} input=${state?.input ? `${state.input.id || "-"}:${state.input.placeholder}` : "none"} text=${compactText(state?.body ?? "", 80)}`,
+    );
+
+    const input = state?.input;
+    if (!input) continue;
+    if (
+      input.id === "tags-input-ipt" ||
+      input.placeholder.includes("网盘文件") ||
+      input.placeholder.includes("网盘")
+    ) {
+      return {
+        ...candidate,
+        url: state.href || candidate.url,
+      };
+    }
+  }
+
+  throw new Error(`没有找到带客户端搜索框的百度网盘页面。当前页面：${summaries.join(" | ") || "无"}`);
 }
 
 async function downloadSavedFolderFromClientSearch(port: number, targetName: string) {
   const target = await findClientPage(port);
   await withPage(target, async (page) => {
     log(`客户端搜索并下载目录：${targetName}`);
-    const result = await page.evaluate<{ clicked: boolean; href: string; text: string }>(
+    const result = await page.evaluate<{
+      clicked: boolean;
+      href: string;
+      text: string;
+      candidates: string[];
+    }>(
       `
 (async () => {
   const wanted = ${JSON.stringify(targetName)};
@@ -1288,6 +1353,42 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
     const rect = item.getBoundingClientRect();
     const style = getComputedStyle(item);
     return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  };
+  const isIgnoredClientContainer = (item) =>
+    Boolean(item.closest(
+      ".link-share,.search-history-wrap,.recommend-card-transition-wrap,.all-file-recommend-area,.u-popover,.u-popper",
+    ));
+  const candidateNames = (row) => {
+    if (!(row instanceof HTMLElement)) return [];
+    const names = [];
+    const push = (value) => {
+      const name = String(value || "").replace(/\\s+/g, " ").trim();
+      if (!name) return;
+      if (/^(下载|分享|刪除|删除|重命名|更多)$/.test(name)) return;
+      if (!names.includes(name)) names.push(name);
+    };
+    const filename = row.querySelector(".filename");
+    if (filename instanceof HTMLElement) {
+      push(filename.getAttribute("title"));
+      push(filename.innerText || filename.textContent);
+    }
+    for (const item of row.querySelectorAll("[title]")) {
+      push(item.getAttribute("title"));
+    }
+    return names;
+  };
+  const isFolderRow = (row, text) =>
+    text.includes("文件夹") ||
+    Boolean(row.querySelector("[data-category='6'],.folder,.dir,[class*=folder],[class*=Folder]"));
+  const clickFoldedFolderMore = () => {
+    const button = [...document.querySelectorAll("button,a,div,span")]
+      .find((item) => {
+        if (!(item instanceof HTMLElement) || !isVisible(item) || isIgnoredClientContainer(item)) return false;
+        const text = normalizedText(item);
+        return text === "查看更多" && Boolean(item.closest(".search-file,.main-content,#app"));
+      });
+    if (!(button instanceof HTMLElement)) return false;
+    return fireClick(button);
   };
   const fireClick = (item) => {
     if (!(item instanceof HTMLElement)) return false;
@@ -1341,24 +1442,31 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
 
   let row;
   const started = Date.now();
-  while (Date.now() - started < 20000) {
+  let candidates = [];
+  let expandedFolderResults = false;
+  while (Date.now() - started < 25000) {
     const rows = [...document.querySelectorAll(".fileItemWrapSearch,.itemWrap,tr.u-table__row,dd")];
+    candidates = rows
+      .filter((item) => item instanceof HTMLElement && isVisible(item) && !isIgnoredClientContainer(item))
+      .flatMap((item) => candidateNames(item))
+      .filter((name, index, list) => list.indexOf(name) === index)
+      .slice(0, 12);
     row = rows.find((item) => {
-      if (!(item instanceof HTMLElement) || !isVisible(item)) return false;
-      const filename = item.querySelector(".filename,[title]");
-      const exactName =
-        filename instanceof HTMLElement
-          ? String(filename.getAttribute("title") || normalizedText(filename)).trim()
-          : "";
+      if (!(item instanceof HTMLElement) || !isVisible(item) || isIgnoredClientContainer(item)) return false;
       const text = normalizedText(item);
-      return (exactName === wanted || text.includes(wanted)) && text.includes("文件夹");
+      return candidateNames(item).includes(wanted) && isFolderRow(item, text);
     });
     if (row instanceof HTMLElement) break;
+    if (!expandedFolderResults && clickFoldedFolderMore()) {
+      expandedFolderResults = true;
+      await sleep(1200);
+      continue;
+    }
     await sleep(500);
   }
 
   if (!(row instanceof HTMLElement)) {
-    return { clicked: false, href: location.href, text: bodyText() };
+    return { clicked: false, href: location.href, text: bodyText(), candidates };
   }
 
   fireClick(row);
@@ -1370,6 +1478,7 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
       (item) =>
         item instanceof HTMLElement &&
         isVisible(item) &&
+        !isIgnoredClientContainer(item) &&
         (normalizedText(item) === "下载" || item.getAttribute("title") === "下载"),
     );
   if (!(button instanceof HTMLElement)) {
@@ -1381,6 +1490,7 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
         (item) =>
           item instanceof HTMLElement &&
           isVisible(item) &&
+          !isIgnoredClientContainer(item) &&
           (normalizedText(item) === "下载" || item.getAttribute("title") === "下载"),
       );
   }
@@ -1393,7 +1503,7 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
     }
     button = [...document.querySelectorAll(".downloadBtn,.download,[title='下载'],button,a,div,span")]
       .find((item) => {
-        if (!(item instanceof HTMLElement) || !isVisible(item)) return false;
+        if (!(item instanceof HTMLElement) || !isVisible(item) || isIgnoredClientContainer(item)) return false;
         const text = normalizedText(item);
         const title = String(item.getAttribute("title") || "");
         const className = String(item.className || "");
@@ -1403,19 +1513,21 @@ async function downloadSavedFolderFromClientSearch(port: number, targetName: str
   }
 
   if (!(button instanceof HTMLElement)) {
-    return { clicked: false, href: location.href, text: bodyText() };
+    return { clicked: false, href: location.href, text: bodyText(), candidates: candidateNames(row) };
   }
 
   fireClick(button);
   await sleep(500);
-  return { clicked: true, href: location.href, text: bodyText() };
+  return { clicked: true, href: location.href, text: bodyText(), candidates: candidateNames(row) };
 })()
 `,
       30000,
     );
 
     if (!result.clicked) {
-      throw new Error("没有在客户端搜索结果中触发目标目录下载。");
+      throw new Error(
+        `没有在客户端搜索结果中精确命中并下载目录：${targetName}；候选=${result.candidates.join(" | ") || "无"}；url=${result.href}；页面=${compactText(result.text)}`,
+      );
     }
   });
 }
@@ -1496,13 +1608,192 @@ function parseDownloadRoot(text: string) {
   return line?.replace(/^.*下载到[:：]\s*/, "").trim();
 }
 
-async function waitForDownloadSubmitted(port: number) {
+type SavedDownloadTask = {
+  targetName: string;
+  savedPath: string;
+  fsId: number | string;
+  downloadRoot?: string;
+};
+
+function findUsableCoreTarget(targets: CdpTarget[]) {
+  return uniqueTargets(
+    targets.filter(
+      (target) =>
+        target.webSocketDebuggerUrl &&
+        target.url.includes("core.asar") &&
+        !target.url.includes("#/bubble_menu") &&
+        !target.url.includes("#/sestonMenu") &&
+        !target.url.includes("#/workspace"),
+    ),
+  )[0];
+}
+
+async function openClientTransfers(port: number) {
+  const target = findUsableCoreTarget(await getTargets(port));
+  if (!target) return;
+
+  await withPage(target, (page) =>
+    page
+      .evaluate(`(() => { location.hash = "/downloading"; return location.href; })()`, 5000)
+      .catch(() => undefined),
+  );
+}
+
+async function getNativeDownloadTask(port: number, targetName: string) {
+  const target = findUsableCoreTarget(await getTargets(port));
+  if (!target) return undefined;
+
+  return withPage(target, (page) =>
+    page
+      .evaluate<{
+        matched?: {
+          id?: string;
+          name?: string;
+          serverPath?: string;
+          localPath?: string;
+          status?: string;
+          size?: string;
+          finishSize?: string;
+          rate?: string;
+        };
+        tasks: string[];
+      }>(
+        `
+(async () => {
+  const wanted = ${JSON.stringify(targetName)};
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const normalized = (value) => String(value || "").replace(/\\s+/g, " ").trim();
+  const nameFromPath = (value) => String(value || "").split(/[\\\\/]/).filter(Boolean).pop() || "";
+  const isWanted = (task) => {
+    const name = normalized(task?.name || nameFromPath(task?.server_path) || nameFromPath(task?.local_path));
+    return name === wanted || nameFromPath(task?.server_path) === wanted || nameFromPath(task?.local_path) === wanted;
+  };
+
+  let payload;
+  try {
+    const app = require("@electron/remote").app;
+    app.$downloader.getDownloadTasks((errorNo, flag, items, count, cid) => {
+      payload = { errorNo, flag, items, count, cid };
+    }, 0, 1000, "0");
+  } catch {
+    return { tasks: [] };
+  }
+
+  const started = Date.now();
+  while (!payload && Date.now() - started < 1500) {
+    await sleep(100);
+  }
+
+  const list = Array.isArray(payload?.items?.tasks) ? payload.items.tasks : [];
+  const tasks = list.map((task) =>
+    [
+      task?.name,
+      task?.status,
+      task?.finish_size + "/" + task?.size,
+      task?.rate,
+      task?.server_path,
+      task?.local_path,
+    ].map(normalized).filter(Boolean).join(" "),
+  );
+  const matched = list.find(isWanted);
+  return {
+    matched: matched
+      ? {
+          id: String(matched.id || ""),
+          name: String(matched.name || ""),
+          serverPath: String(matched.server_path || ""),
+          localPath: String(matched.local_path || ""),
+          status: String(matched.status || ""),
+          size: String(matched.size || ""),
+          finishSize: String(matched.finish_size || ""),
+          rate: String(matched.rate || ""),
+        }
+      : undefined,
+    tasks,
+  };
+})()
+`,
+        6000,
+      )
+      .catch(() => undefined),
+  );
+}
+
+async function submitNativeDownloadTask(port: number, task: SavedDownloadTask) {
+  if (!task.downloadRoot) return false;
+
+  const target = findUsableCoreTarget(await getTargets(port));
+  if (!target) return false;
+
+  const result = await withPage(target, (page) =>
+    page
+      .evaluate<{ ok: boolean; ret?: number | string; error?: string }>(
+        `
+(() => {
+  try {
+    const app = require("@electron/remote").app;
+    const file = {
+      md5: "",
+      size: 0,
+      server_path: ${JSON.stringify(task.savedPath)},
+      path: ${JSON.stringify(task.savedPath)},
+      is_dir: 1,
+      fs_id: ${JSON.stringify(task.fsId)},
+      local_path: ${JSON.stringify(task.downloadRoot)},
+    };
+    const ret = app.$downloader.addDownloadTask([file], "self", true, "0");
+    return { ok: true, ret };
+  } catch (error) {
+    return { ok: false, error: String(error?.message || error) };
+  }
+})()
+`,
+        10000,
+      )
+      .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) })),
+  );
+
+  if (!result.ok) {
+    log(`客户端内部下载任务提交失败：${result.error || "unknown"}`);
+    return false;
+  }
+
+  log(`客户端内部下载任务已提交：${task.targetName}`);
+  return true;
+}
+
+async function waitForDownloadSubmitted(port: number, task?: SavedDownloadTask) {
   const started = Date.now();
   while (Date.now() - started < 15000) {
     const targets = await getTargets(port);
     if (!targets.some((target) => target.url.includes("#/downloadingSetting"))) {
-      log("下载任务已提交");
-      return;
+      if (!task?.targetName) {
+        log("下载任务已提交");
+        return;
+      }
+
+      log(`下载设置窗口已关闭，等待进入传输列表：${task.targetName}`);
+      await openClientTransfers(port);
+      const verifyStarted = Date.now();
+      let lastLog = 0;
+      let nativeSubmitted = false;
+      while (Date.now() - verifyStarted < 90000) {
+        if (await isPresentInClientTransfers(port, task.targetName)) {
+          log("下载任务已提交");
+          return;
+        }
+        if (!nativeSubmitted && Date.now() - verifyStarted > 5000) {
+          nativeSubmitted = await submitNativeDownloadTask(port, task);
+          if (nativeSubmitted) await openClientTransfers(port);
+        }
+        if (Date.now() - lastLog > 10000) {
+          log(`仍在等待客户端创建传输任务：${task.targetName}`);
+          lastLog = Date.now();
+        }
+        await sleep(500);
+      }
+
+      throw new Error(`下载设置窗口已关闭，但 ${task.targetName} 没有进入客户端传输列表。`);
     }
     await sleep(500);
   }
@@ -1510,262 +1801,111 @@ async function waitForDownloadSubmitted(port: number) {
   throw new Error("已点击确认下载，但下载设置窗口没有关闭。");
 }
 
-async function isCompletedInClient(port: number, targetName: string) {
+async function isPresentInClientTransfers(port: number, targetName: string) {
+  const nativeTask = await getNativeDownloadTask(port, targetName);
+  if (nativeTask?.matched) return true;
+
   const targets = await getTargets(port);
-  const transferTarget =
-    targets.find(
-      (target) =>
-        target.webSocketDebuggerUrl &&
-        target.url.includes("core.asar") &&
-        target.url.includes("#/downloading"),
-    ) ??
-    targets.find(
-      (target) =>
-        target.webSocketDebuggerUrl &&
-        target.url.includes("core.asar") &&
-        target.url.includes("#/seston"),
-    );
+  const transferTargets = targets.filter(
+    (target) =>
+      target.webSocketDebuggerUrl &&
+      target.url.includes("core.asar") &&
+      target.url.includes("#/downloading"),
+  );
 
-  if (!transferTarget) return false;
+  for (const transferTarget of transferTargets) {
+    const text = await withPage(transferTarget, (page) =>
+      page.evaluate<boolean>(
+        `
+(() => {
+  const wanted = ${JSON.stringify(targetName)};
+  if (!location.href.includes("#/downloading")) return false;
 
-  const text = await withPage(transferTarget, (page) =>
-    page.evaluate<string>(
-      `
-(async () => {
-  const doneTab = [...document.querySelectorAll("div,span,a,button")]
-    .find((item) => item instanceof HTMLElement && item.innerText.trim().startsWith("已完成"));
-  if (doneTab instanceof HTMLElement) {
-    const rect = doneTab.getBoundingClientRect();
-    for (const type of ["pointerdown", "mousedown", "pointerup", "mouseup", "click"]) {
-      doneTab.dispatchEvent(new MouseEvent(type, {
-        bubbles: true,
-        cancelable: true,
-        view: window,
-        clientX: rect.x + rect.width / 2,
-        clientY: rect.y + rect.height / 2,
-      }));
-    }
-    await new Promise((resolve) => setTimeout(resolve, 800));
+  const bodyText = () => (document.body ? document.body.innerText : "");
+  const normalizedText = (item) =>
+    String(item?.innerText || item?.textContent || item?.getAttribute?.("title") || "")
+      .replace(/\\s+/g, " ")
+      .trim();
+  const isVisible = (item) => {
+    if (!(item instanceof HTMLElement)) return false;
+    const rect = item.getBoundingClientRect();
+    const style = getComputedStyle(item);
+    return rect.width > 0 && rect.height > 0 && style.visibility !== "hidden" && style.display !== "none";
+  };
+  const transferSignal =
+    /已暂停|正在下载|等待中|暂停|排队|\\d+(?:\\.\\d+)?\\s*(?:B|KB|MB|GB)\\s*\\/\\s*\\d+(?:\\.\\d+)?\\s*(?:B|KB|MB|GB)|\\d+%|(?:B|KB|MB|GB)\\/S/i;
+
+  const pageText = bodyText();
+  if (!/下载中|全部暂停|全部开始/.test(pageText)) return false;
+  if (/暂无正在下载的文件/.test(pageText) && !pageText.includes("文件 已全部加载，共")) return false;
+
+  const transferStart = pageText.indexOf("文件 已全部加载，共");
+  const transferText = transferStart >= 0 ? pageText.slice(transferStart) : "";
+  if (!transferText) return false;
+
+  const rows = [
+    ...document.querySelectorAll(".main-content .content .itemWrap,.main-content .content tr.u-table__row,.main-content .content dd,[class*=transfer-list] .itemWrap,[class*=transfer] tr.u-table__row"),
+  ];
+  if (
+    rows.some((row) => {
+      if (!(row instanceof HTMLElement) || !isVisible(row)) return false;
+      const filename = row.querySelector(".filename,[title]");
+      const exactName =
+        filename instanceof HTMLElement
+          ? String(filename.getAttribute("title") || normalizedText(filename)).trim()
+          : "";
+      const text = normalizedText(row);
+      return exactName === wanted && transferSignal.test(text);
+    })
+  ) {
+    return true;
   }
-  return document.body ? document.body.innerText : "";
+
+  const lines = transferText
+    .split(/\\r?\\n/)
+    .map((line) => line.replace(/\\s+/g, " ").trim())
+    .filter(Boolean);
+  for (let index = 0; index < lines.length; index += 1) {
+    if (lines[index] !== wanted) continue;
+    const windowText = lines.slice(index, index + 6).join(" ");
+    if (transferSignal.test(windowText)) return true;
+  }
+
+  return false;
 })()
 `,
-      15000,
-    ),
-  );
-
-  return text.includes("已完成") && text.includes(targetName);
-}
-
-async function sharePageNeedsDownloadCaptcha(port: number, targetName: string) {
-  const targets = await getTargets(port);
-  const shareTargets = targets.filter(
-    (target) => target.webSocketDebuggerUrl && target.url.includes("pan.baidu.com"),
-  );
-
-  for (const shareTarget of shareTargets) {
-    const text = await withPage(shareTarget, (page) =>
-      page.evaluate<string>('document.body ? document.body.innerText : ""', 10000),
-    );
-    if (text.includes("请输入验证码") && text.includes("下载")) return true;
+        10000,
+      ),
+    ).catch(() => false);
+    if (text) return true;
   }
 
   return false;
 }
 
-function candidateDownloadRoots(rootFromDialog?: string, downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR) {
-  const roots = [
-    downloadDir,
-    rootFromDialog,
-    process.env.BAIDU_DOWNLOAD_DIR,
-    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "Downloads") : undefined,
-    process.env.USERPROFILE ? path.join(process.env.USERPROFILE, "BaiduNetdiskDownload") : undefined,
-    "C:\\BaiduNetdiskDownload",
-  ].filter((item): item is string => Boolean(item));
-
-  return [...new Set(roots)];
-}
-
-async function findExistingDownloadPath(
-  targetName: string,
-  rootFromDialog?: string,
-  downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
-) {
-  for (const root of candidateDownloadRoots(rootFromDialog, downloadDir)) {
-    const candidate = path.join(root, targetName);
-    if (await pathExists(candidate)) return candidate;
-  }
-
-  return undefined;
-}
-
-async function getDownloadStatus(targetPath: string): Promise<DownloadStatus> {
-  if (!(await pathExists(targetPath))) {
-    return { exists: false, files: 0, partials: 0, bytes: 0, latestWriteMs: 0 };
-  }
-
-  const rootStat = await stat(targetPath);
-  if (rootStat.isFile()) {
-    return {
-      exists: true,
-      files: 1,
-      partials: isPartialName(path.basename(targetPath)) ? 1 : 0,
-      bytes: rootStat.size,
-      latestWriteMs: rootStat.mtimeMs,
-    };
-  }
-
-  return walkDownload(targetPath);
-}
-
-async function walkDownload(root: string): Promise<DownloadStatus> {
-  let files = 0;
-  let partials = 0;
-  let bytes = 0;
-  let latestWriteMs = 0;
-  const stack = [root];
-
-  while (stack.length > 0) {
-    const current = stack.pop();
-    if (!current) continue;
-
-    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const fullPath = path.join(current, entry.name);
-      if (entry.isDirectory()) {
-        stack.push(fullPath);
-        continue;
-      }
-
-      if (!entry.isFile()) continue;
-      const fileStat = await stat(fullPath).catch(() => undefined);
-      files++;
-      if (isPartialName(entry.name)) partials++;
-      if (fileStat) {
-        bytes += fileStat.size;
-        latestWriteMs = Math.max(latestWriteMs, fileStat.mtimeMs);
-      }
-    }
-  }
-
-  return { exists: true, files, partials, bytes, latestWriteMs };
-}
-
-function isPartialName(fileName: string) {
-  const lower = fileName.toLowerCase();
-  return (
-    lower.includes(".downloading") ||
-    lower.endsWith(".baiduyun.p.downloading") ||
-    lower.endsWith(".bdtmp") ||
-    lower.endsWith(".tmp")
-  );
-}
-
-async function waitForLocalDownloadComplete(
-  targetName: string,
-  rootFromDialog?: string,
-  timeoutMs = 60 * 60 * 1000,
-  downloadDir = DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
-) {
-  const explicitPath = await findExistingDownloadPath(targetName, rootFromDialog, downloadDir);
-  const targetPath =
-    explicitPath ??
-    path.join(candidateDownloadRoots(rootFromDialog, downloadDir)[0] ?? process.cwd(), targetName);
-
-  if (timeoutMs <= 0) {
-    log(`跳过完整下载等待：${targetPath}`);
-    return targetPath;
-  }
-
-  log(`等待本地下载完成：${targetPath}`);
-  const started = Date.now();
-  let lastLog = 0;
-  let stableChecks = 0;
-  let previous: DownloadStatus | undefined;
-
-  while (Date.now() - started < timeoutMs) {
-    const status = await getDownloadStatus(targetPath);
-    const stable =
-      previous &&
-      previous.exists === status.exists &&
-      previous.files === status.files &&
-      previous.partials === status.partials &&
-      previous.bytes === status.bytes &&
-      previous.latestWriteMs === status.latestWriteMs;
-
-    if (status.exists && status.files > 0 && status.partials === 0) {
-      stableChecks = stable ? stableChecks + 1 : 1;
-      if (stableChecks >= 2) return targetPath;
-    } else {
-      stableChecks = 0;
-    }
-
-    if (Date.now() - lastLog > 5000) {
-      log(
-        `下载状态：files=${status.files}, downloading=${status.partials}, bytes=${status.bytes}`,
-      );
-      lastLog = Date.now();
-    }
-
-    previous = status;
-    await sleep(3000);
-  }
-
-  const finalStatus = await getDownloadStatus(targetPath);
-  throw new Error(
-    `下载未在限定时间内完成：files=${finalStatus.files}, downloading=${finalStatus.partials}, path=${targetPath}`,
-  );
-}
-
-async function submitDirectDownload(
-  port: number,
-  listTarget: CdpTarget,
-  share: ShareInfo,
-  downloadDir?: string,
-) {
-  await downloadShareFolderFromSharePage(listTarget, share.name);
-  let downloadRoot: string | undefined;
-  try {
-    downloadRoot = await confirmDownloadSetting(port, downloadDir);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (message.includes("没有找到目标页面")) {
-      throw new Error(
-        "分享页直接下载没有拉起客户端下载确认窗口，通常是验证码、风控或下载信息获取失败。请使用 --strategy=save。",
-      );
-    }
-    throw error;
-  }
-  await waitForDownloadSubmitted(port);
-  return downloadRoot;
-}
-
 async function submitSavedDownload(
   port: number,
-  listTarget: CdpTarget,
+  shareTarget: CdpTarget,
   share: ShareInfo,
   downloadDir?: string,
 ) {
-  const saved = await saveShareToOwnNetdisk(listTarget, share.name);
+  const saved = await saveShareToOwnNetdisk(shareTarget, share);
   log(
     saved.alreadySaved
       ? `网盘中已存在目录：${saved.savedPath} (${saved.locateSource})`
       : `已保存到网盘：${saved.savedPath} (${saved.locateSource})`,
   );
 
-  try {
-    await downloadOwnFolderFromClientPage(port, saved.fileName || share.name, saved.savedPath);
-  } catch (error) {
-    log(
-      `客户端文件列表下载未触发，回退搜索页：${
-        error instanceof Error ? error.message : String(error)
-      }`,
-    );
-    await downloadSavedFolderFromClientSearch(port, saved.fileName || share.name);
-  }
+  const targetName = saved.fileName || share.name;
+  await downloadSavedFolderFromClientSearch(port, targetName);
   const downloadRoot = await confirmDownloadSetting(port, downloadDir);
-  await waitForDownloadSubmitted(port);
-  return downloadRoot;
+  await waitForDownloadSubmitted(port, {
+    targetName,
+    savedPath: saved.savedPath,
+    fsId: saved.fsId,
+    downloadRoot,
+  });
+  return { downloadRoot, targetName };
 }
 
 export async function downloadBaiduNetdiskShare(
@@ -1776,8 +1916,6 @@ export async function downloadBaiduNetdiskShare(
   }
 
   const port = options.port ?? 9337;
-  const waitCompleteMs = options.waitCompleteMs ?? 60 * 60 * 1000;
-  const downloadStrategy = options.strategy ?? "auto";
   const downloadDir = options.downloadDir?.trim() || DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR;
 
   let content: string;
@@ -1796,29 +1934,7 @@ export async function downloadBaiduNetdiskShare(
   await mkdir(downloadDir, { recursive: true });
 
   log(`读取分享：${share.name}`);
-  log(`下载策略：${downloadStrategy}`);
   log(`默认下载目录：${downloadDir}`);
-
-  const existingPath = await findExistingDownloadPath(share.name, undefined, downloadDir);
-  if (existingPath && !options.forceClick) {
-    const status = await getDownloadStatus(existingPath);
-    if (status.files > 0) {
-      log(`检测到已有本地下载目录：${existingPath}`);
-      const localPath = await waitForLocalDownloadComplete(
-        share.name,
-        path.dirname(existingPath),
-        waitCompleteMs,
-        downloadDir,
-      );
-      return {
-        share,
-        downloadRoot: path.dirname(localPath),
-        localPath,
-        completed: true,
-        skippedExisting: true,
-      };
-    }
-  }
 
   await copyToClipboard(content);
   log("已复制分享内容到剪贴板");
@@ -1828,105 +1944,17 @@ export async function downloadBaiduNetdiskShare(
 
   const shareTarget = await openSharePage(port, share);
   await enterShareCode(shareTarget, share);
-  const listTarget = await waitForShareList(port, share);
-
-  let downloadRoot: string | undefined;
-  if (downloadStrategy === "direct") {
-    try {
-      downloadRoot = await submitDirectDownload(port, listTarget, share, downloadDir);
-    } catch (error) {
-      const message = error instanceof Error ? error.message : String(error);
-      if (message.includes("验证码") || (await sharePageNeedsDownloadCaptcha(port, share.name))) {
-        throw new Error(
-          "分享页直接下载要求验证码；脚本不会接入验证码破解或打码库。请改用 --strategy=save，或手动完成验证码后重试。",
-        );
-      }
-      throw error;
-    }
-  } else if (downloadStrategy === "save") {
-    downloadRoot = await submitSavedDownload(port, listTarget, share, downloadDir);
-  } else {
-    try {
-      downloadRoot = await submitDirectDownload(port, listTarget, share, downloadDir);
-    } catch (directError) {
-      if (await isCompletedInClient(port, share.name)) {
-        log("客户端已完成列表中存在目标文件");
-        return { share, completed: true, skippedExisting: false };
-      }
-
-      log(
-        `分享页直接下载未完成，尝试保存后从客户端下载：${
-          directError instanceof Error ? directError.message : String(directError)
-        }`,
-      );
-
-      try {
-        downloadRoot = await submitSavedDownload(port, listTarget, share, downloadDir);
-      } catch (saveError) {
-        if (await isCompletedInClient(port, share.name)) {
-          log("客户端已完成列表中存在目标文件");
-          return { share, completed: true, skippedExisting: false };
-        }
-
-        if (await sharePageNeedsDownloadCaptcha(port, share.name)) {
-          throw new Error(
-            "检测到网页验证码；脚本不会绕过验证码。可先手动处理验证码，或使用保存到账号后下载策略。",
-          );
-        }
-
-        throw new Error(
-          `直接下载和保存后客户端下载都未完成。直接下载错误：${
-            directError instanceof Error ? directError.message : String(directError)
-          }；保存后下载错误：${
-            saveError instanceof Error ? saveError.message : String(saveError)
-          }`,
-        );
-      }
-    }
-  }
-
-  if (!downloadRoot && (await isCompletedInClient(port, share.name))) {
-    log("客户端已完成列表中存在目标文件");
-    return { share, completed: true, skippedExisting: false };
-  }
-
-  if (!downloadRoot) {
-    throw new Error(
-      downloadStrategy === "direct"
-        ? "直接下载未提交下载任务。"
-        : "保存后下载未提交下载任务。",
-    );
-  }
-
-  if (await isCompletedInClient(port, share.name)) {
-    log("客户端已完成列表中存在目标文件");
-    return { share, downloadRoot, completed: true, skippedExisting: false };
-  }
-
-  const predictedLocalPath = path.join(downloadRoot, share.name);
-  if (waitCompleteMs <= 0) {
-    log(`下载任务已提交，不等待本地完成：${predictedLocalPath}`);
-    return {
-      share,
-      downloadRoot,
-      localPath: predictedLocalPath,
-      completed: false,
-      skippedExisting: false,
-    };
-  }
-
-  const localPath = await waitForLocalDownloadComplete(
-    share.name,
-    downloadRoot,
-    waitCompleteMs,
-    downloadDir,
-  );
+  const listTarget = await waitForShareList(port, share, [shareTarget]);
+  const { downloadRoot, targetName } = await submitSavedDownload(port, listTarget, share, downloadDir);
+  const resolvedDownloadRoot = downloadRoot ?? downloadDir;
+  const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
+  log(`下载任务已提交，不等待本地完成：${predictedLocalPath}`);
 
   return {
     share,
-    downloadRoot: downloadRoot ?? path.dirname(localPath),
-    localPath,
-    completed: true,
+    downloadRoot: resolvedDownloadRoot,
+    localPath: predictedLocalPath,
+    completed: false,
     skippedExisting: false,
   };
 }

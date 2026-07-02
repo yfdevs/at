@@ -19,9 +19,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "tsc --noEmit",
-    "download:share": "node --experimental-strip-types src/download-baidu-folder.ts",
-    "download:share:direct": "node --experimental-strip-types src/download-baidu-folder.ts --strategy=direct",
-    "download:share:save": "node --experimental-strip-types src/download-baidu-folder.ts --strategy=save"
+    "download:share": "node --experimental-strip-types src/download-baidu-folder.ts"
   },
   "devDependencies": {
     "@types/node": "latest",

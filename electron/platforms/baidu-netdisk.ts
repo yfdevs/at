@@ -144,8 +144,6 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       shareText: string;
       port: number;
       downloadDir: string;
-      strategy?: "auto" | "direct" | "save";
-      waitCompleteMs?: number;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
   }>;
 }
@@ -189,8 +187,6 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
     shareText,
     port: cdpPort(config),
     downloadDir: defaultBaiduNetdiskDownloadDir,
-    strategy: "save",
-    waitCompleteMs: 0,
   });
 
   return {
