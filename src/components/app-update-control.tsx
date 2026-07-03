@@ -64,7 +64,7 @@ function errorMessage(error: unknown) {
 
 function updateSummary(status: AppUpdateStatus | null) {
   if (!status) return "读取中";
-  if (!status.enabled) return status.disabledReason ?? "当前环境不可用";
+  if (!status.enabled) return "更新不可用";
 
   switch (status.state) {
     case "checking":
@@ -89,7 +89,7 @@ function updateSummary(status: AppUpdateStatus | null) {
 
 function updateDescription(status: AppUpdateStatus | null) {
   if (!status) return "正在读取更新状态。";
-  if (!status.enabled) return status.disabledReason ?? "当前环境不可用。";
+  if (!status.enabled) return "当前环境暂不支持应用内更新。";
 
   if (status.state === "available") {
     return "新版本不会自动下载。确认当前任务不受影响后，可以手动开始下载。";

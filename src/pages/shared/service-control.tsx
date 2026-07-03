@@ -115,7 +115,7 @@ export function ServiceControlButtonPage({
           : startLabel
 
   return (
-    <main className="flex min-h-svh flex-1 items-center justify-center bg-transparent p-6">
+    <main className="relative flex min-h-svh flex-1 items-center justify-center bg-transparent p-6">
       <Button
         aria-busy={loading}
         aria-label={label}

@@ -92,12 +92,12 @@ body {
 .app-titlebar-memory-host {
   position: absolute;
   top: 0;
-  right: 120px;
+  right: 92px;
   z-index: 100;
   height: var(--app-titlebar-height);
   display: flex;
   align-items: center;
-  padding-right: 10px;
+  padding-right: 6px;
   -webkit-app-region: no-drag;
 }
 
@@ -120,8 +120,7 @@ body {
   -webkit-app-region: no-drag;
 }
 
-.app-titlebar-platform-button,
-.app-titlebar-config-button {
+.app-titlebar-platform-button {
   width: 28px;
   height: 28px;
   border-radius: 6px;
@@ -134,17 +133,6 @@ body {
   border-color: color-mix(in oklch, var(--primary) 20%, transparent);
   background: var(--card);
   color: var(--primary);
-}
-
-.app-titlebar-config-host {
-  position: absolute;
-  top: calc((var(--app-titlebar-height) - 30px) / 2);
-  right: 92px;
-  display: flex;
-  height: 30px;
-  align-items: center;
-  pointer-events: auto;
-  -webkit-app-region: no-drag;
 }
 
 .cet-titlebar .cet-control-icon {

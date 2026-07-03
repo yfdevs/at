@@ -172,7 +172,7 @@ export function ConfigurationPageFrame({
   };
 
   return (
-    <main className="flex min-h-svh flex-1 flex-col bg-muted/20">
+    <main className="flex min-h-svh flex-1 flex-col bg-background">
       <div className="sticky top-0 z-10 border-b bg-background/95 px-6 py-3 backdrop-blur">
         <div className="mx-auto flex w-full max-w-215 gap-3 flex-row justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2">

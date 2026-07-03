@@ -10,6 +10,11 @@ export interface LocalEpisodeVideo {
   file: string;
 }
 
+const localEpisodeVideoPatterns = [
+  "*.mp4",
+  "{成片,视频}/*.mp4",
+];
+
 function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
@@ -36,18 +41,22 @@ export async function findLocalEpisodeVideos(config: Config): Promise<LocalEpiso
     throw new Error(`[local-video-invalid] 剧集视频目录不存在: ${playletDir}`);
   }
 
-  const fileNamePattern = new RegExp(
-    `^${escapeRegExp(getOriginalTitle(config))}\\s*[-_—–]?\\s*第(\\d+)集\\.mp4$`,
-    "i",
-  );
-  const fileNames = await fg("*.mp4", {
+  const escapedOriginalTitle = escapeRegExp(getOriginalTitle(config));
+  const fileNamePatterns = [
+    new RegExp(`^${escapedOriginalTitle}\\s*[-_—–]?\\s*第(\\d+)集\\.mp4$`, "i"),
+    new RegExp(`^${escapedOriginalTitle}\\s*(\\d+)\\.mp4$`, "i"),
+  ];
+  const fileNames = await fg(localEpisodeVideoPatterns, {
     cwd: playletDir,
     onlyFiles: true,
-    deep: 1,
+    deep: 2,
   });
 
   const episodes = fileNames.flatMap((fileName): LocalEpisodeVideo[] => {
-    const match = fileNamePattern.exec(path.basename(fileName));
+    const baseName = path.basename(fileName);
+    const match = fileNamePatterns
+      .map((pattern) => pattern.exec(baseName))
+      .find((result): result is RegExpExecArray => result !== null);
     if (!match) return [];
 
     const index = Number(match[1]);

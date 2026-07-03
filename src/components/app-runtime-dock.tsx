@@ -1,11 +1,11 @@
 import { useEffect, useMemo, useState } from "react";
-import { Chrome, Folder, Info } from "@mynaui/icons-react";
-import { useLocation } from "react-router-dom";
+import { Chrome, CircleDashed, Cog, Folder, Info } from "@mynaui/icons-react";
+import { useLocation, useNavigate } from "react-router-dom";
 
 import { AppUpdateControl } from "@/components/app-update-control";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { defaultRoute, isAppRoute, platformForPath } from "@/config/navigation";
+import { defaultRoute, isAppRoute, platformForPath, routePath } from "@/config/navigation";
 import { cn } from "@/lib/utils";
 import {
   getAppPlatformRuntime,
@@ -38,6 +38,7 @@ function browserSummary(result: AppPlatformRuntimeResult | null) {
 
 export function AppRuntimeDock() {
   const location = useLocation();
+  const navigate = useNavigate();
   const currentPath = location.pathname.replace(/^\/+/, "");
   const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
   const activePlatform = platformForPath(activeRoute);
@@ -136,8 +137,12 @@ export function AppRuntimeDock() {
             />
           </span>
           <span className="flex min-w-0 items-center gap-1">
-            <span className="max-w-20 truncate font-medium leading-none">{activePlatform.title}</span>
-            <span className="text-muted-foreground" aria-hidden="true">/</span>
+            <span className="max-w-20 truncate font-medium leading-none">
+              {activePlatform.title}
+            </span>
+            <span className="text-muted-foreground" aria-hidden="true">
+              /
+            </span>
             <span className="shrink-0 text-muted-foreground">{stateLabel}</span>
           </span>
         </TooltipTrigger>
@@ -152,7 +157,6 @@ export function AppRuntimeDock() {
           {error ? <span className="text-background">{error}</span> : null}
         </TooltipContent>
       </Tooltip>
-
 
       <Tooltip>
         <TooltipTrigger
@@ -180,7 +184,9 @@ export function AppRuntimeDock() {
           ) : (
             <Chrome className="size-3.5 text-muted-foreground/70" aria-hidden="true" />
           )}
-          <span className="font-medium tabular-nums">{runtime?.platform.browserInstanceCount ?? 0}</span>
+          <span className="font-medium tabular-nums">
+            {runtime?.platform.browserInstanceCount ?? 0}
+          </span>
         </TooltipTrigger>
         <TooltipContent side="top" sideOffset={8} className="grid max-w-64 gap-1">
           <span>{browserSummary(runtime)}</span>
@@ -196,19 +202,31 @@ export function AppRuntimeDock() {
       <Tooltip>
         <TooltipTrigger
           render={
-            <Button
-              size="xs"
-              variant="ghost"
-              disabled={openingLogs}
-              onClick={handleOpenLogs}
-            />
+            <Button size="xs" variant="ghost" disabled={openingLogs} onClick={handleOpenLogs} />
           }
         >
-          <Folder className="size-3.5" aria-hidden="true" />
+          <CircleDashed className="size-3.5 text-yellow-500" aria-hidden="true" />
           <span>{openingLogs ? "打开中" : "日志"}</span>
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8}>
           打开{activePlatform.title}日志目录
+        </TooltipContent>
+      </Tooltip>
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              size="xs"
+              variant="ghost"
+              onClick={() => navigate(routePath(activePlatform.configRoute))}
+            />
+          }
+        >
+          <Cog className="size-3.5" aria-hidden="true" />
+          <span>配置</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="end" sideOffset={8}>
+          打开{activePlatform.title}配置
         </TooltipContent>
       </Tooltip>
 

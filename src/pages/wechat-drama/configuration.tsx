@@ -130,7 +130,7 @@ const sections: Array<{
       {
         key: "localEpisodeVideoRoot",
         label: "剧集视频根目录",
-        description: "按剧目名查找本地视频，需与运行数据目录同盘。",
+        description: "按领取任务的原始剧名查找本地视频，可放在剧名目录或其成片/视频子目录，需与运行数据目录同盘。",
       },
       {
         key: "runDataDir",
@@ -347,7 +347,7 @@ export function WechatConfigurationPage() {
   };
 
   return (
-    <main className="flex min-h-svh flex-1 flex-col bg-muted/20">
+    <main className="flex min-h-svh flex-1 flex-col bg-background">
       <div className="sticky top-0 z-10 border-b bg-background/95 px-6 py-3 backdrop-blur">
         <div className="mx-auto flex w-full max-w-215 gap-3 flex-row justify-between">
           <div className="flex min-w-0 flex-wrap items-center gap-2">

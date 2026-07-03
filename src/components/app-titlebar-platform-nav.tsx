@@ -1,6 +1,5 @@
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { Cog } from "@mynaui/icons-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { buttonVariants } from "@/components/ui/button";
@@ -42,7 +41,6 @@ export function AppTitlebarPlatformNav() {
   const currentPath = location.pathname.replace(/^\/+/, "");
   const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
   const activePlatform = platformForPath(activeRoute);
-  const configActive = activeRoute === activePlatform.configRoute;
 
   useEffect(() => {
     let disposed = false;
@@ -116,27 +114,6 @@ export function AppTitlebarPlatformNav() {
           );
         })}
       </nav>
-
-      <div className="app-titlebar-config-host">
-        <Tooltip>
-          <TooltipTrigger
-            type="button"
-            aria-label={`打开${activePlatform.title}配置管理`}
-            aria-pressed={configActive}
-            className={cn(
-              buttonVariants({ size: "icon-xs", variant: configActive ? "secondary" : "ghost" }),
-              "app-titlebar-config-button",
-              configActive && "app-titlebar-platform-button-active",
-            )}
-            onClick={() => navigate(routePath(activePlatform.configRoute))}
-          >
-            <Cog className="size-4" />
-          </TooltipTrigger>
-          <TooltipContent side="bottom" align="end" sideOffset={8}>
-            {activePlatform.title}配置管理
-          </TooltipContent>
-        </Tooltip>
-      </div>
     </>,
     host,
   );
