@@ -10,9 +10,13 @@ import type { VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import { TaskService } from "./task-service.js";
 import { classifyError, ErrorType, inferRpaFailStage } from "../shared/errors.js";
+import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
+import { integerSetting } from "../shared/settings-value.js";
+import type { EnsureBaiduNetdiskResource } from "./runtime.js";
 
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
+const baiduNetdiskDownloadRetryDelayMs = 5000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -33,6 +37,7 @@ export class TaskWorkerPool {
     private readonly browserContexts: BrowserContextManager,
     private readonly taskService: TaskService,
     private readonly notifier = new FeishuNotifier(),
+    private readonly ensureBaiduNetdiskResource?: EnsureBaiduNetdiskResource,
   ) {}
 
   start(): void {
@@ -164,6 +169,7 @@ export class TaskWorkerPool {
 
           try {
             const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
+            await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
 
             const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
@@ -241,4 +247,85 @@ export class TaskWorkerPool {
     logger.info("worker stopped", { videoAccountId });
     });
   }
+
+  private async ensureBaiduNetdiskResourceReady(
+    claimedAccountTask: Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>,
+    playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>,
+  ): Promise<void> {
+    if (!claimedAccountTask) return;
+
+    const baiduPanResourceLink = stringValue(claimedAccountTask.playlet.baiduPanResourceLink);
+    if (!baiduPanResourceLink) return;
+
+    if (!this.ensureBaiduNetdiskResource) {
+      throw new Error("任务包含百度网盘资源链接，但当前运行时未接入百度网盘下载能力。");
+    }
+
+    logger.info("ensure baidu netdisk resource before task", {
+      accountTaskId: claimedAccountTask.accountTaskId,
+      originalTitle: claimedAccountTask.originalTitle,
+      baiduPanResourceLink,
+    });
+
+    const settings = getWechatVideoRuntimeSettings();
+    const retryAttempts = integerSetting(settings.baiduNetdiskDownloadRetryAttempts, 3);
+    const maxAttempts = retryAttempts + 1;
+    let lastError: unknown;
+
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        logger.info("baidu netdisk resource attempt", {
+          accountTaskId: claimedAccountTask.accountTaskId,
+          originalTitle: claimedAccountTask.originalTitle,
+          attempt,
+          maxAttempts,
+        });
+
+        await this.ensureBaiduNetdiskResource({
+          shareText: baiduPanResourceLink,
+          resourceName: claimedAccountTask.originalTitle,
+          localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
+          episodeCount: playletConfig.playlet.episodeCount,
+        });
+
+        logger.info("baidu netdisk resource ready", {
+          accountTaskId: claimedAccountTask.accountTaskId,
+          originalTitle: claimedAccountTask.originalTitle,
+          attempt,
+        });
+        return;
+      } catch (error) {
+        lastError = error;
+        const errorMessage = error instanceof Error ? error.message : String(error);
+
+        if (attempt >= maxAttempts) {
+          logger.error("baidu netdisk resource failed after retries", {
+            accountTaskId: claimedAccountTask.accountTaskId,
+            originalTitle: claimedAccountTask.originalTitle,
+            attempt,
+            maxAttempts,
+            errorMessage,
+          });
+          break;
+        }
+
+        logger.warn("baidu netdisk resource failed, retry", {
+          accountTaskId: claimedAccountTask.accountTaskId,
+          originalTitle: claimedAccountTask.originalTitle,
+          attempt,
+          nextAttempt: attempt + 1,
+          maxAttempts,
+          retryDelayMs: baiduNetdiskDownloadRetryDelayMs,
+          errorMessage,
+        });
+        await sleep(baiduNetdiskDownloadRetryDelayMs);
+      }
+    }
+
+    throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+}
+
+function stringValue(value: unknown) {
+  return typeof value === "string" ? value.trim() : "";
 }

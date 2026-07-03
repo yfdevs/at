@@ -41,6 +41,7 @@ type ShareInfo = BaiduNetdiskShareInfo;
 export type BaiduNetdiskShareDownloadOptions = {
   shareText?: string;
   shareFile?: string;
+  resourceName?: string;
   port?: number;
   downloadDir?: string;
 };
@@ -51,6 +52,18 @@ export type BaiduNetdiskShareDownloadResult = {
   localPath?: string;
   completed: boolean;
   skippedExisting: boolean;
+};
+
+export type BaiduNetdiskDownloadTaskStatus = {
+  found: boolean;
+  name?: string;
+  localPath?: string;
+  status?: string;
+  size?: number;
+  finishSize?: number;
+  rate?: string;
+  completed: boolean;
+  tasks: string[];
 };
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
@@ -77,6 +90,7 @@ function numberArg(args: string[], name: string) {
 function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
   return {
     shareFile: getArg(args, "--share-file"),
+    resourceName: getArg(args, "--resource-name"),
     port: numberArg(args, "--port") ?? 9337,
     downloadDir: getArg(args, "--download-dir") ?? DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
   };
@@ -1719,6 +1733,44 @@ async function getNativeDownloadTask(port: number, targetName: string) {
   );
 }
 
+function parseTaskNumber(value: string | undefined) {
+  const parsed = Number(value);
+  return Number.isFinite(parsed) && parsed >= 0 ? parsed : undefined;
+}
+
+export async function getBaiduNetdiskDownloadTaskStatus(options: {
+  port?: number;
+  targetName: string;
+}): Promise<BaiduNetdiskDownloadTaskStatus> {
+  const port = options.port ?? 9337;
+  const targetName = options.targetName.trim();
+
+  if (!targetName) {
+    throw new Error("targetName is required.");
+  }
+
+  await ensureBaiduCdpPort(port);
+  const nativeTask = await getNativeDownloadTask(port, targetName);
+  const matched = nativeTask?.matched;
+  const size = parseTaskNumber(matched?.size);
+  const finishSize = parseTaskNumber(matched?.finishSize);
+  const status = matched?.status;
+  const completedBySize = size !== undefined && size > 0 && finishSize === size;
+  const completedByStatus = Boolean(status && /完成|success|finished|complete|done|已下载/i.test(status));
+
+  return {
+    found: Boolean(matched),
+    name: matched?.name || targetName,
+    localPath: matched?.localPath,
+    status,
+    size,
+    finishSize,
+    rate: matched?.rate,
+    completed: Boolean(matched && (completedBySize || completedByStatus)),
+    tasks: nativeTask?.tasks ?? [],
+  };
+}
+
 async function submitNativeDownloadTask(port: number, task: SavedDownloadTask) {
   if (!task.downloadRoot) return false;
 
@@ -1929,6 +1981,13 @@ export async function downloadBaiduNetdiskShare(
     share = loaded.share;
   } else {
     throw new Error("必须提供 shareText 或 --share-file，不能使用默认分享文件。");
+  }
+
+  if (options.resourceName?.trim()) {
+    share = {
+      ...share,
+      name: sanitizeWindowsName(options.resourceName),
+    };
   }
 
   await mkdir(downloadDir, { recursive: true });

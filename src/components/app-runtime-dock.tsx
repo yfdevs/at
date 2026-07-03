@@ -1,5 +1,5 @@
+import { Chrome, CircleDashed, Cog, Info } from "@mynaui/icons-react";
 import { useEffect, useMemo, useState } from "react";
-import { Chrome, CircleDashed, Cog, Folder, Info } from "@mynaui/icons-react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { AppUpdateControl } from "@/components/app-update-control";

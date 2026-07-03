@@ -44,6 +44,36 @@ export type BaiduNetdiskShareDownloadResult = {
   downloadDir: string;
 };
 
+export type BaiduNetdiskDownloadState = "pending" | "downloading" | "completed" | "failed";
+
+export type BaiduNetdiskDownloadRecord = {
+  id: string;
+  shareKey: string;
+  shareText: string;
+  resourceName: string;
+  localEpisodeVideoRoot?: string;
+  episodeCount?: number;
+  downloadDir: string;
+  localPath?: string;
+  progressPercent?: number;
+  transferredBytes?: number;
+  totalBytes?: number;
+  speedText?: string;
+  nativeStatus?: string;
+  state: BaiduNetdiskDownloadState;
+  skippedExisting: boolean;
+  error?: string;
+  createdAt: string;
+  updatedAt: string;
+  startedAt?: string;
+  completedAt?: string;
+};
+
+export type BaiduNetdiskDownloadRecordResult = {
+  records: BaiduNetdiskDownloadRecord[];
+  path: string;
+};
+
 function trimShareLink(value: string) {
   return value.replace(/[),，。；;、\]]+$/g, "");
 }
@@ -117,4 +147,34 @@ export async function downloadBaiduNetdiskShare(shareText: string) {
   return requireIpcRenderer("百度网盘下载").invoke("baidu-netdisk:share:download", {
     shareText,
   }) as Promise<BaiduNetdiskShareDownloadResult>;
+}
+
+export async function getBaiduNetdiskDownloadRecords() {
+  return requireIpcRenderer("百度网盘下载记录").invoke(
+    "baidu-netdisk:downloads:list",
+  ) as Promise<BaiduNetdiskDownloadRecordResult>;
+}
+
+export async function clearBaiduNetdiskDownloadRecords() {
+  return requireIpcRenderer("清空百度网盘下载记录").invoke(
+    "baidu-netdisk:downloads:clear",
+  ) as Promise<BaiduNetdiskDownloadRecordResult>;
+}
+
+export function onBaiduNetdiskDownloadRecordsChanged(
+  listener: (result: BaiduNetdiskDownloadRecordResult) => void,
+) {
+  if (!window.ipcRenderer) {
+    return () => undefined;
+  }
+
+  const ipcListener = (_event: unknown, result: BaiduNetdiskDownloadRecordResult) => {
+    listener(result);
+  };
+
+  window.ipcRenderer.on("baidu-netdisk:downloads:changed", ipcListener);
+
+  return () => {
+    window.ipcRenderer.off("baidu-netdisk:downloads:changed", ipcListener);
+  };
 }

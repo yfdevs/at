@@ -1,4 +1,3 @@
-import { useEffect, useState } from "react";
 import {
   CheckCircle,
   DangerTriangle,
@@ -6,11 +5,12 @@ import {
   Power,
   Refresh,
   SpinnerOne,
+  Zap,
 } from "@mynaui/icons-react";
+import { useEffect, useState } from "react";
 import { toast } from "sonner";
 
-import { Button } from "@/components/ui/button";
-import { buttonVariants } from "@/components/ui/button";
+import { Button, buttonVariants } from "@/components/ui/button";
 import {
   Popover,
   PopoverContent,
@@ -21,6 +21,7 @@ import {
 } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
+import { cn } from "@/lib/utils";
 import {
   checkForAppUpdate,
   downloadAppUpdate,
@@ -29,7 +30,6 @@ import {
   onAppUpdateChanged,
   type AppUpdateStatus,
 } from "@/platforms/app-runtime/service";
-import { cn } from "@/lib/utils";
 
 type UpdateAction = "check" | "download" | "install";
 
@@ -164,7 +164,7 @@ function UpdateStateIcon({
     return <DangerTriangle className={iconClass} aria-hidden="true" />;
   }
 
-  return <Download className={iconClass} aria-hidden="true" />;
+  return <Zap className={iconClass} aria-hidden="true" />;
 }
 
 export function AppUpdateControl() {

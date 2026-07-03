@@ -35,6 +35,7 @@ export type WechatVideoConfig = {
   idlePageRefreshJitterSeconds: string
   basicInfoStepTimeoutSeconds: string
   remoteFileDownloadTimeoutSeconds: string
+  baiduNetdiskDownloadRetryAttempts: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string

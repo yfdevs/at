@@ -43,7 +43,10 @@ import {
   registerTiktokDramaCenterPlatformHandlers,
   stopTiktokDramaCenterPlatformRuntime,
 } from "./platforms/tiktok-drama";
-import { registerBaiduNetdiskPlatformHandlers } from "./platforms/baidu-netdisk";
+import {
+  ensureBaiduNetdiskCdpReadyOnStartup,
+  registerBaiduNetdiskPlatformHandlers,
+} from "./platforms/baidu-netdisk";
 import { readMemoryStatus } from "./platforms/shared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -187,6 +190,7 @@ app.whenReady().then(() => {
     registerAppUpdaterHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
     });
+    ensureBaiduNetdiskCdpReadyInBackground();
 
     if (process.platform === "darwin" && VITE_DEV_SERVER_URL) {
       app.dock?.setIcon(getAppIconPath());
@@ -198,6 +202,25 @@ app.whenReady().then(() => {
     throw error;
   }
 });
+
+function ensureBaiduNetdiskCdpReadyInBackground() {
+  void (async () => {
+    try {
+      logMain("info", "baidu netdisk startup cdp check started");
+      const result = await ensureBaiduNetdiskCdpReadyOnStartup();
+      logMain("info", "baidu netdisk startup cdp check finished", {
+        action: result.action,
+        ready: result.status.ready,
+        appRunning: result.status.appRunning,
+        cdpRunning: result.status.cdpRunning,
+        port: result.status.port,
+        message: result.status.message,
+      });
+    } catch (error) {
+      logMain("error", "baidu netdisk startup cdp check failed", error);
+    }
+  })();
+}
 
 function ipcMainHandleAppRuntimeStatus() {
   ipcMain.handle("app:runtime:status", async () => {

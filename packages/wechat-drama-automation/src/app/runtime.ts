@@ -8,6 +8,17 @@ import { TaskService } from "./task-service.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 import { VideoAccountSyncService } from "./video-account-sync-service.js";
 
+export type EnsureBaiduNetdiskResourceRequest = {
+  shareText: string;
+  resourceName: string;
+  localEpisodeVideoRoot: string;
+  episodeCount: number;
+};
+
+export type EnsureBaiduNetdiskResource = (
+  request: EnsureBaiduNetdiskResourceRequest,
+) => Promise<unknown>;
+
 export type WechatVideoRuntime = {
   getStatus: () => WechatVideoRuntimeStatus;
   focusVideoAccount: (videoAccountId: string) => Promise<void>;
@@ -21,6 +32,7 @@ export type WechatVideoRuntimeStatus = {
 export type WechatVideoRuntimeOptions = {
   onLog?: (message: string) => void;
   settings?: Partial<WechatVideoRuntimeSettings>;
+  ensureBaiduNetdiskResource?: EnsureBaiduNetdiskResource;
 }
 
 const logger = createLogger("runtime");
@@ -37,7 +49,13 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
   await browserContexts.initialize();
 
   const taskService = new TaskService(browserContexts, notifier);
-  const taskWorkerPool = new TaskWorkerPool(serviceConfig, browserContexts, taskService, notifier);
+  const taskWorkerPool = new TaskWorkerPool(
+    serviceConfig,
+    browserContexts,
+    taskService,
+    notifier,
+    options.ensureBaiduNetdiskResource,
+  );
   const idlePageRefreshService = new IdlePageRefreshService(serviceConfig, browserContexts, taskService);
   const videoAccountSyncService = new VideoAccountSyncService(
     serviceConfig,

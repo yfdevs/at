@@ -11,6 +11,7 @@ import {
   RuntimeController,
   selectDirectory,
 } from './shared'
+import { ensureBaiduNetdiskShareDownloaded } from './baidu-netdisk'
 
 type WechatVideoRuntime = {
   getStatus: () => {
@@ -55,6 +56,7 @@ export type WechatVideoConfig = {
   idlePageRefreshJitterSeconds: string
   basicInfoStepTimeoutSeconds: string
   remoteFileDownloadTimeoutSeconds: string
+  baiduNetdiskDownloadRetryAttempts: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string
@@ -86,6 +88,7 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   idlePageRefreshJitterSeconds: '300',
   basicInfoStepTimeoutSeconds: '600',
   remoteFileDownloadTimeoutSeconds: '120',
+  baiduNetdiskDownloadRetryAttempts: '3',
   episodeUploadWaitTimeoutSeconds: '7200',
   episodeUploadFailedRetryAttempts: '3',
   feishuBotWebhookUrl: '',
@@ -221,6 +224,7 @@ function normalizeConfig(
     idlePageRefreshJitterSeconds: config.idlePageRefreshJitterSeconds ?? defaultWechatVideoConfig.idlePageRefreshJitterSeconds,
     basicInfoStepTimeoutSeconds: config.basicInfoStepTimeoutSeconds ?? defaultWechatVideoConfig.basicInfoStepTimeoutSeconds,
     remoteFileDownloadTimeoutSeconds: config.remoteFileDownloadTimeoutSeconds ?? defaultWechatVideoConfig.remoteFileDownloadTimeoutSeconds,
+    baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts ?? defaultWechatVideoConfig.baiduNetdiskDownloadRetryAttempts,
     episodeUploadWaitTimeoutSeconds: config.episodeUploadWaitTimeoutSeconds ?? defaultWechatVideoConfig.episodeUploadWaitTimeoutSeconds,
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatVideoConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatVideoConfig.feishuBotWebhookUrl,
@@ -268,6 +272,7 @@ async function startRuntime() {
   const { startWechatVideoRuntime } = await import(/* @vite-ignore */ runtimePackage)
   return startWechatVideoRuntime({
     settings: readConfig(),
+    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
   })
 }
 

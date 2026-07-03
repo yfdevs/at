@@ -22,13 +22,17 @@ import {
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   BAIDU_NETDISK_DEFAULT_DOWNLOAD_DIR,
+  clearBaiduNetdiskDownloadRecords,
   controlBaiduNetdiskCdp,
   downloadBaiduNetdiskShare,
+  getBaiduNetdiskDownloadRecords,
   getBaiduNetdiskConfig,
   getBaiduNetdiskStatus,
+  onBaiduNetdiskDownloadRecordsChanged,
   parseBaiduNetdiskShareText,
   saveBaiduNetdiskConfig,
   type BaiduNetdiskCdpStatus,
+  type BaiduNetdiskDownloadRecord,
 } from "@/platforms/baidu-netdisk/service";
 
 type AppRuntimeStatus = {
@@ -156,6 +160,57 @@ function baiduNetdiskDescription(status: BaiduNetdiskCdpStatus | null) {
   return "应用需要用 CDP 模式启动百度网盘，才能连接客户端内部。";
 }
 
+function baiduDownloadStateText(state: BaiduNetdiskDownloadRecord["state"]) {
+  switch (state) {
+    case "pending":
+      return "待处理";
+    case "downloading":
+      return "下载中";
+    case "completed":
+      return "已完成";
+    case "failed":
+      return "失败";
+    default:
+      return "未知";
+  }
+}
+
+function baiduDownloadStateClass(state: BaiduNetdiskDownloadRecord["state"]) {
+  switch (state) {
+    case "completed":
+      return "text-emerald-600";
+    case "failed":
+      return "text-destructive";
+    case "downloading":
+      return "text-sky-600";
+    case "pending":
+    default:
+      return "text-muted-foreground";
+  }
+}
+
+function baiduDownloadProgressText(record: BaiduNetdiskDownloadRecord) {
+  if (record.progressPercent !== undefined) {
+    const transferred = record.transferredBytes ? formatBytes(record.transferredBytes) : null;
+    const total = record.totalBytes ? formatBytes(record.totalBytes) : null;
+    const sizeText = transferred && total ? ` · ${transferred}/${total}` : "";
+    const speedText = record.speedText ? ` · ${record.speedText}` : "";
+
+    return `${record.progressPercent}%${sizeText}${speedText}`;
+  }
+
+  return record.nativeStatus ?? "";
+}
+
+function baiduDownloadDetailText(record: BaiduNetdiskDownloadRecord) {
+  return (
+    record.error ||
+    baiduDownloadProgressText(record) ||
+    record.localPath ||
+    record.downloadDir
+  );
+}
+
 async function getAppRuntimeStatus() {
   if (!window.ipcRenderer) {
     throw new Error("应用运行状态仅在 Electron 应用内可用。");
@@ -249,6 +304,8 @@ function BaiduNetdiskPopover({
   const [installPathError, setInstallPathError] = useState<string | null>(null);
   const [downloadState, setDownloadState] = useState<BaiduDownloadState>("idle");
   const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
+  const [downloadRecords, setDownloadRecords] = useState<BaiduNetdiskDownloadRecord[]>([]);
+  const [downloadRecordsClearing, setDownloadRecordsClearing] = useState(false);
   const summary = baiduNetdiskSummary(status, error);
   const description = baiduNetdiskDescription(status);
   const iconClass = baiduNetdiskIconClass(status, error, actionPending);
@@ -288,6 +345,35 @@ function BaiduNetdiskPopover({
 
     return () => {
       disposed = true;
+    };
+  }, []);
+
+  useEffect(() => {
+    let disposed = false;
+
+    void (async () => {
+      try {
+        const result = await getBaiduNetdiskDownloadRecords();
+
+        if (!disposed) {
+          setDownloadRecords(result.records);
+        }
+      } catch {
+        if (!disposed) {
+          setDownloadRecords([]);
+        }
+      }
+    })();
+
+    const dispose = onBaiduNetdiskDownloadRecordsChanged((result) => {
+      if (!disposed) {
+        setDownloadRecords(result.records);
+      }
+    });
+
+    return () => {
+      disposed = true;
+      dispose();
     };
   }, []);
 
@@ -348,6 +434,23 @@ function BaiduNetdiskPopover({
       } catch (downloadError) {
         setDownloadState("error");
         setDownloadMessage(errorMessage(downloadError));
+      }
+    })();
+  };
+
+  const handleClearDownloadRecords = () => {
+    void (async () => {
+      setDownloadRecordsClearing(true);
+      setDownloadMessage(null);
+
+      try {
+        const result = await clearBaiduNetdiskDownloadRecords();
+        setDownloadRecords(result.records);
+      } catch (clearError) {
+        setDownloadMessage(errorMessage(clearError));
+        setDownloadState("error");
+      } finally {
+        setDownloadRecordsClearing(false);
       }
     })();
   };
@@ -503,6 +606,46 @@ function BaiduNetdiskPopover({
                 {downloadMessage}
               </div>
             ) : null}
+
+            <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-2 text-xs">
+              <div className="flex items-center justify-between gap-3">
+                <span className="font-medium">下载记录</span>
+                <div className="flex items-center gap-2">
+                  <span className="text-muted-foreground">{downloadRecords.length} 条</span>
+                  <Button
+                    type="button"
+                    size="xs"
+                    variant="ghost"
+                    disabled={downloadRecordsClearing || downloadRecords.length === 0}
+                    onClick={handleClearDownloadRecords}
+                  >
+                    {downloadRecordsClearing ? "清空中" : "清空"}
+                  </Button>
+                </div>
+              </div>
+              {downloadRecords.length > 0 ? (
+                <div className="grid max-h-28 gap-1 overflow-auto">
+                  {downloadRecords.slice(0, 5).map((record) => (
+                    <div key={record.id} className="grid gap-0.5 rounded-sm bg-background px-2 py-1">
+                      <div className="flex items-center justify-between gap-2">
+                        <span className="truncate font-medium">{record.resourceName}</span>
+                        <span className={`shrink-0 ${baiduDownloadStateClass(record.state)}`}>
+                          {baiduDownloadStateText(record.state)}
+                        </span>
+                      </div>
+                      <span
+                        className="truncate text-muted-foreground"
+                        title={baiduDownloadDetailText(record)}
+                      >
+                        {baiduDownloadDetailText(record)}
+                      </span>
+                    </div>
+                  ))}
+                </div>
+              ) : (
+                <span className="text-muted-foreground">暂无下载记录</span>
+              )}
+            </div>
 
             <div className="flex items-center justify-end gap-2">
               <Button type="button" size="sm" disabled={downloadDisabled} onClick={handleDownload}>
