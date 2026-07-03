@@ -35,10 +35,30 @@ export type BaiduNetdiskShareInfo = {
   name: string;
 };
 
+export type BaiduNetdiskRemoteEpisodeFile = {
+  index: number;
+  name: string;
+  path: string;
+  size?: number;
+};
+
+export type BaiduNetdiskRemoteVideoListing = {
+  rootPath: string;
+  files: BaiduNetdiskRemoteEpisodeFile[];
+  allVideoFiles: Array<{
+    name: string;
+    path: string;
+    size?: number;
+  }>;
+  duplicateIndexes: number[];
+  missingIndexes?: number[];
+};
+
 export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
   downloadDir: string;

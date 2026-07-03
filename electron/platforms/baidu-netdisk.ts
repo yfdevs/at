@@ -46,10 +46,30 @@ type BaiduNetdiskShareInfo = {
   name: string;
 };
 
+type BaiduNetdiskRemoteEpisodeFile = {
+  index: number;
+  name: string;
+  path: string;
+  size?: number;
+};
+
+type BaiduNetdiskRemoteVideoListing = {
+  rootPath: string;
+  files: BaiduNetdiskRemoteEpisodeFile[];
+  allVideoFiles: Array<{
+    name: string;
+    path: string;
+    size?: number;
+  }>;
+  duplicateIndexes: number[];
+  missingIndexes?: number[];
+};
+
 type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
   downloadDir: string;
@@ -585,6 +605,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
     downloadBaiduNetdiskShare: (options: {
       shareText: string;
       resourceName?: string;
+      expectedEpisodeCount?: number;
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -827,6 +848,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     const result = await downloadBaiduNetdiskShare({
       shareText: request.shareText,
       resourceName: request.resourceName,
+      expectedEpisodeCount: request.episodeCount,
       port: cdpPort(config),
       downloadDir: request.localEpisodeVideoRoot,
     });

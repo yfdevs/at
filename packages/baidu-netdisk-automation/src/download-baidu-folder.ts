@@ -8,6 +8,7 @@ const debugHost = "127.0.0.1";
 const requestTimeoutMs = 2500;
 
 export const DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR = "D:\\BaiduNetdiskDownload";
+const DEFAULT_BAIDU_NETDISK_SHARE_NAME = "百度网盘分享";
 
 type CdpTarget = {
   id: string;
@@ -42,14 +43,35 @@ export type BaiduNetdiskShareDownloadOptions = {
   shareText?: string;
   shareFile?: string;
   resourceName?: string;
+  expectedEpisodeCount?: number;
   port?: number;
   downloadDir?: string;
+};
+
+export type BaiduNetdiskRemoteEpisodeFile = {
+  index: number;
+  name: string;
+  path: string;
+  size?: number;
+};
+
+export type BaiduNetdiskRemoteVideoListing = {
+  rootPath: string;
+  files: BaiduNetdiskRemoteEpisodeFile[];
+  allVideoFiles: Array<{
+    name: string;
+    path: string;
+    size?: number;
+  }>;
+  duplicateIndexes: number[];
+  missingIndexes?: number[];
 };
 
 export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
 };
@@ -91,6 +113,7 @@ function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
   return {
     shareFile: getArg(args, "--share-file"),
     resourceName: getArg(args, "--resource-name"),
+    expectedEpisodeCount: numberArg(args, "--expected-episode-count"),
     port: numberArg(args, "--port") ?? 9337,
     downloadDir: getArg(args, "--download-dir") ?? DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
   };
@@ -128,7 +151,7 @@ export function parseBaiduNetdiskShareText(
   const name =
     content.match(/通过网盘分享的文件[:：]\s*([^\r\n]+)/)?.[1]?.trim() ??
     content.match(/分享的文件[:：]\s*([^\r\n]+)/)?.[1]?.trim() ??
-    "百度网盘分享";
+    DEFAULT_BAIDU_NETDISK_SHARE_NAME;
 
   return { link, pwd, name: sanitizeWindowsName(name) };
 }
@@ -144,7 +167,7 @@ async function readShareInfo(shareFile: string) {
 
 function sanitizeWindowsName(value: string) {
   const sanitized = value.replace(/[\\/:*?"<>|]/g, "_").trim();
-  return sanitized || "百度网盘分享";
+  return sanitized || DEFAULT_BAIDU_NETDISK_SHARE_NAME;
 }
 
 function websocketDataToString(data: unknown) {
@@ -976,6 +999,7 @@ type SavedShareResult = {
   fsId: number | string;
   alreadySaved: boolean;
   locateSource: string;
+  remoteVideos: BaiduNetdiskRemoteVideoListing;
 };
 
 async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
@@ -992,7 +1016,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
 
   const shareLink = ${JSON.stringify(share.link)};
   const pwd = ${JSON.stringify(share.pwd)};
-  const expectedName = ${JSON.stringify(share.name)};
+  let expectedName = ${JSON.stringify(share.name)};
+  const shouldUseSourceName = ${JSON.stringify(share.name === DEFAULT_BAIDU_NETDISK_SHARE_NAME)};
   const shareUrl = new URL(shareLink);
   const surl = shareUrl.pathname.split("/s/")[1]?.replace(/^1/, "") || "";
   if (!surl) throw new Error("分享链接没有解析出 surl。");
@@ -1140,6 +1165,10 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   if (!shareId || !shareUk) {
     throw new Error("分享页 HTML 没有解析到 shareid/share_uk，无法保存到我的网盘。");
   }
+  const sourceName = fileNameOf(file);
+  if (shouldUseSourceName && sourceName) {
+    expectedName = sourceName;
+  }
   const baseQuery =
     "channel=chunlei&web=1&app_id=250528&bdstoken=" +
     encodeURIComponent(token) +
@@ -1147,29 +1176,52 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
 
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const attempts = [];
+  let transferredPath = "";
+  let transferredName = "";
+  let transferredFsId = "";
   const rootPath = "/" + expectedName;
+  const sourceRootPath = sourceName ? "/" + sourceName : "";
   const itemName = (item) => String(item?.server_filename || item?.path?.split("/")?.pop() || "");
-  const isExactItem = (item) => itemName(item) === expectedName || item?.path === rootPath;
+  const itemPath = (item) => String(item?.path || "");
+  const itemFsId = (item) => String(item?.fs_id || item?.fsid || item?.id || "");
+  const isTransferredItem = (item) =>
+    Boolean(transferredPath && itemPath(item) === transferredPath) ||
+    Boolean(transferredName && itemName(item) === transferredName) ||
+    Boolean(transferredFsId && itemFsId(item) === transferredFsId);
+  const isExactItem = (item) =>
+    isTransferredItem(item) ||
+    itemName(item) === expectedName ||
+    item?.path === rootPath ||
+    Boolean(sourceName && (itemName(item) === sourceName || itemPath(item) === sourceRootPath));
   const isLikelyNewCopy = (item) => {
     const name = itemName(item);
-    return name === expectedName ||
-      name.startsWith(expectedName + "(") ||
-      name.startsWith(expectedName + "（") ||
-      name.startsWith(expectedName + " - ") ||
-      name.startsWith(expectedName + "_");
+    return isTransferredItem(item) ||
+      [expectedName, sourceName].some((baseName) =>
+        baseName &&
+        (name === baseName ||
+          name.startsWith(baseName + "(") ||
+          name.startsWith(baseName + "（") ||
+          name.startsWith(baseName + " - ") ||
+          name.startsWith(baseName + "_")),
+      );
   };
 
   const searchOwnItem = async (allowCopyName = false) => {
+    const keys = [...new Set([transferredName, sourceName, expectedName].filter(Boolean))];
     try {
-      const data = await jsonFetch(
-        "/api/search?recursion=1&key=" + encodeURIComponent(expectedName) + "&" + baseQuery,
-      );
-      if (data.errno !== 0) {
-        attempts.push("search errno=" + data.errno + " " + compactJson(data));
-        return undefined;
+      for (const key of keys) {
+        const data = await jsonFetch(
+          "/api/search?recursion=1&key=" + encodeURIComponent(key) + "&" + baseQuery,
+        );
+        if (data.errno !== 0) {
+          attempts.push("search key=" + key + " errno=" + data.errno + " " + compactJson(data));
+          continue;
+        }
+        const list = Array.isArray(data.list) ? data.list : [];
+        const found = list.find(isExactItem) || (allowCopyName ? list.find(isLikelyNewCopy) : undefined);
+        if (found) return found;
       }
-      const list = Array.isArray(data.list) ? data.list : [];
-      return list.find(isExactItem) || (allowCopyName ? list.find(isLikelyNewCopy) : undefined);
+      return undefined;
     } catch (error) {
       attempts.push("search error=" + String(error?.message || error));
       return undefined;
@@ -1238,6 +1290,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     if (saved.errno !== 0) {
       throw new Error("保存分享到网盘失败：" + JSON.stringify(saved));
     }
+    const transferList = Array.isArray(saved?.extra?.list) ? saved.extra.list : [];
+    const transferItem = transferList.find((item) => item?.to || item?.to_fs_id) || {};
+    transferredPath = String(transferItem.to || "");
+    transferredName = transferredPath.split("/").filter(Boolean).pop() || "";
+    transferredFsId = String(transferItem.to_fs_id || "");
 
     const started = Date.now();
     while (Date.now() - started < 70000) {
@@ -1250,6 +1307,14 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       await sleep(1000);
     }
   }
+  if (!ownRoot && (transferredPath || transferredName || transferredFsId)) {
+    ownRoot = {
+      server_filename: transferredName || transferredPath.split("/").filter(Boolean).pop() || expectedName,
+      path: transferredPath || "/" + (transferredName || expectedName),
+      fs_id: transferredFsId,
+    };
+    locateSource = "transfer";
+  }
   if (!ownRoot) {
     throw new Error(
       "保存后没有在自有网盘中找到目标文件。transfer=" +
@@ -1259,12 +1324,103 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     );
   }
 
+  const savedPath = ownRoot.path || transferredPath || "/" + (ownRoot.server_filename || transferredName || sourceName || expectedName);
+  const finalFileName = ownRoot.server_filename || transferredName || sourceName || expectedName;
+  const normalizeDir = (dir) => "/" + String(dir || "").split("/").filter(Boolean).join("/");
+  const joinPath = (dir, name) => normalizeDir(normalizeDir(dir) + "/" + name);
+  const escapeRegExp = (value) => String(value).replace(/[\\\\^$.*+?()[\\]{}|]/g, "\\\\$&");
+  const episodeBaseNames = [...new Set([expectedName, sourceName, finalFileName].filter(Boolean))];
+  const episodePatterns = episodeBaseNames.flatMap((baseName) => {
+    const escaped = escapeRegExp(baseName);
+    return [
+      new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集\\\\.mp4$", "i"),
+      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\.mp4$", "i"),
+    ];
+  });
+  const listDir = async (dir) => {
+    const results = [];
+    const normalizedDir = normalizeDir(dir);
+    const pageSize = 1000;
+    for (let page = 1; page <= 100; page += 1) {
+      const data = await jsonFetch(
+        "/api/list?dir=" +
+          encodeURIComponent(normalizedDir) +
+          "&order=name&desc=0&num=" +
+          pageSize +
+          "&page=" +
+          page +
+          "&" +
+          baseQuery,
+      );
+      if (data.errno !== 0) {
+        if (page === 1) attempts.push("list dir=" + normalizedDir + " errno=" + data.errno + " " + compactJson(data));
+        break;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      results.push(...list);
+      if (list.length < pageSize && !data.has_more) break;
+    }
+    return results;
+  };
+  const rootEntries = await listDir(savedPath);
+  const videoDirs = new Set([normalizeDir(savedPath)]);
+  for (const entry of rootEntries) {
+    const name = itemName(entry);
+    const entryPath = itemPath(entry) || joinPath(savedPath, name);
+    if ((entry?.isdir === 1 || entry?.isdir === true) && /^(成片|成品|视频)$/i.test(name)) {
+      videoDirs.add(normalizeDir(entryPath));
+    }
+  }
+  for (const childName of ["成片", "成品", "视频"]) {
+    videoDirs.add(joinPath(savedPath, childName));
+  }
+
+  const entriesByPath = new Map();
+  for (const [index, dir] of [...videoDirs].entries()) {
+    const entries = index === 0 ? rootEntries : await listDir(dir);
+    for (const entry of entries) {
+      const name = itemName(entry);
+      const entryPath = itemPath(entry) || joinPath(dir, name);
+      if (entry?.isdir === 1 || entry?.isdir === true) continue;
+      if (!name.toLowerCase().endsWith(".mp4")) continue;
+      entriesByPath.set(entryPath, {
+        name,
+        path: entryPath,
+        size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+      });
+    }
+  }
+  const allVideoFiles = [...entriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+  const files = allVideoFiles
+    .flatMap((file) => {
+      const match = episodePatterns
+        .map((pattern) => pattern.exec(file.name))
+        .find((result) => result !== null);
+      if (!match) return [];
+      return [{
+        index: Number(match[1]),
+        name: file.name,
+        path: file.path,
+        size: file.size,
+      }];
+    })
+    .sort((left, right) => left.index - right.index || left.path.localeCompare(right.path));
+  const duplicateIndexes = [...new Set(files
+    .filter((file, index) => index > 0 && file.index === files[index - 1].index)
+    .map((file) => file.index))];
+
   return {
-    fileName: ownRoot.server_filename || expectedName,
-    savedPath: ownRoot.path || "/" + (ownRoot.server_filename || expectedName),
-    fsId: ownRoot.fs_id,
+    fileName: finalFileName,
+    savedPath,
+    fsId: itemFsId(ownRoot),
     alreadySaved,
     locateSource,
+    remoteVideos: {
+      rootPath: savedPath,
+      files,
+      allVideoFiles,
+      duplicateIndexes,
+    },
   };
 })()
 `,
@@ -1940,6 +2096,7 @@ async function submitSavedDownload(
   shareTarget: CdpTarget,
   share: ShareInfo,
   downloadDir?: string,
+  expectedEpisodeCount?: number,
 ) {
   const saved = await saveShareToOwnNetdisk(shareTarget, share);
   log(
@@ -1949,6 +2106,41 @@ async function submitSavedDownload(
   );
 
   const targetName = saved.fileName || share.name;
+  const remoteVideos = saved.remoteVideos;
+  const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
+    (left, right) => left - right,
+  );
+  log(
+    `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=[${remoteIndexes.join(", ") || "无"}]，` +
+      `全部mp4=${remoteVideos.allVideoFiles.length}个`,
+  );
+  if (remoteVideos.files.length > 0) {
+    log(`网盘匹配文件：${remoteVideos.files.map((file) => file.path).join(" | ")}`);
+  }
+  if (expectedEpisodeCount !== undefined) {
+    const expectedCount = Number(expectedEpisodeCount);
+    const expectedIndexes = Number.isInteger(expectedCount) && expectedCount > 0
+      ? Array.from({ length: expectedCount }, (_, index) => index + 1)
+      : [];
+    const missingIndexes = expectedIndexes.filter((index) => !remoteIndexes.includes(index));
+    remoteVideos.missingIndexes = missingIndexes;
+    if (
+      expectedIndexes.length <= 0 ||
+      remoteIndexes.length !== expectedIndexes.length ||
+      missingIndexes.length > 0 ||
+      remoteVideos.duplicateIndexes.length > 0
+    ) {
+      const matchedFiles = remoteVideos.files.map((file) => `${file.index}:${file.path}`).join(" | ") || "无";
+      const allVideoFiles = remoteVideos.allVideoFiles.map((file) => file.path).join(" | ") || "无";
+      throw new Error(
+        `百度网盘剧集视频数量不正确：${targetName} 应包含第1集至第${expectedEpisodeCount}集，` +
+          `实际匹配到 [${remoteIndexes.join(", ") || "无"}]；` +
+          `缺失=[${missingIndexes.join(", ") || "无"}]；` +
+          `重复=[${remoteVideos.duplicateIndexes.join(", ") || "无"}]；` +
+          `匹配文件=${matchedFiles}；全部mp4=${allVideoFiles}`,
+      );
+    }
+  }
   await downloadSavedFolderFromClientSearch(port, targetName);
   const downloadRoot = await confirmDownloadSetting(port, downloadDir);
   await waitForDownloadSubmitted(port, {
@@ -1957,7 +2149,7 @@ async function submitSavedDownload(
     fsId: saved.fsId,
     downloadRoot,
   });
-  return { downloadRoot, targetName };
+  return { downloadRoot, targetName, remoteVideos };
 }
 
 export async function downloadBaiduNetdiskShare(
@@ -2004,15 +2196,25 @@ export async function downloadBaiduNetdiskShare(
   const shareTarget = await openSharePage(port, share);
   await enterShareCode(shareTarget, share);
   const listTarget = await waitForShareList(port, share, [shareTarget]);
-  const { downloadRoot, targetName } = await submitSavedDownload(port, listTarget, share, downloadDir);
+  const { downloadRoot, targetName, remoteVideos } = await submitSavedDownload(
+    port,
+    listTarget,
+    share,
+    downloadDir,
+    options.expectedEpisodeCount,
+  );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
   log(`下载任务已提交，不等待本地完成：${predictedLocalPath}`);
 
   return {
-    share,
+    share: {
+      ...share,
+      name: targetName,
+    },
     downloadRoot: resolvedDownloadRoot,
     localPath: predictedLocalPath,
+    remoteVideos,
     completed: false,
     skippedExisting: false,
   };
