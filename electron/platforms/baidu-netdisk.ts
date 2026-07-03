@@ -293,6 +293,7 @@ async function listLocalEpisodeFiles(root: string, resourceName: string) {
   const scanDirs = [
     directory,
     path.join(directory, "成片"),
+    path.join(directory, "成品"),
     path.join(directory, "视频"),
   ];
   const files: Array<{ index: number; file: string; size: number }> = [];

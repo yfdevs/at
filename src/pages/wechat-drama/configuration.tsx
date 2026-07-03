@@ -131,7 +131,7 @@ const sections: Array<{
       {
         key: "localEpisodeVideoRoot",
         label: "剧集视频根目录",
-        description: "按领取任务的原始剧名查找本地视频，可放在剧名目录或其成片/视频子目录，需与运行数据目录同盘。",
+        description: "按领取任务的原始剧名查找本地视频，可放在剧名目录或其成片/成品/视频子目录，需与运行数据目录同盘。",
       },
       {
         key: "runDataDir",

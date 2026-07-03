@@ -12,7 +12,7 @@ export interface LocalEpisodeVideo {
 
 const localEpisodeVideoPatterns = [
   "*.mp4",
-  "{成片,视频}/*.mp4",
+  "{成片,成品,视频}/*.mp4",
 ];
 
 function escapeRegExp(value: string): string {
