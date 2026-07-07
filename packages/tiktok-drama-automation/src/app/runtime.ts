@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { FeishuNotifier } from '@drama/feishu-notifier';
 import path from 'node:path';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import {
@@ -77,6 +78,12 @@ export async function startTiktokDramaCenterRuntime(
     tempDir: runtimeSettings.tempDir ?? path.join(runDataDir, 'tmp'),
     videoDir: runtimeSettings.videoDir ?? path.join(runDataDir, 'videos'),
   });
+  const notifier = new FeishuNotifier({
+    channelIdLabel: 'platform',
+    channelLabel: 'TikTok',
+    logger,
+    webhookUrl: config.feishuBotWebhookUrl,
+  });
 
   await mkdir(userDataDir, { recursive: true });
   log(options, '[tiktok-drama] starting browser');
@@ -92,7 +99,7 @@ export async function startTiktokDramaCenterRuntime(
   });
 
   page = context.pages()[0] ?? await context.newPage();
-  void runDraftTask(page, options).catch(error => {
+  void runDraftTask(page, options, notifier).catch(error => {
     log(options, `[tiktok-drama] task failed: ${errorMessage(error)}`);
     logger.error({ err: error }, 'task failed');
   });
@@ -122,7 +129,8 @@ export async function startTiktokDramaCenterRuntime(
 
 async function runDraftTask(
   page: Page,
-  options: TiktokDramaCenterRuntimeOptions
+  options: TiktokDramaCenterRuntimeOptions,
+  notifier: FeishuNotifier
 ) {
   await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' });
   await waitForDraftPage(page);
@@ -136,6 +144,13 @@ async function runDraftTask(
   }
 
   const scheme = task.scheme;
+  const notificationPayload = {
+    accountTaskId: task.accountTaskId,
+    channelId: 'tiktok-drama',
+    channelName: 'TikTok Drama Center',
+    dramaId: task.dramaId,
+    originalTitle: task.originalTitle,
+  };
   logger.info({
     accountTaskId: task.accountTaskId,
     dramaId: task.dramaId,
@@ -144,29 +159,43 @@ async function runDraftTask(
   }, 'claimed task');
   log(options, `[tiktok-drama] claimed task: ${scheme.title}`);
 
-  const videos = scheme.baiduPanResourceLink
-    ? []
-    : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
-  const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
+  await notifier.notifyTaskStarted({
+    ...notificationPayload,
+    mode: 'run',
+  });
 
-  logger.info({
-    accountTaskId: task.accountTaskId,
-    dramaId: task.dramaId,
-    taskId: scheme.id,
-    title: scheme.title,
-    videos: videos.length
-  }, 'starting task');
-  const stopWatchingToast = new AbortController();
   try {
-    await Promise.race([
-      fillDraftAndWait(page, scheme, coverFile, videos),
-      watchToast(page, stopWatchingToast.signal),
-    ]);
-  } finally {
-    stopWatchingToast.abort();
-  }
+    const videos = scheme.baiduPanResourceLink
+      ? []
+      : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
+    const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
 
-  log(options, `[tiktok-drama] task finished: ${scheme.id}`);
+    logger.info({
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      taskId: scheme.id,
+      title: scheme.title,
+      videos: videos.length
+    }, 'starting task');
+    const stopWatchingToast = new AbortController();
+    try {
+      await Promise.race([
+        fillDraftAndWait(page, scheme, coverFile, videos),
+        watchToast(page, stopWatchingToast.signal),
+      ]);
+    } finally {
+      stopWatchingToast.abort();
+    }
+
+    await notifier.notifyTaskSucceeded(notificationPayload);
+    log(options, `[tiktok-drama] task finished: ${scheme.id}`);
+  } catch (error) {
+    await notifier.notifyTaskFailed({
+      ...notificationPayload,
+      errorMessage: errorMessage(error),
+    });
+    throw error;
+  }
 }
 
 async function resolveTaskVideos(scheme: Scheme, originalTitle: string, allowMissingVideos = false) {

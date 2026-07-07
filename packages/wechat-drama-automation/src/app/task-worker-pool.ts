@@ -4,7 +4,7 @@ import {
 } from "../shared/config.js";
 import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
-import { FeishuNotifier } from "../shared/feishu-notifier.js";
+import { FeishuNotifier } from "@drama/feishu-notifier";
 import { claimNextTaskForVideoAccountApi, reportClaimedTaskErrorApi, reportClaimedTaskSuccessApi } from "../api/task.js";
 import type { VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";

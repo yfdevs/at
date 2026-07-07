@@ -12,6 +12,7 @@ import {
 } from "@/platforms/tiktok-drama/service"
 
 const emptyConfig: TiktokDramaCenterConfig = {
+  feishuBotWebhookUrl: "",
   headless: "false",
   localEpisodeVideoRoot: "",
   operationDelaySeconds: "0.02",
@@ -34,6 +35,12 @@ const sections: ConfigSectionDefinition<TiktokDramaCenterConfig>[] = [
         label: "运行数据目录",
         description: "浏览器登录态位于该目录的 auth 子目录。",
         directory: true,
+      },
+      {
+        key: "feishuBotWebhookUrl",
+        label: "飞书机器人 Webhook",
+        type: "url",
+        description: "留空不推送运行通知。",
       },
       {
         key: "operationDelaySeconds",

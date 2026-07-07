@@ -1,4 +1,5 @@
 import { mkdir } from 'node:fs/promises';
+import { FeishuNotifier } from '@drama/feishu-notifier';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import { claimNextTiktokDramaTaskApi } from './api/index.js';
 import { config, configureTiktokDramaCenterRuntimeSettings, logger } from './config.js';
@@ -8,6 +9,12 @@ import type { Scheme } from './scheme.js';
 
 async function main() {
   configureTiktokDramaCenterRuntimeSettings();
+  const notifier = new FeishuNotifier({
+    channelIdLabel: 'platform',
+    channelLabel: 'TikTok',
+    logger,
+    webhookUrl: config.feishuBotWebhookUrl,
+  });
   const context = await launchContext();
   try {
     const page = context.pages()[0] ?? await context.newPage();
@@ -23,6 +30,13 @@ async function main() {
     }
 
     const scheme = task.scheme;
+    const notificationPayload = {
+      accountTaskId: task.accountTaskId,
+      channelId: 'tiktok-drama',
+      channelName: 'TikTok Drama Center',
+      dramaId: task.dramaId,
+      originalTitle: task.originalTitle,
+    };
     logger.info({
       accountTaskId: task.accountTaskId,
       dramaId: task.dramaId,
@@ -30,26 +44,40 @@ async function main() {
       title: scheme.title
     }, 'claimed task');
 
-    const videos = scheme.baiduPanResourceLink
-      ? []
-      : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
-    const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
+    await notifier.notifyTaskStarted({
+      ...notificationPayload,
+      mode: 'run',
+    });
 
-    logger.info({
-      accountTaskId: task.accountTaskId,
-      dramaId: task.dramaId,
-      taskId: scheme.id,
-      title: scheme.title,
-      videos: videos.length
-    }, 'starting task');
-    const stopWatchingToast = new AbortController();
     try {
-      await Promise.race([
-        runTask(page, scheme, coverFile, videos),
-        watchToast(page, stopWatchingToast.signal)
-      ]);
-    } finally {
-      stopWatchingToast.abort();
+      const videos = scheme.baiduPanResourceLink
+        ? []
+        : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
+      const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
+
+      logger.info({
+        accountTaskId: task.accountTaskId,
+        dramaId: task.dramaId,
+        taskId: scheme.id,
+        title: scheme.title,
+        videos: videos.length
+      }, 'starting task');
+      const stopWatchingToast = new AbortController();
+      try {
+        await Promise.race([
+          runTask(page, scheme, coverFile, videos),
+          watchToast(page, stopWatchingToast.signal)
+        ]);
+      } finally {
+        stopWatchingToast.abort();
+      }
+      await notifier.notifyTaskSucceeded(notificationPayload);
+    } catch (error) {
+      await notifier.notifyTaskFailed({
+        ...notificationPayload,
+        errorMessage: error instanceof Error ? error.message : String(error),
+      });
+      throw error;
     }
     await keepBrowserOpen();
   } catch (error) {

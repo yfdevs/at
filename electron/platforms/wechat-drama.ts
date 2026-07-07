@@ -246,9 +246,18 @@ function findLatestVideoAccountLogFile(videoAccountId: string) {
   const logsDir = logDirPath()
   mkdirSync(logsDir, { recursive: true })
 
-  const accountLogPrefix = `app-${sanitizeLogFileSegment(videoAccountId)}-`
+  const accountIdSegment = sanitizeLogFileSegment(videoAccountId)
+  const legacyAccountLogPrefix = `app-${accountIdSegment}-`
+  const accountLogSegment = `-${accountIdSegment}-`
   const latestLogFile = readdirSync(logsDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && entry.name.startsWith(accountLogPrefix) && /\.(jsonl|log)$/i.test(entry.name))
+    .filter((entry) => (
+      entry.isFile()
+      && /\.(jsonl|log)$/i.test(entry.name)
+      && (
+        entry.name.startsWith(legacyAccountLogPrefix)
+        || entry.name.includes(accountLogSegment)
+      )
+    ))
     .map((entry) => path.join(logsDir, entry.name))
     .sort((left, right) => {
       const leftMtime = statSync(left).mtimeMs

@@ -70,7 +70,14 @@ function sanitizeFileSegment(value: string): string {
 }
 
 function getLogFilePath(dateKey: string, context: LogContext = {}): string {
-  const accountSuffix = context.videoAccountId ? `-${sanitizeFileSegment(context.videoAccountId)}` : "";
+  const accountSegments = [
+    context.videoAccountName,
+    context.videoAccountId,
+  ]
+    .map((value) => value?.trim())
+    .filter((value, index, values): value is string => Boolean(value) && values.indexOf(value) === index)
+    .map(sanitizeFileSegment);
+  const accountSuffix = accountSegments.length ? `-${accountSegments.join("-")}` : "";
   return path.join(getLogDir(), `app${accountSuffix}-${dateKey}.jsonl`);
 }
 

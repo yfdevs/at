@@ -1,6 +1,7 @@
 export type TiktokDramaCenterLoginState = "login-required" | "logged-in" | "unknown"
 
 export type TiktokDramaCenterConfig = {
+  feishuBotWebhookUrl: string
   headless: string
   localEpisodeVideoRoot: string
   operationDelaySeconds: string

@@ -1,8 +1,9 @@
 {
-  "name": "@drama/wechat-drama-automation",
+  "name": "@drama/feishu-notifier",
   "version": "0.1.0",
   "private": true,
   "type": "module",
+  "sideEffects": false,
   "exports": {
     ".": {
       "types": "./src/index.ts",
@@ -12,21 +13,16 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "pnpm --filter @drama/axios build && pnpm --filter @drama/feishu-notifier build && vp pack",
+    "build": "pnpm --filter @drama/axios build && vp pack",
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "@drama/axios": "workspace:*",
-    "@drama/feishu-notifier": "workspace:*",
-    "playwright": "latest"
+    "@drama/axios": "workspace:*"
   },
   "devDependencies": {
-    "@types/fs-extra": "^11.0.4",
     "@types/node": "latest",
-    "fast-glob": "^3.3.3",
-    "pino": "^10.3.1",
-    "tsx": "latest",
     "typescript": "latest",
-    "vite": "catalog:"
+    "vite": "catalog:",
+    "vite-plus": "catalog:"
   }
 }

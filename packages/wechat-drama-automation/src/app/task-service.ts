@@ -2,7 +2,7 @@ import { BrowserContextManager } from "../automation/browser-context-manager.js"
 import { runPlayletTask } from "../automation/playlet-runner.js";
 import type { ClaimedAccountTask, Config, TaskRecord, TaskRunOptions } from "../shared/types.js";
 import { createLogger, type LogContext, runWithLogContext } from "../shared/logger.js";
-import { FeishuNotifier } from "../shared/feishu-notifier.js";
+import { FeishuNotifier } from "@drama/feishu-notifier";
 import { classifyError, ErrorType } from "../shared/errors.js";
 
 const logger = createLogger("task");

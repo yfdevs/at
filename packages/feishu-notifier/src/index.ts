@@ -1,43 +1,59 @@
 import { ApiClient } from "@drama/axios";
-import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
-import { createLogger } from "./logger.js";
-import { classifyError, ErrorType } from "./errors.js";
 
-const logger = createLogger("feishu");
-const feishuClient = new ApiClient({
-  timeout: 10000,
-});
+type NotifierLogger = {
+  warn: (message: string, fields?: any) => void;
+};
+
+export interface FeishuNotifierOptions {
+  channelIdLabel?: string;
+  channelLabel?: string;
+  logger?: NotifierLogger;
+  timeoutMs?: number;
+  webhookUrl?: string;
+}
 
 export interface TaskNotificationPayload {
   accountTaskId?: number;
+  channelId?: string;
+  channelName?: string;
   dramaId?: number;
-  originalTitle?: string;
-  videoAccountId: string;
-  videoAccountName: string;
   errorMessage?: string;
-  errorType?: ErrorType;
+  errorType?: string;
+  originalTitle?: string;
+  videoAccountId?: string;
+  videoAccountName?: string;
 }
 
 export interface TaskStartedNotificationPayload extends TaskNotificationPayload {
-  mode: string;
   dramaAiRpaId?: string;
+  mode: string;
 }
 
 export class FeishuNotifier {
+  private readonly channelIdLabel: string;
+  private readonly channelLabel: string;
+  private readonly client: ApiClient;
+  private readonly logger?: NotifierLogger;
   private readonly webhookUrl: string | undefined;
 
-  constructor() {
-    this.webhookUrl = getWechatVideoRuntimeSettings().feishuBotWebhookUrl.trim();
+  constructor(options: FeishuNotifierOptions = {}) {
+    this.channelIdLabel = options.channelIdLabel ?? "channelId";
+    this.channelLabel = options.channelLabel ?? "账号";
+    this.client = new ApiClient({
+      timeout: options.timeoutMs ?? 10000,
+    });
+    this.logger = options.logger;
+    this.webhookUrl = options.webhookUrl?.trim() || undefined;
   }
 
   get enabled(): boolean {
     return Boolean(this.webhookUrl);
   }
 
-  async notifyLoginRequired(videoAccountId: string, videoAccountName: string): Promise<void> {
-    await this.send(this.formatMessage("视频号需要登录", {
-      videoAccountId,
-      videoAccountName,
+  async notifyLoginRequired(channelId: string, channelName: string): Promise<void> {
+    await this.send(this.formatMessage("需要登录", {
+      channelId,
+      channelName,
     }));
   }
 
@@ -53,11 +69,8 @@ export class FeishuNotifier {
   }
 
   async notifyTaskFailed(payload: TaskNotificationPayload): Promise<void> {
-    const errorType = payload.errorType ?? (payload.errorMessage
-      ? classifyError(new Error(payload.errorMessage)).type
-      : ErrorType.Unknown);
-    await this.send(this.formatMessage("任务执行失败", { ...payload, errorType }, [
-      ["错误类型", errorType],
+    await this.send(this.formatMessage("任务执行失败", payload, [
+      ["错误类型", payload.errorType ?? "Unknown"],
       ["错误信息", payload.errorMessage],
     ]));
   }
@@ -67,11 +80,14 @@ export class FeishuNotifier {
     payload: TaskNotificationPayload,
     extraFields: Array<[string, string | number | undefined]> = [],
   ): string {
+    const channelId = payload.channelId ?? payload.videoAccountId;
+    const channelName = payload.channelName ?? payload.videoAccountName ?? channelId;
+
     return [
-      `【${title}】`,
+      `【${this.channelLabel}${title}】`,
       `时间：${new Date().toISOString()}`,
-      `视频号：${payload.videoAccountName}`,
-      `videoAccountId：${payload.videoAccountId}`,
+      channelName ? `${this.channelLabel}：${channelName}` : undefined,
+      channelId ? `${this.channelIdLabel}：${channelId}` : undefined,
       payload.accountTaskId === undefined ? undefined : `accountTaskId：${payload.accountTaskId}`,
       payload.dramaId === undefined ? undefined : `dramaId：${payload.dramaId}`,
       payload.originalTitle ? `原始剧名：${payload.originalTitle}` : undefined,
@@ -83,15 +99,13 @@ export class FeishuNotifier {
     if (!this.webhookUrl) return;
 
     try {
-      await feishuClient.post(this.webhookUrl, {
+      await this.client.post(this.webhookUrl, {
         msg_type: "text",
         content: { text },
       });
     } catch (error) {
-      const errorInfo = classifyError(error);
-      logger.warn("send failed", {
-        errorType: errorInfo.type,
-        errorMessage: errorInfo.message,
+      this.logger?.warn("send failed", {
+        errorMessage: error instanceof Error ? error.message : String(error),
       });
     }
   }

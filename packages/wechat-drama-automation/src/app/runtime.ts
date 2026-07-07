@@ -1,8 +1,12 @@
 import { BrowserContextManager, type VideoAccountRuntimeStatus } from "../automation/browser-context-manager.js";
-import { FeishuNotifier } from "../shared/feishu-notifier.js";
+import { FeishuNotifier } from "@drama/feishu-notifier";
 import { loadServiceConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
-import { configureWechatVideoRuntimeSettings, type WechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
+import {
+  configureWechatVideoRuntimeSettings,
+  getWechatVideoRuntimeSettings,
+  type WechatVideoRuntimeSettings,
+} from "../shared/runtime-settings.js";
 import { IdlePageRefreshService } from "./idle-page-refresh-service.js";
 import { TaskService } from "./task-service.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
@@ -44,7 +48,12 @@ function log(options: WechatVideoRuntimeOptions, message: string) {
 export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions = {}): Promise<WechatVideoRuntime> {
   configureWechatVideoRuntimeSettings(options.settings);
   const serviceConfig = await loadServiceConfig();
-  const notifier = new FeishuNotifier();
+  const notifier = new FeishuNotifier({
+    channelIdLabel: "videoAccountId",
+    channelLabel: "视频号",
+    logger,
+    webhookUrl: getWechatVideoRuntimeSettings().feishuBotWebhookUrl,
+  });
   const browserContexts = new BrowserContextManager(serviceConfig, notifier);
   await browserContexts.initialize();
 
