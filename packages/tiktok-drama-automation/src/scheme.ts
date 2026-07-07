@@ -12,6 +12,7 @@ export const schemaObject = z.object({
   description: z.string().trim().min(1).max(1500),
   episodeCount: z.number().int().positive().max(120),
   coverFile: z.string().trim().min(1).max(2048),
+  baiduPanResourceLink: z.string().trim().min(1).max(2048).optional(),
   contractText: z.string().trim().min(1).optional(),
   contractId: z.string().trim().min(1).optional(),
   targetAudience: z.enum(['女性', '男性']),

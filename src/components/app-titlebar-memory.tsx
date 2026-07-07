@@ -482,7 +482,13 @@ function BaiduNetdiskPopover({
           </TooltipContent>
         ) : null}
       </Tooltip>
-      <PopoverContent side="bottom" align="end" sideOffset={8} className="z-[100000] w-96">
+      <PopoverContent
+        side="bottom"
+        align="end"
+        sideOffset={8}
+        initialFocus={false}
+        className="z-[100000] w-96"
+      >
         <PopoverHeader>
           <div className="flex items-start gap-2">
             <CloudDownload className={`mt-0.5 size-4 shrink-0 ${iconClass}`} aria-hidden="true" />

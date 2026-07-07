@@ -6,9 +6,10 @@ import {
   configureTiktokDramaCenterRuntimeSettings,
   logger,
 } from '../config.js';
+import { claimNextTiktokDramaTaskApi } from '../api/index.js';
 import { fillDraft, waitForDraftPage } from '../draft-form.js';
 import { matchVideos, resolveCoverFile } from '../media.js';
-import { loadScheme } from '../scheme.js';
+import type { Scheme } from '../scheme.js';
 
 export type TiktokDramaCenterLoginState = 'login-required' | 'logged-in' | 'unknown';
 
@@ -91,7 +92,7 @@ export async function startTiktokDramaCenterRuntime(
   });
 
   page = context.pages()[0] ?? await context.newPage();
-  void runDraftTask(context, page, options).catch(error => {
+  void runDraftTask(page, options).catch(error => {
     log(options, `[tiktok-drama] task failed: ${errorMessage(error)}`);
     logger.error({ err: error }, 'task failed');
   });
@@ -120,19 +121,41 @@ export async function startTiktokDramaCenterRuntime(
 }
 
 async function runDraftTask(
-  context: BrowserContext,
   page: Page,
   options: TiktokDramaCenterRuntimeOptions
 ) {
   await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' });
   await waitForDraftPage(page);
 
-  logger.info('draft ready; loading scheme');
-  const scheme = await loadScheme(context, config.schemeFile);
-  const videos = await matchVideos(config.videoDir, scheme.title, scheme.episodeCount);
+  logger.info('draft ready; claiming task');
+  const task = await claimNextTiktokDramaTaskApi();
+  if (!task) {
+    logger.info('no tiktok drama task claimed');
+    log(options, '[tiktok-drama] no task claimed');
+    return;
+  }
+
+  const scheme = task.scheme;
+  logger.info({
+    accountTaskId: task.accountTaskId,
+    dramaId: task.dramaId,
+    taskId: scheme.id,
+    title: scheme.title
+  }, 'claimed task');
+  log(options, `[tiktok-drama] claimed task: ${scheme.title}`);
+
+  const videos = scheme.baiduPanResourceLink
+    ? []
+    : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
   const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
 
-  logger.info({ taskId: scheme.id, title: scheme.title, videos: videos.length }, 'starting task');
+  logger.info({
+    accountTaskId: task.accountTaskId,
+    dramaId: task.dramaId,
+    taskId: scheme.id,
+    title: scheme.title,
+    videos: videos.length
+  }, 'starting task');
   const stopWatchingToast = new AbortController();
   try {
     await Promise.race([
@@ -146,30 +169,71 @@ async function runDraftTask(
   log(options, `[tiktok-drama] task finished: ${scheme.id}`);
 }
 
+async function resolveTaskVideos(scheme: Scheme, originalTitle: string, allowMissingVideos = false) {
+  try {
+    return await matchVideos(config.videoDir, originalTitle, scheme.episodeCount);
+  } catch (error) {
+    if (!allowMissingVideos) throw error;
+    logger.warn({
+      err: error,
+      taskId: scheme.id,
+      originalTitle,
+      title: scheme.title,
+      videoDir: config.videoDir
+    }, 'video files missing; skipping video upload for fake task');
+    return [];
+  }
+}
+
 async function fillDraftAndWait(
   page: Page,
-  scheme: Awaited<ReturnType<typeof loadScheme>>,
+  scheme: Scheme,
   coverFile: string,
   videos: Awaited<ReturnType<typeof matchVideos>>
 ) {
   await fillDraft(page, scheme, coverFile, videos);
 
-  // ponytail: submit stays disabled until the upload flow has been verified with real files.
-  logger.info({ taskId: scheme.id }, 'dry run finished; submit click is disabled while testing');
+  if (scheme.submit || config.submit) {
+    await page.getByRole('button', { name: '提交' }).click();
+    logger.info({ taskId: scheme.id }, 'task submitted');
+  } else {
+    logger.info({ taskId: scheme.id }, 'task finished without submit');
+  }
   await page.waitForTimeout(config.postTaskWatchMs);
 }
 
 async function watchToast(page: Page, signal: AbortSignal) {
   const portal = page.locator('[data-tux-toast-portal]').last();
-  await Promise.race([
-    portal.waitFor({ state: 'attached', timeout: 0 }),
-    new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })),
-  ]);
-  if (signal.aborted) return await new Promise<never>(() => {});
+  while (!signal.aborted) {
+    await Promise.race([
+      portal.waitFor({ state: 'attached', timeout: 0 }),
+      new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })),
+    ]);
+    if (signal.aborted) return await new Promise<never>(() => {});
 
-  const message = (await portal.innerText()).replace(/\s*复制\s*$/, '').trim();
-  logger.error({ toast: message }, 'toast error');
-  throw new Error(`toast error: ${message}`);
+    const message = (await portal.innerText()).replace(/\s*复制\s*$/, '').trim();
+    if (await clickToastConfirm(page, message)) {
+      continue;
+    }
+    logger.error({ toast: message }, 'toast error');
+    throw new Error(`toast error: ${message}`);
+  }
+
+  return await new Promise<never>(() => {});
+}
+
+async function clickToastConfirm(page: Page, message: string) {
+  const confirmButton = page
+    .getByRole('button', { name: /^(Confirm|确认|确定)$/i })
+    .last();
+  if (!(await confirmButton.isVisible({ timeout: 2_000 }).catch(() => false))) {
+    return false;
+  }
+
+  await confirmButton.click();
+  logger.warn({ toast: message }, 'toast confirmed');
+  await page.waitForTimeout(500);
+  return true;
 }
 
 function loginStateFromUrl(url: string | undefined): TiktokDramaCenterLoginState {

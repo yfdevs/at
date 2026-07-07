@@ -13,6 +13,7 @@ import {
 
 const emptyConfig: TiktokDramaCenterConfig = {
   headless: "false",
+  localEpisodeVideoRoot: "",
   operationDelaySeconds: "0.02",
   runDataDir: ".drama-runs/tiktok-drama",
 }
@@ -22,6 +23,12 @@ const sections: ConfigSectionDefinition<TiktokDramaCenterConfig>[] = [
     title: "浏览器与运行数据",
     description: "登录态和临时文件由 TikTok 独立管理。",
     fields: [
+      {
+        key: "localEpisodeVideoRoot",
+        label: "剧集视频根目录",
+        description: "按任务原始剧名查找本地视频，可放在剧名目录或其成片/成品/视频子目录。",
+        directory: true,
+      },
       {
         key: "runDataDir",
         label: "运行数据目录",
@@ -65,7 +72,10 @@ export function TiktokDramaCenterConfigurationPage() {
 
   const selectDirectory = async (key: keyof TiktokDramaCenterConfig & string) => {
     try {
-      const selectedPath = await tiktokDramaCenterService.selectRunDataDir(config.runDataDir)
+      const selectedPath =
+        key === "localEpisodeVideoRoot"
+          ? await tiktokDramaCenterService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
+          : await tiktokDramaCenterService.selectRunDataDir(config.runDataDir)
       if (selectedPath) {
         updateConfig(key, selectedPath)
       }

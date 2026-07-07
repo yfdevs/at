@@ -12,15 +12,24 @@ const imageExtensions = new Set(['.jpg', '.jpeg', '.png', '.webp']);
 
 export type EpisodeFile = { episode: number; file: string };
 
-export async function matchVideos(videoDir: string, title: string, episodeCount: number): Promise<EpisodeFile[]> {
+export async function matchVideos(videoRoot: string, originalTitle: string, episodeCount: number): Promise<EpisodeFile[]> {
+  if (!videoRoot.trim()) throw new Error('video root is required');
+
+  const videoDir = path.join(videoRoot, originalTitle);
   if (!existsSync(videoDir)) throw new Error(`video directory not found: ${videoDir}`);
-  const files = await walk(videoDir);
-  const escapedTitle = escapeRegExp(title);
-  const episodeFileNamePattern = new RegExp(`^${escapedTitle}.*?第\\s*(\\d+)\\s*集.*\\.mp4$`, 'i');
+  const files = await walkEpisodeVideoCandidates(videoDir);
+  const escapedOriginalTitle = escapeRegExp(originalTitle);
+  const episodeFileNamePatterns = [
+    new RegExp(`^${escapedOriginalTitle}\\s*[-_—–]?\\s*第\\s*(\\d+)\\s*集\\.(?:mp4|mov)$`, 'i'),
+    new RegExp(`^${escapedOriginalTitle}\\s*(\\d+)\\.(?:mp4|mov)$`, 'i'),
+  ];
   const episodes = new Map<number, string>();
 
   for (const file of files) {
-    const match = episodeFileNamePattern.exec(path.basename(file));
+    const baseName = path.basename(file);
+    const match = episodeFileNamePatterns
+      .map(pattern => pattern.exec(baseName))
+      .find((result): result is RegExpExecArray => result !== null);
     if (!match) continue;
     const fileSize = (await lstat(file)).size;
     if (fileSize < 5 * 1024 * 1024) throw new Error(`video file too small: ${file} (${fileSize} bytes, need >= 5242880)`);
@@ -34,6 +43,21 @@ export async function matchVideos(videoDir: string, title: string, episodeCount:
   if (episodes.size !== episodeCount) throw new Error(`episode count mismatch: expected ${episodeCount}, got ${episodes.size}`);
 
   return [...episodes.entries()].sort(([a], [b]) => a - b).map(([episode, file]) => ({ episode, file }));
+}
+
+async function walkEpisodeVideoCandidates(videoDir: string): Promise<string[]> {
+  const candidates: string[] = [];
+  const entries = await readdir(videoDir, { withFileTypes: true });
+
+  for (const entry of entries) {
+    const fullPath = path.join(videoDir, entry.name);
+    if (entry.isFile() && isVideoFile(fullPath)) candidates.push(fullPath);
+    if (entry.isDirectory() && ['成片', '成品', '视频'].includes(entry.name)) {
+      candidates.push(...await walk(fullPath));
+    }
+  }
+
+  return candidates;
 }
 
 export async function resolveCoverFile(coverFile: string, taskId: string) {
@@ -72,9 +96,13 @@ async function walk(dir: string): Promise<string[]> {
     const full = path.join(dir, entry);
     const entryStats = await lstat(full);
     if (entryStats.isDirectory()) files.push(...await walk(full));
-    else if (entryStats.isFile()) files.push(full);
+    else if (entryStats.isFile() && isVideoFile(full)) files.push(full);
   }
   return files;
+}
+
+function isVideoFile(file: string) {
+  return ['.mp4', '.mov'].includes(path.extname(file).toLowerCase());
 }
 
 function escapeRegExp(value: string) {

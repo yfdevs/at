@@ -6,31 +6,49 @@ import type { Scheme } from './scheme.js';
 
 const videoUploadTimeoutMs = 30 * 60_000;
 const videoUploadPollMs = 5_000;
+const loginWaitTimeoutMs = 5 * 60_000;
+const draftFormWaitPollMs = 2_000;
 
 export async function waitForDraftPage(page: Page) {
   await page.waitForLoadState('domcontentloaded');
-  await waitForLoginIfNeeded(page);
-  try {
-    await page.getByText('基础信息').first().waitFor({ timeout: 20_000 });
-  } catch {
-    await waitForLoginIfNeeded(page);
-    logger.warn('draft form not visible; log in in the opened browser window');
-    await page.getByText('基础信息').first().waitFor({ timeout: 300_000 });
+  const deadline = Date.now() + loginWaitTimeoutMs;
+  let loginWarned = false;
+
+  while (Date.now() < deadline) {
+    if (await isDraftFormVisible(page)) return;
+
+    if (isLoginPage(page.url())) {
+      if (!loginWarned) {
+        logger.warn({ loginUrl: config.loginUrl }, 'login required; waiting for login before claiming task');
+        loginWarned = true;
+      }
+      await page.waitForURL(url => !isLoginPage(url.toString()), {
+        timeout: Math.max(1, deadline - Date.now())
+      }).catch(() => undefined);
+      continue;
+    }
+
+    logger.info({ currentUrl: page.url(), draftUrl: config.draftUrl }, 'draft form not visible; opening draft page');
+    await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' }).catch(error => {
+      logger.warn({ err: error }, 'failed to open draft page; will retry');
+    });
+    await page.waitForTimeout(draftFormWaitPollMs);
   }
+
+  throw new Error('Timed out waiting for TikTok draft page after login.');
 }
 
-async function waitForLoginIfNeeded(page: Page) {
-  if (!isLoginPage(page.url())) return;
-  logger.warn({ loginUrl: config.loginUrl }, 'login required; waiting for login before loading scheme');
-  await page.waitForURL(url => !isLoginPage(url.toString()), { timeout: 300_000 });
-  await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' });
+async function isDraftFormVisible(page: Page) {
+  return page.getByText('基础信息').first().isVisible({ timeout: 1_000 }).catch(() => false);
 }
 
 function isLoginPage(url: string) {
   try {
-    return new URL(url).pathname === new URL(config.loginUrl).pathname;
+    const currentPath = new URL(url).pathname;
+    const loginPath = new URL(config.loginUrl).pathname;
+    return currentPath === loginPath || currentPath.includes('/login');
   } catch {
-    return false;
+    return url.includes('login');
   }
 }
 
@@ -42,12 +60,9 @@ export async function fillDraft(page: Page, scheme: Scheme, coverFile: string, v
 
   await uploadCover(page, coverFile);
   let videoUploadError: unknown;
-  const videoFiles = videos.map(v => v.file);
-  // await startVideoUpload(page, videoFiles);
-  // const videoUpload = monitorVideoUpload(page, videoFiles).catch((error: unknown) => {
-  //   videoUploadError = error;
-  // });
-  const videoUpload = Promise.resolve();
+  const videoUpload = startEpisodeUpload(page, scheme, videos).catch((error: unknown) => {
+    videoUploadError = error;
+  });
 
   await selectFieldCombobox(page, '目标观众', '选择内容主要面向的目标人群', scheme.targetAudience);
   await selectThemeOptions(page, scheme.themes);
@@ -68,6 +83,73 @@ export async function fillDraft(page: Page, scheme: Scheme, coverFile: string, v
   if (videoUploadError) throw videoUploadError;
 
   logger.info({ taskId: scheme.id, fileCount: videos.length }, 'form filled');
+}
+
+async function startEpisodeUpload(page: Page, scheme: Scheme, videos: EpisodeFile[]) {
+  if (scheme.baiduPanResourceLink) {
+    await uploadBaiduPanResource(page, scheme.baiduPanResourceLink);
+    return;
+  }
+
+  const videoFiles = videos.map(v => v.file);
+  if (!videoFiles.length) {
+    logger.warn({ taskId: scheme.id }, 'video upload skipped because task has no local video files');
+    return;
+  }
+
+  await monitorStartedVideoUpload(page, videoFiles);
+}
+
+async function monitorStartedVideoUpload(page: Page, files: string[]) {
+  await startVideoUpload(page, files);
+  await monitorVideoUpload(page, files);
+}
+
+async function uploadBaiduPanResource(page: Page, rawResourceLink: string) {
+  const baiduPanResource = parseBaiduPanResource(rawResourceLink);
+  await page.getByText('百度网盘上传', { exact: true }).click();
+
+  const dialog = page
+    .getByRole('dialog')
+    .filter({ has: page.locator('#semi-modal-title', { hasText: '百度网盘上传' }) })
+    .last();
+  await dialog.waitFor({ state: 'visible', timeout: 10_000 });
+  await dialog.getByPlaceholder('请填入百度网盘分享链接。').fill(baiduPanResource.url);
+  await dialog.getByPlaceholder('请输入提取码').fill(baiduPanResource.extractCode);
+  await dialog.locator('button[aria-label="confirm"]').click();
+  await dialog.waitFor({ state: 'hidden', timeout: 30_000 }).catch(() => {});
+  logger.info({ url: baiduPanResource.url }, 'baidu pan resource submitted');
+}
+
+function parseBaiduPanResource(rawResourceLink: string) {
+  const text = rawResourceLink
+    .replace(/<br\s*\/?>/gi, '\n')
+    .replace(/&amp;/gi, '&')
+    .trim();
+  const urlMatch = /https?:\/\/pan\.baidu\.com\/s\/[^\s<>"'，。；;]+/i.exec(text);
+  if (!urlMatch) {
+    throw new Error('baiduPanResourceLink must contain a pan.baidu.com share URL.');
+  }
+
+  const url = new URL(urlMatch[0]);
+  const extractCode =
+    normalizeExtractCode(url.searchParams.get('pwd')) ??
+    normalizeExtractCode(url.searchParams.get('提取码')) ??
+    normalizeExtractCode(/(?:提取码|验证码|密码|code|pwd)\s*[:：]?\s*([a-zA-Z0-9]{4})/i.exec(text)?.[1]);
+
+  if (!extractCode) {
+    throw new Error('baiduPanResourceLink extraction code is required.');
+  }
+
+  return {
+    url: url.toString(),
+    extractCode,
+  };
+}
+
+function normalizeExtractCode(value: string | null | undefined) {
+  const code = value?.trim();
+  return code && /^[a-zA-Z0-9]{4}$/.test(code) ? code : undefined;
 }
 
 async function selectContract(page: Page, contractText?: string) {
@@ -212,7 +294,18 @@ async function checkSemiCheckbox(input: Locator) {
 
 async function uploadCover(page: Page, file: string) {
   await page.locator('input[type="file"][accept="image/*"]').first().setInputFiles(file);
+  await clickConfirmIfVisible(page);
   await page.getByText('替换封面').waitFor({ timeout: 30_000 });
+}
+
+async function clickConfirmIfVisible(page: Page) {
+  const confirmButton = page
+    .getByRole('button', { name: /^(Confirm|确认|确定)$/i })
+    .last();
+  if (await confirmButton.isVisible({ timeout: 2_000 }).catch(() => false)) {
+    await confirmButton.click();
+    logger.warn('clicked Confirm after upload prompt');
+  }
 }
 
 async function startVideoUpload(page: Page, files: string[]) {

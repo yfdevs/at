@@ -1,9 +1,10 @@
 import { mkdir } from 'node:fs/promises';
 import { chromium, type BrowserContext, type Page } from 'playwright';
+import { claimNextTiktokDramaTaskApi } from './api/index.js';
 import { config, configureTiktokDramaCenterRuntimeSettings, logger } from './config.js';
 import { fillDraft, waitForDraftPage } from './draft-form.js';
 import { matchVideos, resolveCoverFile } from './media.js';
-import { loadScheme } from './scheme.js';
+import type { Scheme } from './scheme.js';
 
 async function main() {
   configureTiktokDramaCenterRuntimeSettings();
@@ -13,12 +14,34 @@ async function main() {
     await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' });
     await waitForDraftPage(page);
 
-    logger.info('draft ready; loading scheme');
-    const scheme = await loadScheme(context);
-    const videos = await matchVideos(config.videoDir, scheme.title, scheme.episodeCount);
+    logger.info('draft ready; claiming task');
+    const task = await claimNextTiktokDramaTaskApi();
+    if (!task) {
+      logger.info('no tiktok drama task claimed');
+      await keepBrowserOpen();
+      return;
+    }
+
+    const scheme = task.scheme;
+    logger.info({
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      taskId: scheme.id,
+      title: scheme.title
+    }, 'claimed task');
+
+    const videos = scheme.baiduPanResourceLink
+      ? []
+      : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
     const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
 
-    logger.info({ taskId: scheme.id, title: scheme.title, videos: videos.length }, 'starting task');
+    logger.info({
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      taskId: scheme.id,
+      title: scheme.title,
+      videos: videos.length
+    }, 'starting task');
     const stopWatchingToast = new AbortController();
     try {
       await Promise.race([
@@ -37,12 +60,31 @@ async function main() {
   }
 }
 
-async function runTask(page: Page, scheme: Awaited<ReturnType<typeof loadScheme>>, coverFile: string, videos: Awaited<ReturnType<typeof matchVideos>>) {
+async function resolveTaskVideos(scheme: Scheme, originalTitle: string, allowMissingVideos = false) {
+  try {
+    return await matchVideos(config.videoDir, originalTitle, scheme.episodeCount);
+  } catch (error) {
+    if (!allowMissingVideos) throw error;
+    logger.warn({
+      err: error,
+      taskId: scheme.id,
+      originalTitle,
+      title: scheme.title,
+      videoDir: config.videoDir
+    }, 'video files missing; skipping video upload for fake task');
+    return [];
+  }
+}
+
+async function runTask(page: Page, scheme: Scheme, coverFile: string, videos: Awaited<ReturnType<typeof matchVideos>>) {
   await fillDraft(page, scheme, coverFile, videos);
 
-  // ponytail: submission disabled while testing; re-enable this click after upload flow is verified.
-  // if (scheme.submit || config.submit) await page.getByRole('button', { name: '提交' }).click();
-  logger.info({ taskId: scheme.id }, 'dry run finished; submit click is disabled while testing');
+  if (scheme.submit || config.submit) {
+    await page.getByRole('button', { name: '提交' }).click();
+    logger.info({ taskId: scheme.id }, 'task submitted');
+  } else {
+    logger.info({ taskId: scheme.id }, 'task finished without submit');
+  }
   await page.waitForTimeout(config.postTaskWatchMs);
 }
 
@@ -54,15 +96,36 @@ async function keepBrowserOpen() {
 
 async function watchToast(page: Page, signal: AbortSignal) {
   const portal = page.locator('[data-tux-toast-portal]').last();
-  await Promise.race([
-    portal.waitFor({ state: 'attached', timeout: 0 }),
-    new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
-  ]);
-  if (signal.aborted) return await new Promise<never>(() => {});
+  while (!signal.aborted) {
+    await Promise.race([
+      portal.waitFor({ state: 'attached', timeout: 0 }),
+      new Promise(resolve => signal.addEventListener('abort', resolve, { once: true }))
+    ]);
+    if (signal.aborted) return await new Promise<never>(() => {});
 
-  const message = (await portal.innerText()).replace(/\s*复制\s*$/, '').trim();
-  logger.error({ toast: message }, 'toast error');
-  throw new Error(`toast error: ${message}`);
+    const message = (await portal.innerText()).replace(/\s*复制\s*$/, '').trim();
+    if (await clickToastConfirm(page, message)) {
+      continue;
+    }
+    logger.error({ toast: message }, 'toast error');
+    throw new Error(`toast error: ${message}`);
+  }
+
+  return await new Promise<never>(() => {});
+}
+
+async function clickToastConfirm(page: Page, message: string) {
+  const confirmButton = page
+    .getByRole('button', { name: /^(Confirm|确认|确定)$/i })
+    .last();
+  if (!(await confirmButton.isVisible({ timeout: 2_000 }).catch(() => false))) {
+    return false;
+  }
+
+  await confirmButton.click();
+  logger.warn({ toast: message }, 'toast confirmed');
+  await page.waitForTimeout(500);
+  return true;
 }
 
 async function launchContext(): Promise<BrowserContext> {

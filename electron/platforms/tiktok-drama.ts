@@ -27,6 +27,7 @@ type TiktokDramaCenterRuntime = {
 
 export type TiktokDramaCenterConfig = {
   headless: string;
+  localEpisodeVideoRoot: string;
   operationDelaySeconds: string;
   runDataDir: string;
 };
@@ -47,6 +48,7 @@ type TiktokDramaCenterStore = {
 
 const defaultTiktokDramaCenterConfig: TiktokDramaCenterConfig = {
   headless: "false",
+  localEpisodeVideoRoot: "",
   operationDelaySeconds: "0.02",
   runDataDir: ".drama-runs/tiktok-drama",
 };
@@ -106,6 +108,8 @@ function normalizeConfig(
 ): TiktokDramaCenterConfig {
   return {
     headless: config.headless ?? defaultTiktokDramaCenterConfig.headless,
+    localEpisodeVideoRoot:
+      config.localEpisodeVideoRoot ?? defaultTiktokDramaCenterConfig.localEpisodeVideoRoot,
     operationDelaySeconds:
       config.operationDelaySeconds ?? defaultTiktokDramaCenterConfig.operationDelaySeconds,
     runDataDir:
@@ -141,10 +145,6 @@ function tiktokDramaCenterCredentialStatePath() {
 
 function tiktokDramaCenterSchemeFile() {
   return path.join(tiktokDramaCenterRunDataDir(), "scheme.local.json");
-}
-
-function tiktokDramaCenterVideoDir() {
-  return path.join(tiktokDramaCenterRunDataDir(), "videos");
 }
 
 function tiktokDramaCenterTempDir() {
@@ -202,7 +202,7 @@ async function startRuntime() {
       logFile: tiktokDramaCenterLogFile(),
       schemeFile: tiktokDramaCenterSchemeFile(),
       tempDir: tiktokDramaCenterTempDir(),
-      videoDir: tiktokDramaCenterVideoDir(),
+      videoDir: config.localEpisodeVideoRoot,
       browser: {
         headless: config.headless === "true",
         slowMo: operationDelayMs,
@@ -228,6 +228,17 @@ export function registerTiktokDramaCenterPlatformHandlers() {
         path: configPath(),
         restartRequired: runtimeController.running || runtimeController.startingPromise !== null,
       };
+    },
+  );
+
+  ipcMain.handle(
+    "tiktok-drama:config:select-local-episode-video-root",
+    async (event, currentPath?: string) => {
+      return selectDirectory(event, {
+        title: "选择 TikTok 剧集视频根目录",
+        defaultPath: directoryDefaultPath(currentPath, app.getPath("videos")),
+        properties: ["openDirectory", "createDirectory"],
+      });
     },
   );
 

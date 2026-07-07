@@ -20,7 +20,7 @@ export default function App() {
             <AppRoutes />
           </div>
           <AppRuntimeDock />
-          <Toaster position="bottom-right" closeButton={false} theme="dark" richColors />
+          <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
         </div>
       </TooltipProvider>
     </HashRouter>

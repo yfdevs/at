@@ -2,6 +2,7 @@ export type TiktokDramaCenterLoginState = "login-required" | "logged-in" | "unkn
 
 export type TiktokDramaCenterConfig = {
   headless: string
+  localEpisodeVideoRoot: string
   operationDelaySeconds: string
   runDataDir: string
 }
@@ -26,8 +27,37 @@ async function invokeTiktokDramaCenter<T>(channel: string, ...args: unknown[]): 
     throw new Error("TikTok 服务控制仅在 Electron 应用内可用。")
   }
 
-  const result = await window.ipcRenderer.invoke(channel, ...args)
-  return result as T
+  try {
+    const result = await window.ipcRenderer.invoke(channel, ...args)
+    return result as T
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    throw new Error(readableTiktokDramaCenterError(message))
+  }
+}
+
+function readableTiktokDramaCenterError(message: string) {
+  if (message.includes("TIKTOK_LOCAL_VIDEO_ROOT_REQUIRED")) {
+    return "请先在 TikTok 配置中选择剧集视频根目录。"
+  }
+
+  if (message.includes("video root is required")) {
+    return "请先在 TikTok 配置中选择剧集视频根目录。"
+  }
+
+  if (message.includes("video directory not found:")) {
+    return message.replace("video directory not found:", "TikTok 剧集视频目录不存在：")
+  }
+
+  if (message.includes("missing episodes:")) {
+    return message.replace("missing episodes:", "TikTok 剧集视频缺少集数：")
+  }
+
+  if (message.includes("duplicate episode")) {
+    return message.replace("duplicate episode", "TikTok 剧集视频存在重复集数")
+  }
+
+  return message
 }
 
 export const tiktokDramaCenterService = {
@@ -45,6 +75,12 @@ export const tiktokDramaCenterService = {
   selectRunDataDir(currentPath?: string) {
     return invokeTiktokDramaCenter<string | null>(
       "tiktok-drama:config:select-run-data-dir",
+      currentPath
+    )
+  },
+  selectLocalEpisodeVideoRoot(currentPath?: string) {
+    return invokeTiktokDramaCenter<string | null>(
+      "tiktok-drama:config:select-local-episode-video-root",
       currentPath
     )
   },
