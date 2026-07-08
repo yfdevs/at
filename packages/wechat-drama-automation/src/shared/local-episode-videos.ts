@@ -12,7 +12,7 @@ export interface LocalEpisodeVideo {
 
 const localEpisodeVideoPatterns = [
   "*.mp4",
-  "{成片,成品,视频}/*.mp4",
+  "{成片,成品,视频,正片}/*.mp4",
 ];
 
 function escapeRegExp(value: string): string {
@@ -43,8 +43,9 @@ export async function findLocalEpisodeVideos(config: Config): Promise<LocalEpiso
 
   const escapedOriginalTitle = escapeRegExp(getOriginalTitle(config));
   const fileNamePatterns = [
-    new RegExp(`^${escapedOriginalTitle}\\s*[-_—–]?\\s*第(\\d+)集\\.mp4$`, "i"),
-    new RegExp(`^${escapedOriginalTitle}\\s*(\\d+)\\.mp4$`, "i"),
+    new RegExp(`^${escapedOriginalTitle}(?:\\s*-\\s*|\\s*)第(\\d+)集\\.mp4$`, "i"),
+    new RegExp(`^${escapedOriginalTitle}(?:\\s*-\\s*|\\s*)(\\d+)\\.mp4$`, "i"),
+    /^(\d+)\.mp4$/i,
   ];
   const fileNames = await fg(localEpisodeVideoPatterns, {
     cwd: playletDir,

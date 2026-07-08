@@ -40,7 +40,7 @@
 | `playlet.productionCost.amountWan` | 剧目制作成本 | `30` | 单位：万元。 |
 | `playlet.productionCost.proofFiles` | 剧目制作成本证明文件 | 示例文件数组 | 对应页面里的选择文件上传。 |
 | `playlet.otherMaterials` | 其他材料 | `[]` | 可上传多个文件。 |
-剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频` 下的 `.mp4` 文件。源文件名支持 `originalTitle第N集.mp4`、`originalTitle-第N集.mp4`、`originalTitle - 第N集.mp4`、`originalTitleN.mp4`、`originalTitle N.mp4` 和 `originalTitle03.mp4`。上传前会在运行数据目录创建硬链接，并把上传文件名设为 `payloadJson.name-第N集.mp4`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
+剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频`、`根目录/originalTitle/正片` 下的 `.mp4` 文件。源文件名支持 `originalTitle-第N集.mp4`、`originalTitle - 第N集.mp4`、`originalTitle 第N集.mp4`、`originalTitleNN.mp4`、`originalTitle NN.mp4`、`originalTitle-NN.mp4`、`originalTitle - NN.mp4` 和 `N.mp4`；`-` 前后空格可有可无，不再支持下划线分隔。上传前会在运行数据目录创建硬链接，并把上传文件名设为 `payloadJson.name-第N集.mp4`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
 | `publish.submit` | 是否确认提审 | `false` | 保留字段；当前流程进入第三步后会自动确认提审。 |
 
 ## 多视频号配置

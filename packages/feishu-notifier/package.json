@@ -13,11 +13,8 @@
     "./package.json": "./package.json"
   },
   "scripts": {
-    "build": "pnpm --filter @drama/axios build && vp pack",
+    "build": "vp pack",
     "check": "tsc --noEmit"
-  },
-  "dependencies": {
-    "@drama/axios": "workspace:*"
   },
   "devDependencies": {
     "@types/node": "latest",

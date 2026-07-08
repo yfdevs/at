@@ -61,6 +61,18 @@ type BaiduNetdiskRemoteVideoListing = {
     path: string;
     size?: number;
   }>;
+  scannedDirs?: Array<{
+    path: string;
+    errno?: number;
+    count: number;
+    hasMore?: boolean;
+    entries: Array<{
+      name: string;
+      path: string;
+      isDir: boolean;
+      size?: number;
+    }>;
+  }>;
   duplicateIndexes: number[];
   missingIndexes?: number[];
 };
@@ -122,6 +134,7 @@ const defaultBaiduNetdiskConfig: BaiduNetdiskConfig = {
 };
 
 const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
+const maxLoggedLocalDirectoryEntries = 40;
 
 const require = createRequire(import.meta.url);
 let store: Store<BaiduNetdiskStore> | null = null;
@@ -283,33 +296,110 @@ function escapeRegExp(value: string): string {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
-async function listLocalEpisodeFiles(root: string, resourceName: string) {
-  const directory = playletDir(root, resourceName);
+function localEpisodeFilePatterns(resourceName: string) {
   const escapedResourceName = escapeRegExp(resourceName);
-  const patterns = [
-    new RegExp(`^${escapedResourceName}\\s*[-_—–]?\\s*第(\\d+)集\\.mp4$`, "i"),
-    new RegExp(`^${escapedResourceName}\\s*(\\d+)\\.mp4$`, "i"),
+  return [
+    new RegExp(`^${escapedResourceName}(?:\\s*-\\s*|\\s*)第(\\d+)集\\.mp4$`, "i"),
+    new RegExp(`^${escapedResourceName}(?:\\s*-\\s*|\\s*)(\\d+)\\.mp4$`, "i"),
+    /^(\d+)\.mp4$/i,
   ];
-  const scanDirs = [
+}
+
+function localEpisodeScanDirs(root: string, resourceName: string) {
+  const directory = playletDir(root, resourceName);
+  return [
     directory,
     path.join(directory, "成片"),
     path.join(directory, "成品"),
     path.join(directory, "视频"),
+    path.join(directory, "正片"),
   ];
+}
+
+function matchLocalEpisodeIndex(fileName: string, resourceName: string) {
+  const match = localEpisodeFilePatterns(resourceName)
+    .map((pattern) => pattern.exec(fileName))
+    .find((result): result is RegExpExecArray => result !== null);
+
+  return match ? Number(match[1]) : undefined;
+}
+
+async function logLocalEpisodeDirectoryDetails(
+  root: string,
+  resourceName: string,
+  episodeCount: number,
+  reason: string,
+) {
+  console.log(
+    `[baidu] 本地剧集目录扫描：reason=${reason} root=${root} resource=${resourceName} expected=${episodeCount}`,
+  );
+
+  for (const scanDir of localEpisodeScanDirs(root, resourceName)) {
+    const entries = await readdir(scanDir, { withFileTypes: true }).catch(() => undefined);
+    if (!entries) {
+      console.log(`[baidu] 本地目录详情：${scanDir} 不存在或不可读取`);
+      continue;
+    }
+
+    const loggedEntries: string[] = [];
+    const matchedMp4: string[] = [];
+    const unmatchedMp4: string[] = [];
+    let fileCount = 0;
+    let directoryCount = 0;
+
+    for (const entry of entries) {
+      const entryPath = path.join(scanDir, entry.name);
+      if (entry.isDirectory()) {
+        directoryCount += 1;
+        loggedEntries.push(`目录:${entry.name}`);
+        continue;
+      }
+
+      if (!entry.isFile()) {
+        loggedEntries.push(`其他:${entry.name}`);
+        continue;
+      }
+
+      fileCount += 1;
+      const fileStat = await stat(entryPath).catch(() => undefined);
+      const size = fileStat?.isFile() ? fileStat.size : undefined;
+      loggedEntries.push(`文件:${entry.name}${size === undefined ? "" : ` size=${size}`}`);
+
+      if (!entry.name.toLowerCase().endsWith(".mp4")) continue;
+
+      const episodeIndex = matchLocalEpisodeIndex(entry.name, resourceName);
+      if (episodeIndex === undefined) {
+        unmatchedMp4.push(entry.name);
+      } else {
+        matchedMp4.push(`${episodeIndex}:${entry.name}${size === undefined ? "" : ` size=${size}`}`);
+      }
+    }
+
+    const entriesText = loggedEntries.slice(0, maxLoggedLocalDirectoryEntries).join(" | ") || "空";
+    const entriesSuffix = loggedEntries.length > maxLoggedLocalDirectoryEntries
+      ? ` ...另${loggedEntries.length - maxLoggedLocalDirectoryEntries}项未打印`
+      : "";
+    console.log(
+      `[baidu] 本地目录详情：${scanDir} 文件=${fileCount} 目录=${directoryCount} entries=${entriesText}${entriesSuffix}`,
+    );
+    console.log(
+      `[baidu] 本地mp4匹配：${scanDir} matched=${matchedMp4.join(" | ") || "无"} unmatched=${unmatchedMp4.join(" | ") || "无"}`,
+    );
+  }
+}
+
+async function listLocalEpisodeFiles(root: string, resourceName: string) {
   const files: Array<{ index: number; file: string; size: number }> = [];
 
-  for (const scanDir of scanDirs) {
+  for (const scanDir of localEpisodeScanDirs(root, resourceName)) {
     const entries = await readdir(scanDir, { withFileTypes: true }).catch(() => []);
 
     for (const entry of entries) {
       if (!entry.isFile() || !entry.name.toLowerCase().endsWith(".mp4")) continue;
 
-      const match = patterns
-        .map((pattern) => pattern.exec(entry.name))
-        .find((result): result is RegExpExecArray => result !== null);
-      if (!match) continue;
+      const index = matchLocalEpisodeIndex(entry.name, resourceName);
+      if (index === undefined) continue;
 
-      const index = Number(match[1]);
       const file = path.join(scanDir, entry.name);
       const fileStat = await stat(file).catch(() => undefined);
       if (!fileStat?.isFile() || fileStat.size <= 0) continue;
@@ -483,6 +573,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   const timeoutMs = options.timeoutMs ?? 12 * 60 * 60 * 1000;
   const stableSignatures = new Map<string, { signature: string; count: number }>();
   let lastProgressLogAt = 0;
+  let lastLocalDetailLogAt = 0;
 
   while (Date.now() - startedAt < timeoutMs) {
     let record = readDownloadRecords().find((item) => item.id === options.id) ?? options.record;
@@ -551,6 +642,21 @@ async function waitForCompleteLocalEpisodeVideos(options: {
               (taskStatus.status ? ` status=${taskStatus.status}` : ""),
           );
           lastProgressLogAt = Date.now();
+
+          if (
+            (!bestLocalSummary || bestLocalSummary.count < options.episodeCount) &&
+            Date.now() - lastLocalDetailLogAt > 60000
+          ) {
+            for (const root of uniqueRoots) {
+              await logLocalEpisodeDirectoryDetails(
+                root,
+                options.resourceName,
+                options.episodeCount,
+                "下载等待中未识别完整集数",
+              );
+            }
+            lastLocalDetailLogAt = Date.now();
+          }
         }
 
         if (taskStatus.completed) {
@@ -568,6 +674,19 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     }
 
     await new Promise((resolve) => setTimeout(resolve, 10000));
+  }
+
+  for (const root of [
+    options.targetRoot,
+    options.sourceRoot,
+    rootFromLocalPath(options.record.localPath, options.resourceName),
+  ].filter((item): item is string => Boolean(item?.trim()))) {
+    await logLocalEpisodeDirectoryDetails(
+      root,
+      options.resourceName,
+      options.episodeCount,
+      "等待下载完成超时",
+    );
   }
 
   throw new Error(`等待百度网盘资源下载完成超时：${playletDir(options.targetRoot, options.resourceName)}`);
@@ -789,13 +908,13 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     completedAt: existingRecord?.completedAt,
   });
 
-  if (
-    await hasCompleteLocalEpisodeVideos(
-      request.localEpisodeVideoRoot,
-      request.resourceName,
-      request.episodeCount,
-    )
-  ) {
+  const hasExistingCompleteVideos = await hasCompleteLocalEpisodeVideos(
+    request.localEpisodeVideoRoot,
+    request.resourceName,
+    request.episodeCount,
+  );
+
+  if (hasExistingCompleteVideos) {
     return upsertDownloadRecord({
       ...record,
       state: "completed",
@@ -804,6 +923,13 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       completedAt: new Date().toISOString(),
     });
   }
+
+  await logLocalEpisodeDirectoryDetails(
+    request.localEpisodeVideoRoot,
+    request.resourceName,
+    request.episodeCount,
+    "启动前未发现完整文件",
+  );
 
   if (existingRecord?.state === "downloading") {
     try {

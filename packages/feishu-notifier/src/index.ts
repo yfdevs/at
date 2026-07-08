@@ -1,5 +1,3 @@
-import { ApiClient } from "@drama/axios";
-
 type NotifierLogger = {
   warn: (message: string, fields?: any) => void;
 };
@@ -32,17 +30,15 @@ export interface TaskStartedNotificationPayload extends TaskNotificationPayload 
 export class FeishuNotifier {
   private readonly channelIdLabel: string;
   private readonly channelLabel: string;
-  private readonly client: ApiClient;
   private readonly logger?: NotifierLogger;
+  private readonly timeoutMs: number;
   private readonly webhookUrl: string | undefined;
 
   constructor(options: FeishuNotifierOptions = {}) {
     this.channelIdLabel = options.channelIdLabel ?? "channelId";
     this.channelLabel = options.channelLabel ?? "账号";
-    this.client = new ApiClient({
-      timeout: options.timeoutMs ?? 10000,
-    });
     this.logger = options.logger;
+    this.timeoutMs = options.timeoutMs ?? 10000;
     this.webhookUrl = options.webhookUrl?.trim() || undefined;
   }
 
@@ -98,15 +94,31 @@ export class FeishuNotifier {
   private async send(text: string): Promise<void> {
     if (!this.webhookUrl) return;
 
+    const controller = new AbortController();
+    const timeout = setTimeout(() => controller.abort(), this.timeoutMs);
+
     try {
-      await this.client.post(this.webhookUrl, {
-        msg_type: "text",
-        content: { text },
+      const response = await fetch(this.webhookUrl, {
+        method: "POST",
+        headers: {
+          "content-type": "application/json",
+        },
+        body: JSON.stringify({
+          msg_type: "text",
+          content: { text },
+        }),
+        signal: controller.signal,
       });
+
+      if (!response.ok) {
+        throw new Error(`Feishu webhook failed: ${response.status} ${response.statusText}`);
+      }
     } catch (error) {
       this.logger?.warn("send failed", {
         errorMessage: error instanceof Error ? error.message : String(error),
       });
+    } finally {
+      clearTimeout(timeout);
     }
   }
 }

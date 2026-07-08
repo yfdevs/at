@@ -63,6 +63,18 @@ export type BaiduNetdiskRemoteVideoListing = {
     path: string;
     size?: number;
   }>;
+  scannedDirs?: Array<{
+    path: string;
+    errno?: number;
+    count: number;
+    hasMore?: boolean;
+    entries: Array<{
+      name: string;
+      path: string;
+      isDir: boolean;
+      size?: number;
+    }>;
+  }>;
   duplicateIndexes: number[];
   missingIndexes?: number[];
 };
@@ -90,6 +102,7 @@ export type BaiduNetdiskDownloadTaskStatus = {
 
 const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
 const log = (message: string) => console.log(`[baidu] ${message}`);
+const maxLoggedDirectoryEntries = 30;
 
 function getArg(args: string[], name: string) {
   const equalArg = args.find((arg) => arg.startsWith(`${name}=`));
@@ -107,6 +120,27 @@ function numberArg(args: string[], name: string) {
   const parsed = Number(value);
   if (!Number.isFinite(parsed)) throw new Error(`${name} 必须是数字。`);
   return parsed;
+}
+
+function formatRemoteDirectoryEntry(entry: NonNullable<BaiduNetdiskRemoteVideoListing["scannedDirs"]>[number]["entries"][number]) {
+  const kind = entry.isDir ? "目录" : "文件";
+  const size = entry.size === undefined ? "" : ` size=${entry.size}`;
+  return `${kind}:${entry.name}${size}`;
+}
+
+function logRemoteVideoScanDetails(remoteVideos: BaiduNetdiskRemoteVideoListing) {
+  const scannedDirs = remoteVideos.scannedDirs ?? [];
+  if (scannedDirs.length <= 0) return;
+
+  log(`网盘扫描目录：${scannedDirs.map((dir) => dir.path).join(" | ")}`);
+
+  for (const dir of scannedDirs) {
+    const status = dir.errno === undefined ? "ok" : `errno=${dir.errno}`;
+    const entries = dir.entries.slice(0, maxLoggedDirectoryEntries);
+    const suffix = dir.entries.length > entries.length ? ` ...另${dir.entries.length - entries.length}项未打印` : "";
+    const entryText = entries.map(formatRemoteDirectoryEntry).join(" | ") || "空";
+    log(`网盘目录详情：${dir.path} ${status} count=${dir.count}${dir.hasMore ? " hasMore=true" : ""} entries=${entryText}${suffix}`);
+  }
 }
 
 function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
@@ -1337,9 +1371,17 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\.mp4$", "i"),
     ];
   });
+  episodePatterns.push(/^(\\d+)\\.mp4$/i);
   const listDir = async (dir) => {
     const results = [];
     const normalizedDir = normalizeDir(dir);
+    const debug = {
+      path: normalizedDir,
+      errno: undefined,
+      count: 0,
+      hasMore: false,
+      entries: [],
+    };
     const pageSize = 1000;
     for (let page = 1; page <= 100; page += 1) {
       const data = await jsonFetch(
@@ -1354,30 +1396,46 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       );
       if (data.errno !== 0) {
         if (page === 1) attempts.push("list dir=" + normalizedDir + " errno=" + data.errno + " " + compactJson(data));
+        debug.errno = data.errno;
         break;
       }
       const list = Array.isArray(data.list) ? data.list : [];
       results.push(...list);
+      debug.hasMore = Boolean(data.has_more);
       if (list.length < pageSize && !data.has_more) break;
     }
-    return results;
+    debug.count = results.length;
+    debug.entries = results.slice(0, 80).map((entry) => {
+      const name = itemName(entry);
+      return {
+        name,
+        path: itemPath(entry) || joinPath(normalizedDir, name),
+        isDir: entry?.isdir === 1 || entry?.isdir === true,
+        size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+      };
+    });
+    return { entries: results, debug };
   };
-  const rootEntries = await listDir(savedPath);
+  const rootList = await listDir(savedPath);
+  const rootEntries = rootList.entries;
+  const scannedDirs = [rootList.debug];
   const videoDirs = new Set([normalizeDir(savedPath)]);
   for (const entry of rootEntries) {
     const name = itemName(entry);
     const entryPath = itemPath(entry) || joinPath(savedPath, name);
-    if ((entry?.isdir === 1 || entry?.isdir === true) && /^(成片|成品|视频)$/i.test(name)) {
+    if ((entry?.isdir === 1 || entry?.isdir === true) && /^(成片|成品|视频|正片)$/i.test(name)) {
       videoDirs.add(normalizeDir(entryPath));
     }
   }
-  for (const childName of ["成片", "成品", "视频"]) {
+  for (const childName of ["成片", "成品", "视频", "正片"]) {
     videoDirs.add(joinPath(savedPath, childName));
   }
 
   const entriesByPath = new Map();
   for (const [index, dir] of [...videoDirs].entries()) {
-    const entries = index === 0 ? rootEntries : await listDir(dir);
+    const listResult = index === 0 ? rootList : await listDir(dir);
+    if (index !== 0) scannedDirs.push(listResult.debug);
+    const entries = listResult.entries;
     for (const entry of entries) {
       const name = itemName(entry);
       const entryPath = itemPath(entry) || joinPath(dir, name);
@@ -1419,6 +1477,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       rootPath: savedPath,
       files,
       allVideoFiles,
+      scannedDirs,
       duplicateIndexes,
     },
   };
@@ -2114,6 +2173,7 @@ async function submitSavedDownload(
     `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=[${remoteIndexes.join(", ") || "无"}]，` +
       `全部mp4=${remoteVideos.allVideoFiles.length}个`,
   );
+  logRemoteVideoScanDetails(remoteVideos);
   if (remoteVideos.files.length > 0) {
     log(`网盘匹配文件：${remoteVideos.files.map((file) => file.path).join(" | ")}`);
   }
