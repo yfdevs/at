@@ -1,223 +1,48 @@
 import { spawn } from "node:child_process";
-import { mkdir, readFile } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
-import WebSocket from "ws";
+import {
+  ensureBaiduCdpPort,
+  getTargets,
+  waitForDocumentBody,
+  waitForTarget,
+  withPage,
+} from "./cdp.js";
+import { parseCliOptions } from "./cli.js";
+import {
+  DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
+  DEFAULT_BAIDU_NETDISK_SHARE_NAME,
+  DOWNLOAD_SETTING_MAX_ATTEMPTS,
+  OWN_NETDISK_DIR_LIST_MAX_PAGES,
+  REMOTE_DIR_ENTRY_SAMPLE_LIMIT,
+  REMOTE_VIDEO_SCAN_MAX_DEPTH,
+  REMOTE_VIDEO_SCAN_MAX_DIRS,
+  SHARE_LIST_MAX_PAGES,
+} from "./constants.js";
+import { log, logRemoteVideoScanDetails } from "./logging.js";
+import { parseBaiduNetdiskShareText, readShareInfo, sanitizeWindowsName } from "./share-text.js";
+import type {
+  BaiduNetdiskDownloadTaskStatus,
+  BaiduNetdiskRemoteVideoListing,
+  BaiduNetdiskShareDownloadOptions,
+  BaiduNetdiskShareDownloadResult,
+  CdpTarget,
+  Rect,
+  ShareInfo,
+} from "./types.js";
+import { sleep } from "./utils.js";
 
-const debugHost = "127.0.0.1";
-const requestTimeoutMs = 2500;
-
-export const DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR = "D:\\BaiduNetdiskDownload";
-const DEFAULT_BAIDU_NETDISK_SHARE_NAME = "百度网盘分享";
-
-type CdpTarget = {
-  id: string;
-  title: string;
-  type: string;
-  url: string;
-  webSocketDebuggerUrl?: string;
-};
-
-type CdpMessage = {
-  id?: number;
-  result?: unknown;
-  error?: unknown;
-};
-
-type Rect = {
-  x: number;
-  y: number;
-  width: number;
-  height: number;
-};
-
-export type BaiduNetdiskShareInfo = {
-  link: string;
-  pwd: string;
-  name: string;
-};
-
-type ShareInfo = BaiduNetdiskShareInfo;
-
-export type BaiduNetdiskShareDownloadOptions = {
-  shareText?: string;
-  shareFile?: string;
-  resourceName?: string;
-  expectedEpisodeCount?: number;
-  port?: number;
-  downloadDir?: string;
-};
-
-export type BaiduNetdiskRemoteEpisodeFile = {
-  index: number;
-  name: string;
-  path: string;
-  size?: number;
-};
-
-export type BaiduNetdiskRemoteVideoListing = {
-  rootPath: string;
-  files: BaiduNetdiskRemoteEpisodeFile[];
-  allVideoFiles: Array<{
-    name: string;
-    path: string;
-    size?: number;
-  }>;
-  scannedDirs?: Array<{
-    path: string;
-    errno?: number;
-    count: number;
-    hasMore?: boolean;
-    entries: Array<{
-      name: string;
-      path: string;
-      isDir: boolean;
-      size?: number;
-    }>;
-  }>;
-  duplicateIndexes: number[];
-  missingIndexes?: number[];
-};
-
-export type BaiduNetdiskShareDownloadResult = {
-  share: BaiduNetdiskShareInfo;
-  downloadRoot?: string;
-  localPath?: string;
-  remoteVideos?: BaiduNetdiskRemoteVideoListing;
-  completed: boolean;
-  skippedExisting: boolean;
-};
-
-export type BaiduNetdiskDownloadTaskStatus = {
-  found: boolean;
-  name?: string;
-  localPath?: string;
-  status?: string;
-  size?: number;
-  finishSize?: number;
-  rate?: string;
-  completed: boolean;
-  tasks: string[];
-};
-
-const sleep = (ms: number) => new Promise((resolve) => setTimeout(resolve, ms));
-const log = (message: string) => console.log(`[baidu] ${message}`);
-const maxLoggedDirectoryEntries = 30;
-
-function getArg(args: string[], name: string) {
-  const equalArg = args.find((arg) => arg.startsWith(`${name}=`));
-  if (equalArg) return equalArg.slice(name.length + 1);
-
-  const index = args.indexOf(name);
-  if (index >= 0) return args[index + 1];
-  return undefined;
-}
-
-function numberArg(args: string[], name: string) {
-  const value = getArg(args, name);
-  if (!value) return undefined;
-
-  const parsed = Number(value);
-  if (!Number.isFinite(parsed)) throw new Error(`${name} 必须是数字。`);
-  return parsed;
-}
-
-function formatRemoteDirectoryEntry(entry: NonNullable<BaiduNetdiskRemoteVideoListing["scannedDirs"]>[number]["entries"][number]) {
-  const kind = entry.isDir ? "目录" : "文件";
-  const size = entry.size === undefined ? "" : ` size=${entry.size}`;
-  return `${kind}:${entry.name}${size}`;
-}
-
-function logRemoteVideoScanDetails(remoteVideos: BaiduNetdiskRemoteVideoListing) {
-  const scannedDirs = remoteVideos.scannedDirs ?? [];
-  if (scannedDirs.length <= 0) return;
-
-  log(`网盘扫描目录：${scannedDirs.map((dir) => dir.path).join(" | ")}`);
-
-  for (const dir of scannedDirs) {
-    const status = dir.errno === undefined ? "ok" : `errno=${dir.errno}`;
-    const entries = dir.entries.slice(0, maxLoggedDirectoryEntries);
-    const suffix = dir.entries.length > entries.length ? ` ...另${dir.entries.length - entries.length}项未打印` : "";
-    const entryText = entries.map(formatRemoteDirectoryEntry).join(" | ") || "空";
-    log(`网盘目录详情：${dir.path} ${status} count=${dir.count}${dir.hasMore ? " hasMore=true" : ""} entries=${entryText}${suffix}`);
-  }
-}
-
-function parseCliOptions(args: string[]): BaiduNetdiskShareDownloadOptions {
-  return {
-    shareFile: getArg(args, "--share-file"),
-    resourceName: getArg(args, "--resource-name"),
-    expectedEpisodeCount: numberArg(args, "--expected-episode-count"),
-    port: numberArg(args, "--port") ?? 9337,
-    downloadDir: getArg(args, "--download-dir") ?? DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR,
-  };
-}
-
-async function getJson<T>(url: string, timeoutMs = requestTimeoutMs) {
-  const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), timeoutMs);
-  try {
-    const response = await fetch(url, { signal: controller.signal });
-    if (!response.ok) throw new Error(`${response.status} ${response.statusText}`);
-    return (await response.json()) as T;
-  } finally {
-    clearTimeout(timeout);
-  }
-}
-
-function trimShareLink(value: string) {
-  return value.replace(/[),，。；;、\]]+$/g, "");
-}
-
-export function parseBaiduNetdiskShareText(
-  content: string,
-  sourceLabel = "分享文本",
-): BaiduNetdiskShareInfo {
-  const link = trimShareLink(content.match(/https?:\/\/pan\.baidu\.com\/s\/[^\s"'<>]+/)?.[0] ?? "");
-  if (!link) throw new Error(`${sourceLabel} 中没有找到百度网盘分享链接。`);
-
-  const url = new URL(link);
-  const pwd =
-    url.searchParams.get("pwd") ??
-    content.match(/(?:提取码|密码|pwd)[:：\s]*([a-zA-Z0-9]{4})/)?.[1];
-  if (!pwd) throw new Error(`${sourceLabel} 中没有找到提取码。`);
-
-  const name =
-    content.match(/通过网盘分享的文件[:：]\s*([^\r\n]+)/)?.[1]?.trim() ??
-    content.match(/分享的文件[:：]\s*([^\r\n]+)/)?.[1]?.trim() ??
-    DEFAULT_BAIDU_NETDISK_SHARE_NAME;
-
-  return { link, pwd, name: sanitizeWindowsName(name) };
-}
-
-async function readShareInfo(shareFile: string) {
-  const fullPath = path.resolve(process.cwd(), shareFile);
-  const content = await readFile(fullPath, "utf8");
-  return {
-    content,
-    share: parseBaiduNetdiskShareText(content, shareFile),
-  };
-}
-
-function sanitizeWindowsName(value: string) {
-  const sanitized = value.replace(/[\\/:*?"<>|]/g, "_").trim();
-  return sanitized || DEFAULT_BAIDU_NETDISK_SHARE_NAME;
-}
-
-function websocketDataToString(data: unknown) {
-  if (typeof data === "string") return data;
-  if (Buffer.isBuffer(data)) return data.toString("utf8");
-  if (data instanceof ArrayBuffer) return Buffer.from(data).toString("utf8");
-  if (Array.isArray(data)) {
-    return Buffer.concat(
-      data.map((item) =>
-        Buffer.isBuffer(item) ? item : Buffer.from(item as ArrayBuffer),
-      ),
-    ).toString("utf8");
-  }
-
-  return String(data);
-}
+export { DEFAULT_BAIDU_NETDISK_DOWNLOAD_DIR } from "./constants.js";
+export { parseBaiduNetdiskShareText } from "./share-text.js";
+export type {
+  BaiduNetdiskDownloadTaskStatus,
+  BaiduNetdiskRemoteEpisodeFile,
+  BaiduNetdiskRemoteVideoListing,
+  BaiduNetdiskShareDownloadOptions,
+  BaiduNetdiskShareDownloadResult,
+  BaiduNetdiskShareInfo,
+} from "./types.js";
 
 async function copyToClipboard(text: string) {
   if (process.platform !== "win32") {
@@ -243,248 +68,6 @@ async function copyToClipboard(text: string) {
     });
     child.stdin.end(text);
   });
-}
-
-async function getTargets(port: number) {
-  return getJson<CdpTarget[]>(`http://${debugHost}:${port}/json/list`);
-}
-
-async function isBaiduCdpPort(port: number) {
-  try {
-    const version = await getJson<{ "User-Agent"?: string }>(
-      `http://${debugHost}:${port}/json/version`,
-    );
-    const targets = await getTargets(port);
-    const userAgent = version["User-Agent"] ?? "";
-    const hasBaiduTarget = targets.some((target) =>
-      target.url.includes("BaiduNetdisk") ||
-      target.url.includes("core.asar") ||
-      target.url.includes("pan.baidu.com"),
-    );
-    return /baidunetdisk/i.test(userAgent) || hasBaiduTarget;
-  } catch {
-    return false;
-  }
-}
-
-async function ensureBaiduCdpPort(port: number) {
-  if (await isBaiduCdpPort(port)) return;
-  throw new Error(
-    `端口 ${port} 不是可用百度网盘 CDP。请先退出百度网盘，再手动启动 module\\BrowserEngine\\BaiduNetdiskUnite.exe --remote-debugging-port=${port}。`,
-  );
-}
-
-class CdpPage {
-  private nextId = 0;
-  private socket: WebSocket;
-  private closed = false;
-
-  constructor(url: string) {
-    this.socket = new WebSocket(url);
-    this.socket.on("close", () => {
-      this.closed = true;
-    });
-  }
-
-  async open() {
-    await new Promise<void>((resolve, reject) => {
-      let timeout: ReturnType<typeof setTimeout>;
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.socket.off("open", onOpen);
-        this.socket.off("error", onError);
-      };
-      const onOpen = () => {
-        cleanup();
-        resolve();
-      };
-      const onError = () => {
-        cleanup();
-        reject(new Error("CDP WebSocket 连接失败。"));
-      };
-
-      timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error("CDP WebSocket 连接超时。"));
-      }, 10000);
-
-      this.socket.once("open", onOpen);
-      this.socket.once("error", onError);
-    });
-    await this.send("Runtime.enable");
-    await this.send("Page.enable").catch(() => undefined);
-  }
-
-  close() {
-    if (!this.closed) this.socket.close();
-  }
-
-  async send<T = unknown>(
-    method: string,
-    params: Record<string, unknown> = {},
-    timeoutMs = 15000,
-  ) {
-    if (this.closed) throw new Error("CDP 页面已关闭。");
-
-    const id = ++this.nextId;
-    return new Promise<T>((resolve, reject) => {
-      const cleanup = () => {
-        clearTimeout(timeout);
-        this.socket.off("message", onMessage);
-        this.socket.off("close", onClose);
-      };
-      const onClose = () => {
-        cleanup();
-        reject(new Error("CDP 页面已关闭。"));
-      };
-      const onMessage = (data: unknown) => {
-        const message = JSON.parse(websocketDataToString(data)) as CdpMessage;
-        if (message.id !== id) return;
-
-        cleanup();
-        if (message.error) reject(new Error(JSON.stringify(message.error)));
-        else resolve(message.result as T);
-      };
-      const timeout = setTimeout(() => {
-        cleanup();
-        reject(new Error(`${method} 超时。`));
-      }, timeoutMs);
-
-      this.socket.on("message", onMessage);
-      this.socket.once("close", onClose);
-
-      try {
-        this.socket.send(JSON.stringify({ id, method, params }));
-      } catch (error) {
-        cleanup();
-        reject(error);
-      }
-    });
-  }
-
-  async evaluate<T>(expression: string, timeoutMs = 15000) {
-    const response = await this.send<{
-      result?: { value?: T; description?: string };
-      exceptionDetails?: {
-        text?: string;
-        exception?: { description?: string; value?: string };
-      };
-    }>(
-      "Runtime.evaluate",
-      {
-        expression,
-        returnByValue: true,
-        awaitPromise: true,
-      },
-      timeoutMs,
-    );
-    if (response.exceptionDetails) {
-      throw new Error(
-        response.exceptionDetails.exception?.description ??
-          response.exceptionDetails.exception?.value ??
-          response.exceptionDetails.text ??
-          "CDP 执行脚本异常。",
-      );
-    }
-    if (!response.result) throw new Error("CDP 执行脚本失败。");
-    return response.result.value as T;
-  }
-
-  async navigate(url: string, timeoutMs = 15000) {
-    await this.send("Page.navigate", { url }, timeoutMs);
-  }
-
-  async clickPoint(x: number, y: number, allowPageClose = false) {
-    try {
-      await this.send("Input.dispatchMouseEvent", {
-        type: "mouseMoved",
-        x,
-        y,
-        button: "none",
-      });
-      await this.send("Input.dispatchMouseEvent", {
-        type: "mousePressed",
-        x,
-        y,
-        button: "left",
-        buttons: 1,
-        clickCount: 1,
-      });
-      await this.send("Input.dispatchMouseEvent", {
-        type: "mouseReleased",
-        x,
-        y,
-        button: "left",
-        buttons: 0,
-        clickCount: 1,
-      });
-    } catch (error) {
-      if (!allowPageClose) throw error;
-    }
-  }
-
-  async pressEnter() {
-    await this.send("Input.dispatchKeyEvent", {
-      type: "keyDown",
-      key: "Enter",
-      code: "Enter",
-      windowsVirtualKeyCode: 13,
-      nativeVirtualKeyCode: 13,
-    });
-    await this.send("Input.dispatchKeyEvent", {
-      type: "keyUp",
-      key: "Enter",
-      code: "Enter",
-      windowsVirtualKeyCode: 13,
-      nativeVirtualKeyCode: 13,
-    });
-  }
-}
-
-async function withPage<T>(target: CdpTarget, run: (page: CdpPage) => Promise<T>) {
-  if (!target.webSocketDebuggerUrl) throw new Error("目标页面没有 WebSocket 调试地址。");
-
-  const page = new CdpPage(target.webSocketDebuggerUrl);
-  await page.open();
-  try {
-    return await run(page);
-  } finally {
-    page.close();
-  }
-}
-
-async function waitForDocumentBody(page: CdpPage, timeoutMs = 15000) {
-  const loaded = await page.evaluate<boolean>(
-    `
-(async () => {
-  const started = Date.now();
-  while (!document.body && Date.now() - started < ${timeoutMs}) {
-    await new Promise((resolve) => setTimeout(resolve, 100));
-  }
-  return Boolean(document.body);
-})()
-`,
-    timeoutMs + 1000,
-  );
-
-  if (!loaded) throw new Error("页面 body 未加载完成。");
-}
-
-async function waitForTarget(
-  port: number,
-  predicate: (target: CdpTarget) => boolean,
-  timeoutMs = 15000,
-) {
-  const started = Date.now();
-  while (Date.now() - started < timeoutMs) {
-    const target = (await getTargets(port)).find(
-      (item) => item.webSocketDebuggerUrl && predicate(item),
-    );
-    if (target) return target;
-    await sleep(300);
-  }
-
-  throw new Error("没有找到目标页面。");
 }
 
 function shareId(link: string) {
@@ -556,10 +139,7 @@ async function readTargetShareState(target: CdpTarget) {
 
   try {
     return await withPage(target, (page) =>
-      page.evaluate<ShareTargetState>(
-        `({ url: location.href, title: document.title })`,
-        4000,
-      ),
+      page.evaluate<ShareTargetState>(`({ url: location.href, title: document.title })`, 4000),
     );
   } catch {
     return undefined;
@@ -574,7 +154,10 @@ function shareStateMatches(state: ShareTargetState | undefined, id: string) {
 
 function prioritizeTargets(targets: CdpTarget[], preferredTargets: CdpTarget[]) {
   const preferred = preferredTargets
-    .map((preferredTarget) => targets.find((target) => target.id === preferredTarget.id) ?? preferredTarget)
+    .map(
+      (preferredTarget) =>
+        targets.find((target) => target.id === preferredTarget.id) ?? preferredTarget,
+    )
     .filter((target) => target.webSocketDebuggerUrl);
   return uniqueTargets([...preferred, ...targets]);
 }
@@ -597,7 +180,8 @@ async function findShareTarget(port: number, id: string, preferredTargets: CdpTa
 
   for (const candidate of candidates) {
     if (!candidate.webSocketDebuggerUrl) continue;
-    if (!isPanTarget(candidate) && !preferredTargets.some((target) => target.id === candidate.id)) continue;
+    if (!isPanTarget(candidate) && !preferredTargets.some((target) => target.id === candidate.id))
+      continue;
 
     const state = await readTargetShareState(candidate);
     if (shareStateMatches(state, id)) {
@@ -655,7 +239,9 @@ async function navigateToShareBestEffort(target: CdpTarget, share: ShareInfo) {
     }
 
     await page.navigate(share.link, 8000).catch((error) => {
-      log(`Page.navigate 未返回，继续等待目标页面：${error instanceof Error ? error.message : String(error)}`);
+      log(
+        `Page.navigate 未返回，继续等待目标页面：${error instanceof Error ? error.message : String(error)}`,
+      );
     });
   });
 }
@@ -727,7 +313,9 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
         if (nextState.text.includes("请输入验证码")) {
           throw new Error("分享页要求验证码，CDP 无法自动完成。");
         }
-        if (/提取码错误|密码错误|分享不存在|链接不存在|分享已取消|分享已过期/.test(nextState.text)) {
+        if (
+          /提取码错误|密码错误|分享不存在|链接不存在|分享已取消|分享已过期/.test(nextState.text)
+        ) {
           throw new Error(`分享页提取失败：${compactText(nextState.text)}`);
         }
       }
@@ -812,6 +400,7 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
         };
       });
 
+    // oxlint-disable-next-line no-useless-assignment
     lastState = verified;
     if (verified.ok) {
       if (await waitForExtracted(12000)) return;
@@ -824,16 +413,19 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
       });
       if (await waitForExtracted(45000)) return;
     } else {
-      log(`分享提取接口未直接完成，回退页面按钮：${verified.errno ?? ""} ${verified.message ?? ""}`.trim());
+      log(
+        `分享提取接口未直接完成，回退页面按钮：${verified.errno ?? ""} ${verified.message ?? ""}`.trim(),
+      );
     }
 
-    const prepared = await page.evaluate<{
-      ready: boolean;
-      rect?: Rect;
-      submittedBy?: string;
-      url: string;
-      text: string;
-    }>(`
+    const prepared = await page
+      .evaluate<{
+        ready: boolean;
+        rect?: Rect;
+        submittedBy?: string;
+        url: string;
+        text: string;
+      }>(`
 (() => {
   const text = () => (document.body ? document.body.innerText : "");
   if (!location.href.includes("share/init") && !document.querySelector("#accessCode")) {
@@ -867,19 +459,20 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
     rect: { x: rect.x, y: rect.y, width: rect.width, height: rect.height },
   };
 })()
-`).catch((error) => {
-      if (isNavigationDuringEvaluate(error)) {
-        return {
-          ready: true,
-          rect: undefined,
-          submittedBy: "navigation",
-          url: state.url,
-          text: state.text,
-        };
-      }
+`)
+      .catch((error) => {
+        if (isNavigationDuringEvaluate(error)) {
+          return {
+            ready: true,
+            rect: undefined,
+            submittedBy: "navigation",
+            url: state.url,
+            text: state.text,
+          };
+        }
 
-      throw error;
-    });
+        throw error;
+      });
     lastState = prepared;
     if (!prepared.ready) throw new Error("没有找到提取文件按钮。");
     if (!prepared.url.includes("share/init")) return;
@@ -901,7 +494,10 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
     if (prepared.rect && prepared.rect.x >= 0 && prepared.rect.y >= 0) {
       await page.pressEnter().catch(() => undefined);
       await page
-        .clickPoint(prepared.rect.x + prepared.rect.width / 2, prepared.rect.y + prepared.rect.height / 2)
+        .clickPoint(
+          prepared.rect.x + prepared.rect.width / 2,
+          prepared.rect.y + prepared.rect.height / 2,
+        )
         .catch(() => undefined);
     }
 
@@ -1042,6 +638,12 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     const result = await page.evaluate<SavedShareResult>(
       `
 (async () => {
+  const SHARE_LIST_MAX_PAGES = ${SHARE_LIST_MAX_PAGES};
+  const OWN_NETDISK_DIR_LIST_MAX_PAGES = ${OWN_NETDISK_DIR_LIST_MAX_PAGES};
+  const REMOTE_DIR_ENTRY_SAMPLE_LIMIT = ${REMOTE_DIR_ENTRY_SAMPLE_LIMIT};
+  const REMOTE_VIDEO_SCAN_MAX_DEPTH = ${REMOTE_VIDEO_SCAN_MAX_DEPTH};
+  const REMOTE_VIDEO_SCAN_MAX_DIRS = ${REMOTE_VIDEO_SCAN_MAX_DIRS};
+
   for (const item of document.querySelectorAll(
     ".dialog-close,#dialog1 .close,#moduleDownloadDialog .dialog-close,.nd-dialog-close",
   )) {
@@ -1167,37 +769,107 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   }
 
   const localsBlocks = parseLocalsFromHtml(sharePageHtml);
-  const shareLocals =
-    localsBlocks.find((item) => Array.isArray(item.file_list) && item.file_list.length > 0) ||
-    localsBlocks.find((item) => item.shareid || item.share_uk) ||
+  const pageData = (() => {
+    try {
+      return globalThis.yunData && typeof globalThis.yunData === "object" ? globalThis.yunData : {};
+    } catch {
+      return {};
+    }
+  })();
+  const fileNameOf = (item) => String(item?.server_filename || item?.filename || item?.path?.split("/")?.pop() || "");
+  const fileFsIdOf = (item) => item?.fs_id || item?.fsid || item?.id;
+  const fileListOf = (item) => Array.isArray(item?.file_list) ? item.file_list : [];
+  const blockShareId = (item) => pickString(item?.shareid, item?.share_id);
+  const blockShareUk = (item) => pickString(item?.share_uk, item?.shareuk, item?.uk);
+  const blockToken = (item) => pickString(item?.bdstoken, item?.bdstoken_value);
+  const isExpectedFile = (item) => {
+    const name = fileNameOf(item);
+    return name === expectedName || Boolean(name && (name.includes(expectedName) || expectedName.includes(name)));
+  };
+  const candidates = [pageData, ...localsBlocks].filter((item) => item && typeof item === "object");
+  const completeFileBlock =
+    candidates.find((item) => fileListOf(item).some(isExpectedFile) && blockShareId(item) && blockShareUk(item)) ||
+    candidates.find((item) => fileListOf(item).length > 0 && blockShareId(item) && blockShareUk(item)) ||
     {};
-  const fileList = Array.isArray(shareLocals.file_list) ? shareLocals.file_list : [];
+  const fallbackFileBlock =
+    candidates.find((item) => fileListOf(item).some(isExpectedFile)) ||
+    candidates.find((item) => fileListOf(item).length > 0) ||
+    {};
+  const metadataBlock =
+    completeFileBlock && (blockShareId(completeFileBlock) || blockShareUk(completeFileBlock))
+      ? completeFileBlock
+      : candidates.find((item) => blockShareId(item) && blockShareUk(item)) || {};
   const token = pickString(
-    shareLocals.bdstoken,
+    blockToken(metadataBlock),
+    blockToken(fallbackFileBlock),
     getLocal("bdstoken"),
     matchString(sharePageHtml, /bdstoken["']?\\s*[:=]\\s*["']([^"']+)/),
   );
   const shareId = pickString(
-    shareLocals.shareid,
+    blockShareId(metadataBlock),
+    blockShareId(fallbackFileBlock),
     matchString(sharePageHtml, /shareid["']?\\s*[:=]\\s*["']?(\\d+)/),
   );
   const shareUk = pickString(
-    shareLocals.share_uk,
-    shareLocals.shareuk,
+    blockShareUk(metadataBlock),
+    blockShareUk(fallbackFileBlock),
     matchString(sharePageHtml, /share_uk["']?\\s*[:=]\\s*["']?(\\d+)/),
   );
-  const fileNameOf = (item) => String(item?.server_filename || item?.filename || item?.path?.split("/")?.pop() || "");
-  const fileFsIdOf = (item) => item?.fs_id || item?.fsid || item?.id;
+  if (!shareId || !shareUk) {
+    throw new Error("分享页 HTML 没有解析到 shareid/share_uk，无法保存到我的网盘。");
+  }
+  const shareListAttempts = [];
+  const fetchShareFileList = async () => {
+    const results = [];
+    const pageSize = 1000;
+    for (let page = 1; page <= SHARE_LIST_MAX_PAGES; page += 1) {
+      const params = new URLSearchParams({
+        uk: shareUk,
+        shareid: shareId,
+        order: "other",
+        desc: "1",
+        showempty: "0",
+        web: "1",
+        page: String(page),
+        num: String(pageSize),
+        dir: "/",
+        t: String(Date.now()),
+        channel: "chunlei",
+        app_id: "250528",
+        bdstoken: token,
+        clienttype: "0",
+      });
+      const data = await jsonFetch("/share/list?" + params.toString());
+      if (data.errno !== 0) {
+        shareListAttempts.push("page=" + page + " errno=" + data.errno + " " + compactJson(data));
+        break;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      results.push(...list);
+      if (list.length < pageSize && !data.has_more) break;
+    }
+    return results;
+  };
+  let apiFileList = [];
+  try {
+    apiFileList = await fetchShareFileList();
+  } catch (error) {
+    shareListAttempts.push("error=" + String(error?.message || error));
+  }
+  const htmlFileList = fileListOf(completeFileBlock).length > 0
+    ? fileListOf(completeFileBlock)
+    : fileListOf(fallbackFileBlock);
+  const fileList = apiFileList.length > 0 ? apiFileList : htmlFileList;
   const file =
     fileList.find((item) => fileNameOf(item) === expectedName) ||
-    fileList.find((item) => fileNameOf(item).includes(expectedName) || expectedName.includes(fileNameOf(item))) ||
+    fileList.find(isExpectedFile) ||
     fileList[0];
   const fileFsId = fileFsIdOf(file);
   if (!fileFsId) {
-    throw new Error("分享页 HTML 没有解析到文件元数据，无法保存到我的网盘。");
-  }
-  if (!shareId || !shareUk) {
-    throw new Error("分享页 HTML 没有解析到 shareid/share_uk，无法保存到我的网盘。");
+    throw new Error(
+      "分享页没有解析到可转存文件元数据，无法保存到我的网盘。share/list=" +
+        shareListAttempts.slice(-5).join(" | ")
+    );
   }
   const sourceName = fileNameOf(file);
   if (shouldUseSourceName && sourceName) {
@@ -1322,7 +994,18 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     });
     transferResponse = saved;
     if (saved.errno !== 0) {
-      throw new Error("保存分享到网盘失败：" + JSON.stringify(saved));
+      const message = String(saved.show_msg || saved.errmsg || saved.message || "");
+      if (saved.errno === -6 || message.includes("账户已过期") || message.includes("重新登陆")) {
+        throw new Error("百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。");
+      }
+
+      throw new Error(
+        "保存分享到网盘失败：" +
+          (message || "百度接口返回异常") +
+          "；errno=" +
+          String(saved.errno) +
+          (saved.request_id ? "；request_id=" + String(saved.request_id) : "")
+      );
     }
     const transferList = Array.isArray(saved?.extra?.list) ? saved.extra.list : [];
     const transferItem = transferList.find((item) => item?.to || item?.to_fs_id) || {};
@@ -1354,7 +1037,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       "保存后没有在自有网盘中找到目标文件。transfer=" +
         compactJson(transferResponse || {}) +
         "；attempts=" +
-        attempts.slice(-12).join(" | "),
+        attempts.slice(-OWN_NETDISK_ATTEMPT_LOG_LIMIT).join(" | "),
     );
   }
 
@@ -1368,22 +1051,45 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     const escaped = escapeRegExp(baseName);
     return [
       new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集\\\\.mp4$", "i"),
-      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\.mp4$", "i"),
+      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\s*集?\\\\.mp4$", "i"),
     ];
   });
-  episodePatterns.push(/^(\\d+)\\.mp4$/i);
+  episodePatterns.push(
+    /^第(\\d+)集\\.mp4$/i,
+    /^(?:ep|episode|e)[\\s._-]*(\\d+)\\.mp4$/i,
+    /^(\\d+)\\.mp4$/i,
+  );
+  const matchEpisodeIndex = (fileName) => {
+    const strongMatch = episodePatterns
+      .map((pattern) => pattern.exec(fileName))
+      .find((result) => result !== null);
+    if (strongMatch) return Number(strongMatch[1]);
+
+    const stem = String(fileName).replace(/\\.[^.]+$/, "");
+    const trailingNumberMatch = stem.match(/(\\d{1,4})\\s*(?:集|episode|ep|e)?\\s*$/i);
+    if (!trailingNumberMatch) return undefined;
+
+    const index = Number(trailingNumberMatch[1]);
+    return Number.isInteger(index) && index > 0 ? index : undefined;
+  };
   const listDir = async (dir) => {
     const results = [];
     const normalizedDir = normalizeDir(dir);
     const debug = {
       path: normalizedDir,
+      name: normalizedDir.split("/").filter(Boolean).pop() || normalizedDir,
+      fsId: "",
       errno: undefined,
       count: 0,
+      fileCount: 0,
+      fileSizeBytes: 0,
+      mp4Count: 0,
+      mp4SizeBytes: 0,
       hasMore: false,
       entries: [],
     };
     const pageSize = 1000;
-    for (let page = 1; page <= 100; page += 1) {
+    for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
       const data = await jsonFetch(
         "/api/list?dir=" +
           encodeURIComponent(normalizedDir) +
@@ -1405,7 +1111,19 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       if (list.length < pageSize && !data.has_more) break;
     }
     debug.count = results.length;
-    debug.entries = results.slice(0, 80).map((entry) => {
+    const directFiles = results.filter((entry) => !(entry?.isdir === 1 || entry?.isdir === true));
+    debug.fileCount = directFiles.length;
+    debug.fileSizeBytes = directFiles.reduce((total, entry) => {
+      const size = Number(entry?.size);
+      return total + (Number.isFinite(size) && size > 0 ? size : 0);
+    }, 0);
+    const directMp4Files = directFiles.filter((entry) => itemName(entry).toLowerCase().endsWith(".mp4"));
+    debug.mp4Count = directMp4Files.length;
+    debug.mp4SizeBytes = directMp4Files.reduce((total, entry) => {
+      const size = Number(entry?.size);
+      return total + (Number.isFinite(size) && size > 0 ? size : 0);
+    }, 0);
+    debug.entries = results.slice(0, REMOTE_DIR_ENTRY_SAMPLE_LIMIT).map((entry) => {
       const name = itemName(entry);
       return {
         name,
@@ -1416,65 +1134,111 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     });
     return { entries: results, debug };
   };
-  const rootList = await listDir(savedPath);
-  const rootEntries = rootList.entries;
-  const scannedDirs = [rootList.debug];
-  const videoDirs = new Set([normalizeDir(savedPath)]);
-  for (const entry of rootEntries) {
-    const name = itemName(entry);
-    const entryPath = itemPath(entry) || joinPath(savedPath, name);
-    if ((entry?.isdir === 1 || entry?.isdir === true) && /^(成片|成品|视频|正片)$/i.test(name)) {
-      videoDirs.add(normalizeDir(entryPath));
-    }
-  }
-  for (const childName of ["成片", "成品", "视频", "正片"]) {
-    videoDirs.add(joinPath(savedPath, childName));
-  }
+  const scannedDirs = [];
+  const scannedDirPaths = new Set();
+  const queue = [{
+    path: normalizeDir(savedPath),
+    name: finalFileName,
+    fsId: itemFsId(ownRoot),
+    depth: 0,
+  }];
+  const allEntriesByPath = new Map();
+  const candidateDirs = [];
 
-  const entriesByPath = new Map();
-  for (const [index, dir] of [...videoDirs].entries()) {
-    const listResult = index === 0 ? rootList : await listDir(dir);
-    if (index !== 0) scannedDirs.push(listResult.debug);
+  while (queue.length > 0 && scannedDirs.length < REMOTE_VIDEO_SCAN_MAX_DIRS) {
+    const current = queue.shift();
+    if (!current || scannedDirPaths.has(current.path)) continue;
+    scannedDirPaths.add(current.path);
+
+    const listResult = await listDir(current.path);
+    listResult.debug.name = current.name || listResult.debug.name;
+    listResult.debug.fsId = String(current.fsId || "");
+    scannedDirs.push(listResult.debug);
     const entries = listResult.entries;
+    const directEntriesByPath = new Map();
     for (const entry of entries) {
       const name = itemName(entry);
-      const entryPath = itemPath(entry) || joinPath(dir, name);
-      if (entry?.isdir === 1 || entry?.isdir === true) continue;
+      const entryPath = itemPath(entry) || joinPath(current.path, name);
+      if (entry?.isdir === 1 || entry?.isdir === true) {
+        if (current.depth < REMOTE_VIDEO_SCAN_MAX_DEPTH) {
+          queue.push({
+            path: normalizeDir(entryPath),
+            name,
+            fsId: itemFsId(entry),
+            depth: current.depth + 1,
+          });
+        }
+        continue;
+      }
       if (!name.toLowerCase().endsWith(".mp4")) continue;
-      entriesByPath.set(entryPath, {
+      const videoFile = {
         name,
         path: entryPath,
         size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
-      });
+      };
+      directEntriesByPath.set(entryPath, videoFile);
+      allEntriesByPath.set(entryPath, videoFile);
     }
+    const directVideoFiles = [...directEntriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+    candidateDirs.push({
+      path: current.path,
+      name: current.name || current.path.split("/").filter(Boolean).pop() || current.path,
+      fsId: String(current.fsId || ""),
+      depth: current.depth,
+      mp4Count: directVideoFiles.length,
+      mp4SizeBytes: directVideoFiles.reduce((total, file) => total + (file.size ?? 0), 0),
+      videoFiles: directVideoFiles,
+    });
   }
-  const allVideoFiles = [...entriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
-  const files = allVideoFiles
+  const allVideoFiles = [...allEntriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
+  const selectedVideoDir = candidateDirs
+    .sort((left, right) =>
+      right.mp4Count - left.mp4Count ||
+      right.mp4SizeBytes - left.mp4SizeBytes ||
+      left.depth - right.depth ||
+      left.path.localeCompare(right.path),
+    )[0] || {
+      path: normalizeDir(savedPath),
+      name: finalFileName,
+      fsId: itemFsId(ownRoot),
+      mp4Count: 0,
+      mp4SizeBytes: 0,
+      videoFiles: [],
+    };
+  const selectedVideoFiles = selectedVideoDir.videoFiles;
+  const files = selectedVideoFiles
     .flatMap((file) => {
-      const match = episodePatterns
-        .map((pattern) => pattern.exec(file.name))
-        .find((result) => result !== null);
-      if (!match) return [];
+      const index = matchEpisodeIndex(file.name);
+      if (index === undefined) return [];
       return [{
-        index: Number(match[1]),
+        index,
         name: file.name,
         path: file.path,
         size: file.size,
       }];
     })
     .sort((left, right) => left.index - right.index || left.path.localeCompare(right.path));
+  if (selectedVideoFiles.length > 0 && files.length === 0) {
+    console.log(
+      "[baidu] 集数匹配诊断：" +
+        selectedVideoFiles
+          .slice(0, 5)
+          .map((file) => file.name + "=>" + String(matchEpisodeIndex(file.name) ?? "未匹配"))
+          .join(" | "),
+    );
+  }
   const duplicateIndexes = [...new Set(files
     .filter((file, index) => index > 0 && file.index === files[index - 1].index)
     .map((file) => file.index))];
 
   return {
-    fileName: finalFileName,
-    savedPath,
-    fsId: itemFsId(ownRoot),
+    fileName: selectedVideoDir.name || finalFileName,
+    savedPath: selectedVideoDir.path || savedPath,
+    fsId: selectedVideoDir.fsId || itemFsId(ownRoot),
     alreadySaved,
     locateSource,
     remoteVideos: {
-      rootPath: savedPath,
+      rootPath: selectedVideoDir.path || savedPath,
       files,
       allVideoFiles,
       scannedDirs,
@@ -1555,7 +1319,9 @@ async function findClientPage(port: number) {
     }
   }
 
-  throw new Error(`没有找到带客户端搜索框的百度网盘页面。当前页面：${summaries.join(" | ") || "无"}`);
+  throw new Error(
+    `没有找到带客户端搜索框的百度网盘页面。当前页面：${summaries.join(" | ") || "无"}`,
+  );
 }
 
 async function downloadSavedFolderFromClientSearch(port: number, targetName: string) {
@@ -1773,8 +1539,12 @@ async function confirmDownloadSetting(port: number, downloadDir?: string) {
     let downloadRoot: string | undefined;
     let downloadDirApplied = false;
 
-    for (let attempt = 0; attempt < 50; attempt++) {
-      const state = await page.evaluate<{ rect?: Rect; text: string; downloadDirApplied: boolean }>(`
+    for (let attempt = 0; attempt < DOWNLOAD_SETTING_MAX_ATTEMPTS; attempt++) {
+      const state = await page.evaluate<{
+        rect?: Rect;
+        text: string;
+        downloadDirApplied: boolean;
+      }>(`
 (async () => {
   const desiredDownloadDir = ${JSON.stringify(downloadDir ?? "")};
   let downloadDirApplied = false;
@@ -1831,9 +1601,7 @@ async function confirmDownloadSetting(port: number, downloadDir?: string) {
 }
 
 function parseDownloadRoot(text: string) {
-  const line = text
-    .split(/\r?\n/)
-    .find((item) => item.includes("下载到"));
+  const line = text.split(/\r?\n/).find((item) => item.includes("下载到"));
   return line?.replace(/^.*下载到[:：]\s*/, "").trim();
 }
 
@@ -1971,7 +1739,9 @@ export async function getBaiduNetdiskDownloadTaskStatus(options: {
   const finishSize = parseTaskNumber(matched?.finishSize);
   const status = matched?.status;
   const completedBySize = size !== undefined && size > 0 && finishSize === size;
-  const completedByStatus = Boolean(status && /完成|success|finished|complete|done|已下载/i.test(status));
+  const completedByStatus = Boolean(
+    status && /完成|success|finished|complete|done|已下载/i.test(status),
+  );
 
   return {
     found: Boolean(matched),
@@ -2017,7 +1787,10 @@ async function submitNativeDownloadTask(port: number, task: SavedDownloadTask) {
 `,
         10000,
       )
-      .catch((error) => ({ ok: false, error: error instanceof Error ? error.message : String(error) })),
+      .catch((error) => ({
+        ok: false,
+        error: error instanceof Error ? error.message : String(error),
+      })),
   );
 
   if (!result.ok) {
@@ -2165,24 +1938,55 @@ async function submitSavedDownload(
   );
 
   const targetName = saved.fileName || share.name;
+  log(`选中视频目录：${saved.savedPath}，名称=${targetName}`);
   const remoteVideos = saved.remoteVideos;
   const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
     (left, right) => left - right,
   );
+  const formatNumberRanges = (values: number[]) => {
+    const sorted = [...new Set(values)].sort((left, right) => left - right);
+    if (sorted.length <= 0) return "无";
+
+    const ranges: string[] = [];
+    let start = sorted[0];
+    let previous = sorted[0];
+    for (const value of sorted.slice(1)) {
+      if (value === previous + 1) {
+        previous = value;
+        continue;
+      }
+      ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+      start = value;
+      previous = value;
+    }
+    ranges.push(start === previous ? String(start) : `${start}-${previous}`);
+    return ranges.join(", ");
+  };
+  const formatNameSample = (names: string[], limit = 5) => {
+    if (names.length <= 0) return "无";
+    const sample = names.slice(0, limit).join(" | ");
+    const suffix = names.length > limit ? ` | ...另${names.length - limit}项` : "";
+    return sample + suffix;
+  };
   log(
-    `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=[${remoteIndexes.join(", ") || "无"}]，` +
+    `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=${formatNumberRanges(remoteIndexes)}，` +
       `全部mp4=${remoteVideos.allVideoFiles.length}个`,
   );
   logRemoteVideoScanDetails(remoteVideos);
   if (remoteVideos.files.length > 0) {
-    log(`网盘匹配文件：${remoteVideos.files.map((file) => file.path).join(" | ")}`);
+    log(
+      `网盘匹配摘要：数量=${remoteVideos.files.length}，集数=${formatNumberRanges(remoteIndexes)}，` +
+        `文件名=${formatNameSample(remoteVideos.files.map((file) => `${file.index}:${file.name}`))}`,
+    );
   }
   if (expectedEpisodeCount !== undefined) {
     const expectedCount = Number(expectedEpisodeCount);
-    const expectedIndexes = Number.isInteger(expectedCount) && expectedCount > 0
-      ? Array.from({ length: expectedCount }, (_, index) => index + 1)
-      : [];
+    const expectedIndexes =
+      Number.isInteger(expectedCount) && expectedCount > 0
+        ? Array.from({ length: expectedCount }, (_, index) => index + 1)
+        : [];
     const missingIndexes = expectedIndexes.filter((index) => !remoteIndexes.includes(index));
+    const unexpectedIndexes = remoteIndexes.filter((index) => !expectedIndexes.includes(index));
     remoteVideos.missingIndexes = missingIndexes;
     if (
       expectedIndexes.length <= 0 ||
@@ -2190,23 +1994,45 @@ async function submitSavedDownload(
       missingIndexes.length > 0 ||
       remoteVideos.duplicateIndexes.length > 0
     ) {
-      const matchedFiles = remoteVideos.files.map((file) => `${file.index}:${file.path}`).join(" | ") || "无";
-      const allVideoFiles = remoteVideos.allVideoFiles.map((file) => file.path).join(" | ") || "无";
+      const problemParts = [
+        missingIndexes.length > 0 ? `缺失=${formatNumberRanges(missingIndexes)}` : "",
+        unexpectedIndexes.length > 0 ? `超出=${formatNumberRanges(unexpectedIndexes)}` : "",
+        remoteVideos.duplicateIndexes.length > 0
+          ? `重复=${formatNumberRanges(remoteVideos.duplicateIndexes)}`
+          : "",
+      ].filter(Boolean);
       throw new Error(
-        `百度网盘剧集视频数量不正确：${targetName} 应包含第1集至第${expectedEpisodeCount}集，` +
-          `实际匹配到 [${remoteIndexes.join(", ") || "无"}]；` +
-          `缺失=[${missingIndexes.join(", ") || "无"}]；` +
-          `重复=[${remoteVideos.duplicateIndexes.join(", ") || "无"}]；` +
-          `匹配文件=${matchedFiles}；全部mp4=${allVideoFiles}`,
+        `百度网盘剧集视频数量不正确：${targetName}。` +
+          `期望1-${expectedEpisodeCount}共${expectedIndexes.length}集，` +
+          `实际${formatNumberRanges(remoteIndexes)}共${remoteVideos.files.length}集。` +
+          (problemParts.length > 0 ? `问题：${problemParts.join("；")}。` : ""),
       );
     }
   }
-  await downloadSavedFolderFromClientSearch(port, targetName);
-  const downloadRoot = await confirmDownloadSetting(port, downloadDir);
-  await waitForDownloadSubmitted(port, {
+  const task = {
     targetName,
     savedPath: saved.savedPath,
     fsId: saved.fsId,
+    downloadRoot: downloadDir,
+  };
+  let downloadRoot = downloadDir;
+  const nativeSubmitted = await submitNativeDownloadTask(port, task);
+  if (nativeSubmitted) {
+    await openClientTransfers(port);
+    const started = Date.now();
+    while (Date.now() - started < 15000) {
+      if (await isPresentInClientTransfers(port, targetName)) {
+        return { downloadRoot, targetName, remoteVideos };
+      }
+      await sleep(500);
+    }
+    log(`客户端内部下载任务未出现在传输列表，回退界面下载：${targetName}`);
+  }
+
+  await downloadSavedFolderFromClientSearch(port, targetName);
+  downloadRoot = await confirmDownloadSetting(port, downloadDir);
+  await waitForDownloadSubmitted(port, {
+    ...task,
     downloadRoot,
   });
   return { downloadRoot, targetName, remoteVideos };

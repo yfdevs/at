@@ -1,13 +1,21 @@
 import { app, BrowserWindow, dialog, shell, type IpcMainInvokeEvent, type OpenDialogOptions } from 'electron'
 import path from 'node:path'
 import { existsSync } from 'node:fs'
-import { mem } from 'systeminformation'
+import { fsSize, mem } from 'systeminformation'
 
 export type PlatformMemoryStatus = {
   processRssBytes: number
   systemUsedBytes: number
   systemTotalBytes: number
   systemUsedPercent: number
+}
+
+export type PlatformDriveStatus = {
+  mount: string
+  usedBytes: number
+  totalBytes: number
+  availableBytes: number
+  usedPercent: number
 }
 
 export class RuntimeController<TRuntime extends { stop: () => Promise<void> }> {
@@ -86,6 +94,35 @@ export async function readMemoryStatus(processRssBytes = process.memoryUsage().r
     systemTotalBytes: memory.total,
     systemUsedPercent: memory.total > 0 ? (systemUsedBytes / memory.total) * 100 : 0,
   }
+}
+
+export async function readDriveStatus(targetMount = 'D:'): Promise<PlatformDriveStatus | null> {
+  let driveList: Awaited<ReturnType<typeof fsSize>>
+
+  try {
+    driveList = await fsSize()
+  } catch {
+    return null
+  }
+
+  const normalizedTargetMount = normalizeDriveMount(targetMount)
+  const drive = driveList.find((item) => normalizeDriveMount(item.mount) === normalizedTargetMount)
+
+  if (!drive) {
+    return null
+  }
+
+  return {
+    mount: drive.mount,
+    usedBytes: drive.used,
+    totalBytes: drive.size,
+    availableBytes: drive.available,
+    usedPercent: Number.isFinite(drive.use) ? drive.use : drive.size > 0 ? (drive.used / drive.size) * 100 : 0,
+  }
+}
+
+function normalizeDriveMount(mount: string) {
+  return mount.trim().replace(/[\\/]+$/, '').toUpperCase()
 }
 
 export async function selectDirectory(event: IpcMainInvokeEvent, options: OpenDialogOptions) {

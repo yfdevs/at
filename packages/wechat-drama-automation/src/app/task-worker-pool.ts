@@ -17,6 +17,12 @@ import type { EnsureBaiduNetdiskResource } from "./runtime.js";
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
 const baiduNetdiskDownloadRetryDelayMs = 5000;
+const nonRetryableBaiduNetdiskErrorPatterns = [
+  "百度网盘账号登录已过期",
+  "账户已过期",
+  "重新登录",
+  "重新登陆",
+];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -297,13 +303,17 @@ export class TaskWorkerPool {
       } catch (error) {
         lastError = error;
         const errorMessage = error instanceof Error ? error.message : String(error);
+        const nonRetryable = nonRetryableBaiduNetdiskErrorPatterns.some((pattern) =>
+          errorMessage.includes(pattern),
+        );
 
-        if (attempt >= maxAttempts) {
-          logger.error("baidu netdisk resource failed after retries", {
+        if (nonRetryable || attempt >= maxAttempts) {
+          logger.error(nonRetryable ? "baidu netdisk resource failed without retry" : "baidu netdisk resource failed after retries", {
             accountTaskId: claimedAccountTask.accountTaskId,
             originalTitle: claimedAccountTask.originalTitle,
             attempt,
             maxAttempts,
+            nonRetryable,
             errorMessage,
           });
           break;

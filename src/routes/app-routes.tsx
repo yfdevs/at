@@ -2,6 +2,7 @@ import { useEffect, useState, type ComponentType } from "react"
 import { Navigate, Route, Routes, useLocation } from "react-router-dom"
 
 import { defaultRoute, isAppRoute, routePath, type AppRoute } from "@/config/navigation"
+import { BaiduNetdiskWindowPage } from "@/pages/baidu-netdisk/window"
 import { KuaishouAnalyticsPage } from "@/pages/kuaishou-drama/analytics"
 import { KuaishouDramaConfigurationPage } from "@/pages/kuaishou-drama/configuration"
 import { KuaishouDramaServiceControlPage } from "@/pages/kuaishou-drama/service-control"
@@ -18,6 +19,7 @@ import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama/configu
 import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama/service-control"
 
 const appRouteComponents: Record<AppRoute, ComponentType> = {
+  "baidu-netdisk/window": BaiduNetdiskWindowPage,
   "wechat-drama/publish": WechatPublishTasksPage,
   "wechat-drama/config": WechatConfigurationPage,
   "wechat-drama/accounts": WechatAccountsPage,

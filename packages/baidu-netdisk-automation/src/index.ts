@@ -3,10 +3,10 @@ import { access, stat } from "node:fs/promises";
 import os from "node:os";
 import path from "node:path";
 
+import { debugHost, requestTimeoutMs } from "./constants.js";
+
 export const DEFAULT_BAIDU_NETDISK_CDP_PORT = 9337;
 
-const debugHost = "127.0.0.1";
-const requestTimeoutMs = 2500;
 const baiduProcessNames = ["BaiduNetdisk", "BaiduNetdiskUnite"];
 
 export type BaiduNetdiskCdpTarget = {

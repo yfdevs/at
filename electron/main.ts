@@ -47,7 +47,7 @@ import {
   ensureBaiduNetdiskCdpReadyOnStartup,
   registerBaiduNetdiskPlatformHandlers,
 } from "./platforms/baidu-netdisk";
-import { readMemoryStatus } from "./platforms/shared";
+import { readDriveStatus, readMemoryStatus } from "./platforms/shared";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -72,6 +72,7 @@ logMain("info", "app bootstrap", {
 });
 
 let win: BrowserWindow | null;
+let baiduNetdiskWindow: BrowserWindow | null = null;
 
 type PlatformId = "wechat-drama" | "meituan-drama" | "kuaishou-drama" | "tiktok-drama";
 
@@ -90,8 +91,8 @@ function createWindow() {
 
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
-    width: 480,
-    height: 680,
+    width: 520,
+    height: 720,
   };
   const mainWindowState = windowStateKeeper({
     defaultWidth: fixedWindowSize.width,
@@ -154,6 +155,53 @@ function createWindow() {
   }
 }
 
+function createBaiduNetdiskWindow(platformId: PlatformId) {
+  const targetHash = `/baidu-netdisk/window?platform=${encodeURIComponent(platformId)}`;
+
+  if (baiduNetdiskWindow && !baiduNetdiskWindow.isDestroyed()) {
+    baiduNetdiskWindow.focus();
+
+    if (VITE_DEV_SERVER_URL) {
+      void baiduNetdiskWindow.loadURL(`${VITE_DEV_SERVER_URL}#${targetHash}`);
+    } else {
+      void baiduNetdiskWindow.loadFile(path.join(RENDERER_DIST, "index.html"), {
+        hash: targetHash,
+      });
+    }
+
+    return;
+  }
+
+  const appIcon = nativeImage.createFromPath(getAppIconPath());
+  baiduNetdiskWindow = new BrowserWindow({
+    width: 760,
+    height: 760,
+    minWidth: 680,
+    minHeight: 620,
+    title: "百度网盘下载",
+    icon: appIcon,
+    autoHideMenuBar: true,
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      sandbox: false,
+    },
+  });
+
+  baiduNetdiskWindow.on("closed", () => {
+    baiduNetdiskWindow = null;
+  });
+
+  baiduNetdiskWindow.setMenu(null);
+
+  if (VITE_DEV_SERVER_URL) {
+    void baiduNetdiskWindow.loadURL(`${VITE_DEV_SERVER_URL}#${targetHash}`);
+  } else {
+    void baiduNetdiskWindow.loadFile(path.join(RENDERER_DIST, "index.html"), {
+      hash: targetHash,
+    });
+  }
+}
+
 app.on("window-all-closed", () => {
   logMain("info", "all windows closed");
 
@@ -186,7 +234,9 @@ app.whenReady().then(() => {
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerTiktokDramaCenterPlatformHandlers();
-    registerBaiduNetdiskPlatformHandlers();
+    registerBaiduNetdiskPlatformHandlers({
+      openWindow: createBaiduNetdiskWindow,
+    });
     registerAppUpdaterHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
     });
@@ -231,6 +281,9 @@ function ipcMainHandleAppRuntimeStatus() {
       browserInstanceCount: getGlobalBrowserInstanceCount(),
       runningPlatformCount: runningPlatformStatus.running,
       totalPlatformCount: runningPlatformStatus.total,
+      disk: {
+        dDrive: await readDriveStatus("D:"),
+      },
       memory: await readMemoryStatus(),
     };
   });

@@ -45,6 +45,10 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 })
 
 window.addEventListener('DOMContentLoaded', () => {
+  if (window.location.hash.startsWith('#/baidu-netdisk/window')) {
+    return
+  }
+
   const titlebar = new Titlebar({
     backgroundColor: TitlebarColor.fromHex('#fafafa'),
     itemBackgroundColor: TitlebarColor.fromHex('#f0f0f0'),

@@ -89,10 +89,23 @@ export type BaiduNetdiskDownloadRecord = {
   completedAt?: string;
 };
 
+export type BaiduNetdiskEnsureDownloadedRequest = {
+  shareText: string;
+  resourceName: string;
+  localEpisodeVideoRoot: string;
+  episodeCount: number;
+};
+
 export type BaiduNetdiskDownloadRecordResult = {
   records: BaiduNetdiskDownloadRecord[];
   path: string;
 };
+
+export type BaiduNetdiskWindowPlatformId =
+  | "wechat-drama"
+  | "meituan-drama"
+  | "kuaishou-drama"
+  | "tiktok-drama";
 
 function trimShareLink(value: string) {
   return value.replace(/[),，。；;、\]]+$/g, "");
@@ -163,10 +176,26 @@ export async function controlBaiduNetdiskCdp(restart: boolean) {
   ) as Promise<BaiduNetdiskLaunchResult>;
 }
 
+export async function openBaiduNetdiskWindow(platformId: BaiduNetdiskWindowPlatformId) {
+  return requireIpcRenderer("百度网盘窗口").invoke(
+    "baidu-netdisk:window:open",
+    platformId,
+  ) as Promise<boolean>;
+}
+
 export async function downloadBaiduNetdiskShare(shareText: string) {
   return requireIpcRenderer("百度网盘下载").invoke("baidu-netdisk:share:download", {
     shareText,
   }) as Promise<BaiduNetdiskShareDownloadResult>;
+}
+
+export async function ensureBaiduNetdiskShareDownloaded(
+  request: BaiduNetdiskEnsureDownloadedRequest,
+) {
+  return requireIpcRenderer("百度网盘下载").invoke(
+    "baidu-netdisk:share:ensure-downloaded",
+    request,
+  ) as Promise<BaiduNetdiskDownloadRecord>;
 }
 
 export async function getBaiduNetdiskDownloadRecords() {
