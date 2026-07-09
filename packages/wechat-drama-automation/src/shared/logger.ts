@@ -57,6 +57,15 @@ function formatDateKey(date: Date): string {
   return `${year}-${month}-${day}`;
 }
 
+function formatChineseDateTime(date: Date): string {
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
+
+  return `${formatDateKey(date)} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
 function dateFromKey(dateKey: string): Date {
   const [year, month, day] = dateKey.split("-").map(Number);
   return new Date(year, month - 1, day);
@@ -130,7 +139,7 @@ function getPinoLogger(context: LogContext): PinoLogger {
     {
       base: null,
       messageKey: "message",
-      timestamp: pino.stdTimeFunctions.isoTime,
+      timestamp: () => `,"time":"${formatChineseDateTime(new Date())}"`,
       formatters: {
         level(label) {
           return { level: label };
@@ -186,7 +195,7 @@ function writeLog(
     getPinoLogger(context)[level](record, message);
     originalConsole[level === "warn" ? "warn" : level === "error" ? "error" : "log"](
       JSON.stringify({
-        time: new Date().toISOString(),
+        time: formatChineseDateTime(new Date()),
         level,
         ...record,
         message,

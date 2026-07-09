@@ -11,6 +11,18 @@ export function log(options: KuaishouDramaRuntimeOptions, message: string) {
   void writeLogFile(options, "info", message).catch(() => undefined);
 }
 
+function formatChineseDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
 export function loginStateFromUrl(url: string | undefined): KuaishouDramaLoginState {
   if (!url || url === "about:blank") return "unknown";
   return url.includes("login") ? "login-required" : "logged-in";
@@ -26,7 +38,7 @@ async function writeLogFile(
   }
 
   const record = {
-    time: new Date().toISOString(),
+    time: formatChineseDateTime(new Date()),
     level,
     platform: "kuaishou-drama",
     accountProfileName: options.accountProfileName,
