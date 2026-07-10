@@ -260,38 +260,47 @@ export function AppUpdateControl() {
             />
           }
         >
-          <UpdateStateIcon status={status} actionPending={actionPending} />
-          <span>{updateButtonLabel(status, actionPending)}</span>
+          <span className="inline-flex h-full items-center gap-1 leading-none">
+            <UpdateStateIcon status={status} actionPending={actionPending} />
+            <span>{updateButtonLabel(status, actionPending)}</span>
+          </span>
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8}>
           应用更新：{summary}
         </TooltipContent>
       </Tooltip>
 
-      <PopoverContent side="top" align="end" sideOffset={8} className="z-[100000] w-80">
-        <PopoverHeader>
-          <div className="flex items-start gap-2">
-            <UpdateStateIcon status={status} actionPending={actionPending} />
+      <PopoverContent
+        side="top"
+        align="end"
+        sideOffset={8}
+        className="z-[100000] w-72 max-w-[calc(100vw-1rem)] gap-2 p-2"
+      >
+        <PopoverHeader className="gap-0">
+          <div className="flex items-center gap-2">
+            <span className="flex size-6 shrink-0 items-center justify-center rounded-md bg-muted">
+              <UpdateStateIcon status={status} actionPending={actionPending} />
+            </span>
             <div className="min-w-0">
-              <PopoverTitle>应用更新</PopoverTitle>
-              <PopoverDescription className="mt-0.5 text-xs leading-4">
+              <PopoverTitle className="text-sm leading-5">应用更新</PopoverTitle>
+              <PopoverDescription className="text-xs leading-4">
                 {description}
               </PopoverDescription>
             </div>
           </div>
         </PopoverHeader>
 
-        <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-2 text-xs">
-          <div className="flex items-center justify-between gap-3">
+        <div className="grid gap-1 rounded-md bg-muted/40 p-2 text-xs">
+          <div className="flex items-center justify-between gap-3 leading-5">
             <span className="text-muted-foreground">状态</span>
-            <span className="max-w-48 truncate font-medium">{summary}</span>
+            <span className="min-w-0 truncate font-medium">{summary}</span>
           </div>
-          <div className="flex items-center justify-between gap-3">
+          <div className="flex items-center justify-between gap-3 leading-5">
             <span className="text-muted-foreground">版本</span>
             <span className="font-medium tabular-nums">{versionText}</span>
           </div>
           {status?.releaseDate ? (
-            <div className="flex items-center justify-between gap-3">
+            <div className="flex items-center justify-between gap-3 leading-5">
               <span className="text-muted-foreground">发布时间</span>
               <span className="font-medium tabular-nums">
                 {new Date(status.releaseDate).toLocaleString()}
@@ -301,8 +310,8 @@ export function AppUpdateControl() {
         </div>
 
         {progress ? (
-          <div className="grid gap-1.5">
-            <div className="flex items-center justify-between gap-3 text-xs">
+          <div className="grid gap-1">
+            <div className="flex items-center justify-between gap-3 text-xs leading-5">
               <span className="text-muted-foreground">下载进度</span>
               <span className="font-medium tabular-nums">{formatPercent(progress.percent)}</span>
             </div>
@@ -314,21 +323,21 @@ export function AppUpdateControl() {
         ) : null}
 
         {status?.error ? (
-          <div className="rounded-md border border-destructive/20 bg-destructive/10 px-2 py-1.5 text-xs leading-5 text-destructive">
+          <div className="rounded-md bg-destructive/10 px-2 py-1.5 text-xs leading-5 text-destructive">
             {status.error}
           </div>
         ) : null}
 
         {status?.releaseNotes ? (
-          <div className="max-h-28 overflow-auto rounded-md border border-border/80 bg-muted/35 px-2 py-1.5 text-xs leading-5 whitespace-pre-wrap text-muted-foreground">
+          <div className="max-h-24 overflow-auto rounded-md bg-muted/40 px-2 py-1.5 text-xs leading-5 whitespace-pre-wrap text-muted-foreground">
             {status.releaseNotes}
           </div>
         ) : null}
 
-        <div className="flex items-center justify-end gap-2">
+        <div className="flex items-center justify-end gap-1.5">
           <Button
             type="button"
-            size="sm"
+            size="xs"
             variant="outline"
             disabled={!enabled || busy}
             onClick={() => runUpdateAction("check", checkForAppUpdate)}
@@ -342,7 +351,7 @@ export function AppUpdateControl() {
           {canDownload ? (
             <Button
               type="button"
-              size="sm"
+              size="xs"
               disabled={actionPending !== null}
               onClick={() => runUpdateAction("download", downloadAppUpdate)}
             >
@@ -353,7 +362,7 @@ export function AppUpdateControl() {
           {canInstall ? (
             <Button
               type="button"
-              size="sm"
+              size="xs"
               disabled={actionPending !== null}
               onClick={() => runUpdateAction("install", installAppUpdate)}
             >

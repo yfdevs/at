@@ -27,6 +27,18 @@ export interface TaskStartedNotificationPayload extends TaskNotificationPayload 
   mode: string;
 }
 
+function formatChineseDateTime(date: Date): string {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  const hours = String(date.getHours()).padStart(2, "0");
+  const minutes = String(date.getMinutes()).padStart(2, "0");
+  const seconds = String(date.getSeconds()).padStart(2, "0");
+  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
+
+  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
 export class FeishuNotifier {
   private readonly channelIdLabel: string;
   private readonly channelLabel: string;
@@ -81,7 +93,7 @@ export class FeishuNotifier {
 
     return [
       `【${this.channelLabel}${title}】`,
-      `时间：${new Date().toISOString()}`,
+      `时间：${formatChineseDateTime(new Date())}`,
       channelName ? `${this.channelLabel}：${channelName}` : undefined,
       channelId ? `${this.channelIdLabel}：${channelId}` : undefined,
       payload.accountTaskId === undefined ? undefined : `accountTaskId：${payload.accountTaskId}`,
