@@ -332,7 +332,7 @@ export function AppTitlebarMemory() {
   const percentText = formatPercent(percent);
   const dDrive = runtimeStatus?.disk?.dDrive ?? null;
   const dDrivePercent = dDrive?.usedPercent ?? null;
-  const dDriveValue = dDrive ? formatBytes(dDrive.availableBytes) : "--";
+  const dDrivePercentText = formatPercent(dDrivePercent);
   const browserInstanceCount = runtimeStatus?.browserInstanceCount ?? 0;
   const runningPlatformCount = runtimeStatus?.runningPlatformCount ?? 0;
   const totalPlatformCount = runtimeStatus?.totalPlatformCount ?? 4;
@@ -372,7 +372,7 @@ export function AppTitlebarMemory() {
             />
           }
           label="D盘"
-          value={dDriveValue}
+          value={dDrivePercentText}
           tooltipLabel="D 盘容量"
           tooltipValue={dDriveText}
         />
