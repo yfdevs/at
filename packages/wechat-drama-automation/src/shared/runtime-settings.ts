@@ -22,7 +22,7 @@ export interface WechatVideoRuntimeSettings {
 
 export const defaultWechatVideoRuntimeSettings: WechatVideoRuntimeSettings = {
   apiBaseUrl: "http://180.184.76.232:19090",
-  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO",
+  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/wechat-drama",

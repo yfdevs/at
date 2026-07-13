@@ -15,11 +15,30 @@ const idlePageRefreshIntervalSeconds = 1500;
 const idlePageRefreshTimeoutSeconds = 60;
 const idlePageRefreshJitterSeconds = 300;
 
+const contractSubjectAliases: Record<string, string> = {
+  "明星说": "MINGXINGSHUO",
+  "米苏": "MISU",
+  "微淘": "WEITAO",
+  "幻走": "HUANZOU",
+  "小石榴": "XIAOSHILIU",
+};
+// 兼容后端历史数据：contractSubject=0 表示未写入有效主体枚举，精确匹配不到时兜底使用。
+const legacyUnscopedContractSubjects = new Set(["0"]);
+
+function normalizeContractSubject(value: string): string {
+  const trimmedValue = value.trim();
+  return contractSubjectAliases[trimmedValue] ?? trimmedValue.toUpperCase();
+}
+
+function isLegacyUnscopedContractSubject(value: string | undefined): boolean {
+  return value ? legacyUnscopedContractSubjects.has(value.trim()) : false;
+}
+
 function parseContractSubjects(setting: string): Set<string> {
   return new Set(
     setting
       .split(",")
-      .map((subject) => subject.trim())
+      .map(normalizeContractSubject)
       .filter(Boolean),
   );
 }
@@ -29,10 +48,43 @@ export function filterVideoAccountsByContractSubjects(
   contractSubjectsSetting = getWechatVideoRuntimeSettings().videoAccountContractSubjects,
 ): VideoAccount[] {
   const contractSubjects = parseContractSubjects(contractSubjectsSetting);
-
-  return videoAccounts.filter((account) => (
-    account.contractSubject ? contractSubjects.has(account.contractSubject) : false
+  const matchedAccounts = videoAccounts.filter((account) => (
+    account.contractSubject ? contractSubjects.has(normalizeContractSubject(account.contractSubject)) : false
   ));
+
+  if (matchedAccounts.length > 0) {
+    return matchedAccounts;
+  }
+
+  const legacyUnscopedAccounts = videoAccounts.filter((account) => (
+    isLegacyUnscopedContractSubject(account.contractSubject)
+  ));
+  if (legacyUnscopedAccounts.length > 0) {
+    console.warn("[config] no exact contract subject matches; using legacy unscoped video accounts", {
+      selectedContractSubjects: Array.from(contractSubjects),
+      legacyUnscopedCount: legacyUnscopedAccounts.length,
+    });
+  }
+
+  return legacyUnscopedAccounts;
+}
+
+function summarizeContractSubjects(videoAccounts: VideoAccount[]): Array<{ raw: string; normalized: string; count: number }> {
+  const stats = new Map<string, { raw: string; normalized: string; count: number }>();
+
+  for (const account of videoAccounts) {
+    const raw = account.contractSubject?.trim() || "-";
+    const normalized = raw === "-" ? "-" : normalizeContractSubject(raw);
+    const key = `${raw}\u0000${normalized}`;
+    const current = stats.get(key);
+    if (current) {
+      current.count += 1;
+    } else {
+      stats.set(key, { raw, normalized, count: 1 });
+    }
+  }
+
+  return Array.from(stats.values());
 }
 
 export function resolveFromRoot(filePath: string): string {
@@ -46,6 +98,7 @@ export function resolveRunDataPath(...segments: string[]): string {
 
 export interface ServiceConfig {
   videoAccounts: VideoAccount[];
+  videoAccountContractSubjects: string;
   authRoot: string;
   browser: {
     headless: boolean;
@@ -68,11 +121,21 @@ export interface ServiceConfig {
 
 export async function loadServiceConfig(): Promise<ServiceConfig> {
   const settings = getWechatVideoRuntimeSettings();
-  const videoAccounts = filterVideoAccountsByContractSubjects(await fetchVideoAccountsApi(), settings.videoAccountContractSubjects);
+  const allVideoAccounts = await fetchVideoAccountsApi();
+  const videoAccounts = filterVideoAccountsByContractSubjects(allVideoAccounts, settings.videoAccountContractSubjects);
   const accountIds = videoAccounts.map((account) => account.id);
+  console.log("[config] fetched video accounts", {
+    selectedContractSubjects: settings.videoAccountContractSubjects,
+    totalCount: allVideoAccounts.length,
+    filteredCount: videoAccounts.length,
+    contractSubjectStats: summarizeContractSubjects(allVideoAccounts),
+  });
 
   if (videoAccounts.length === 0) {
-    throw new Error("Video account list must contain at least one account.");
+    const availableContractSubjects = Array.from(new Set(
+      allVideoAccounts.map((account) => account.contractSubject?.trim()).filter(Boolean),
+    ));
+    throw new Error(`Video account list must contain at least one account after contract subject filter: ${settings.videoAccountContractSubjects}; available contract subjects: ${availableContractSubjects.join(", ") || "-"}`);
   }
   if (new Set(accountIds).size !== accountIds.length) {
     throw new Error("Video account list must not contain duplicate account ids.");
@@ -83,6 +146,7 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
 
   return {
     videoAccounts,
+    videoAccountContractSubjects: settings.videoAccountContractSubjects,
     authRoot: resolveRunDataPath("auth", "channels"),
     browser: {
       headless: serviceBrowserHeadless,

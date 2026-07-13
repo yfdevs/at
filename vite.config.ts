@@ -39,6 +39,13 @@ export default defineConfig({
         input: [{ auto: true }, "!packages/kuaishou-drama-automation/dist/**"],
         output: ["packages/kuaishou-drama-automation/dist/**"],
       },
+      "pkg:pinduoduo:build": {
+        command: "vp pack",
+        cwd: "packages/pinduoduo-drama-automation",
+        dependsOn: ["pkg:axios:build"],
+        input: [{ auto: true }, "!packages/pinduoduo-drama-automation/dist/**"],
+        output: ["packages/pinduoduo-drama-automation/dist/**"],
+      },
       "pkg:tiktok:build": {
         command: "vp pack",
         cwd: "packages/tiktok-drama-automation",
@@ -58,6 +65,7 @@ export default defineConfig({
           "pkg:wechat:build",
           "pkg:meituan:build",
           "pkg:kuaishou:build",
+          "pkg:pinduoduo:build",
           "pkg:tiktok:build",
           "pkg:baidu:build",
         ],
@@ -76,6 +84,11 @@ export default defineConfig({
       "pkg:kuaishou:check": {
         command: "tsc --noEmit",
         cwd: "packages/kuaishou-drama-automation",
+        output: [],
+      },
+      "pkg:pinduoduo:check": {
+        command: "tsc --noEmit",
+        cwd: "packages/pinduoduo-drama-automation",
         output: [],
       },
       "pkg:tiktok:check": {

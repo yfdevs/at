@@ -1,6 +1,6 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.18",
+  "version": "0.0.22",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -23,6 +23,7 @@
     "@drama/baidu-netdisk-automation": "workspace:*",
     "@drama/kuaishou-drama-automation": "workspace:*",
     "@drama/meituan-drama-automation": "workspace:*",
+    "@drama/pinduoduo-drama-automation": "workspace:*",
     "@drama/tiktok-drama-automation": "workspace:*",
     "@drama/wechat-drama-automation": "workspace:*",
     "@fontsource-variable/geist": "^5.2.9",

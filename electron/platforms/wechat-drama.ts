@@ -74,7 +74,7 @@ type WechatVideoStore = {
 
 const defaultWechatVideoConfig: WechatVideoConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
-  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO',
+  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-drama',
@@ -98,7 +98,17 @@ const contractSubjectOptions = [
   { label: '明星说', value: 'MINGXINGSHUO' },
   { label: '米苏', value: 'MISU' },
   { label: '微淘', value: 'WEITAO' },
+  { label: '幻走', value: 'HUANZOU' },
+  { label: '小石榴', value: 'XIAOSHILIU' },
 ]
+
+const contractSubjectAliases: Record<string, string> = {
+  明星说: 'MINGXINGSHUO',
+  米苏: 'MISU',
+  微淘: 'WEITAO',
+  幻走: 'HUANZOU',
+  小石榴: 'XIAOSHILIU',
+}
 
 const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
@@ -154,7 +164,9 @@ function readSelectedContractSubjects(config = readConfig()) {
 
 function formatContractSubjectLabel(value: string | undefined) {
   if (!value) return undefined
-  return contractSubjectOptions.find((option) => option.value === value)?.label ?? value
+  const trimmedValue = value.trim()
+  const normalizedValue = contractSubjectAliases[trimmedValue] ?? trimmedValue.toUpperCase()
+  return contractSubjectOptions.find((option) => option.value === normalizedValue)?.label ?? value
 }
 
 async function status(): Promise<WechatVideoServiceStatus> {

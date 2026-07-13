@@ -15,6 +15,8 @@ import { WechatPublishTasksPage } from "@/pages/wechat-drama/publish-tasks"
 import { WechatServiceControlPage } from "@/pages/wechat-drama/service-control"
 import { MeituanCreationConfigurationPage } from "@/pages/meituan-drama/configuration"
 import { MeituanCreationServiceControlPage } from "@/pages/meituan-drama/service-control"
+import { PinduoduoDramaConfigurationPage } from "@/pages/pinduoduo-drama/configuration"
+import { PinduoduoDramaServiceControlPage } from "@/pages/pinduoduo-drama/service-control"
 import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama/configuration"
 import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama/service-control"
 
@@ -34,6 +36,8 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "kuaishou-drama/settings": KuaishouSettingsPage,
   "tiktok-drama/service": TiktokDramaCenterServiceControlPage,
   "tiktok-drama/config": TiktokDramaCenterConfigurationPage,
+  "pinduoduo-drama/service": PinduoduoDramaServiceControlPage,
+  "pinduoduo-drama/config": PinduoduoDramaConfigurationPage,
 }
 
 export function AppRoutes() {

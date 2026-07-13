@@ -40,12 +40,21 @@ export class VideoAccountSyncService {
     this.syncing = true;
 
     try {
-      const videoAccounts = filterVideoAccountsByContractSubjects(await fetchVideoAccountsApi());
+      const allVideoAccounts = await fetchVideoAccountsApi();
+      const videoAccounts = filterVideoAccountsByContractSubjects(
+        allVideoAccounts,
+        this.serviceConfig.videoAccountContractSubjects,
+      );
       this.validateVideoAccounts(videoAccounts);
       const changes = this.browserContexts.syncVideoAccounts(videoAccounts);
       this.taskWorkerPool.syncVideoAccounts(videoAccounts);
       this.serviceConfig.videoAccounts = videoAccounts;
       this.idlePageRefreshService?.syncVideoAccounts();
+      logger.info("synced video accounts", {
+        selectedContractSubjects: this.serviceConfig.videoAccountContractSubjects,
+        totalCount: allVideoAccounts.length,
+        filteredCount: videoAccounts.length,
+      });
 
       if (changes.added.length || changes.removed.length || changes.renamed.length) {
         logger.info("video accounts changed", {

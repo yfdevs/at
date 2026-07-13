@@ -44,6 +44,14 @@ import {
   stopTiktokDramaCenterPlatformRuntime,
 } from "./platforms/tiktok-drama";
 import {
+  getPinduoduoDramaBrowserInstanceCount,
+  getPinduoduoDramaPlatformRuntimeSummary,
+  getPinduoduoDramaRunningPlatformCount,
+  openPinduoduoDramaLogDir,
+  registerPinduoduoDramaPlatformHandlers,
+  stopPinduoduoDramaPlatformRuntime,
+} from "./platforms/pinduoduo-drama";
+import {
   ensureBaiduNetdiskCdpReadyOnStartup,
   registerBaiduNetdiskPlatformHandlers,
 } from "./platforms/baidu-netdisk";
@@ -74,7 +82,12 @@ logMain("info", "app bootstrap", {
 let win: BrowserWindow | null;
 let baiduNetdiskWindow: BrowserWindow | null = null;
 
-type PlatformId = "wechat-drama" | "meituan-drama" | "kuaishou-drama" | "tiktok-drama";
+type PlatformId =
+  | "wechat-drama"
+  | "meituan-drama"
+  | "kuaishou-drama"
+  | "tiktok-drama"
+  | "pinduoduo-drama";
 
 setupTitlebar();
 ipcMain.removeAllListeners("update-window-controls");
@@ -217,6 +230,7 @@ app.on("before-quit", () => {
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
+  stopPinduoduoDramaPlatformRuntime();
 });
 
 app.on("activate", () => {
@@ -234,6 +248,7 @@ app.whenReady().then(() => {
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerTiktokDramaCenterPlatformHandlers();
+    registerPinduoduoDramaPlatformHandlers();
     registerBaiduNetdiskPlatformHandlers({
       openWindow: createBaiduNetdiskWindow,
     });
@@ -310,6 +325,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getKuaishouDramaPlatformRuntimeSummary();
     case "tiktok-drama":
       return getTiktokDramaCenterPlatformRuntimeSummary();
+    case "pinduoduo-drama":
+      return getPinduoduoDramaPlatformRuntimeSummary();
     default:
       throw new Error(`未知平台：${String(platformId)}`);
   }
@@ -325,6 +342,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openKuaishouDramaLogDir();
     case "tiktok-drama":
       return openTiktokDramaCenterLogDir();
+    case "pinduoduo-drama":
+      return openPinduoduoDramaLogDir();
     default:
       throw new Error(`未知平台：${String(platformId)}`);
   }
@@ -336,6 +355,7 @@ function getGlobalBrowserInstanceCount() {
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getTiktokDramaCenterBrowserInstanceCount,
+    getPinduoduoDramaBrowserInstanceCount,
   ];
 
   return counters.reduce((count, readCount) => {
@@ -353,6 +373,7 @@ function getGlobalRunningPlatformStatus() {
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getTiktokDramaCenterRunningPlatformCount,
+    getPinduoduoDramaRunningPlatformCount,
   ];
 
   return {

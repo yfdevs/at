@@ -5,7 +5,8 @@ export type PlatformId =
   | "wechat-drama"
   | "meituan-drama"
   | "kuaishou-drama"
-  | "tiktok-drama";
+  | "tiktok-drama"
+  | "pinduoduo-drama";
 
 export type AppRoute =
   | "baidu-netdisk/window"
@@ -22,7 +23,9 @@ export type AppRoute =
   | "kuaishou-drama/analytics"
   | "kuaishou-drama/settings"
   | "tiktok-drama/service"
-  | "tiktok-drama/config";
+  | "tiktok-drama/config"
+  | "pinduoduo-drama/service"
+  | "pinduoduo-drama/config";
 
 const appRoutes = [
   "baidu-netdisk/window",
@@ -40,6 +43,8 @@ const appRoutes = [
   "kuaishou-drama/settings",
   "tiktok-drama/service",
   "tiktok-drama/config",
+  "pinduoduo-drama/service",
+  "pinduoduo-drama/config",
 ] as const satisfies readonly AppRoute[];
 
 export type NavigationItem = {
@@ -101,6 +106,14 @@ export const platformNavigation: PlatformNavigationItem[] = [
     configRoute: "tiktok-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}tiktok.svg`,
   },
+  {
+    id: "pinduoduo-drama",
+    title: "拼多多短剧",
+    routePrefix: "pinduoduo-drama",
+    serviceRoute: "pinduoduo-drama/service",
+    configRoute: "pinduoduo-drama/config",
+    logoSrc: `${import.meta.env.BASE_URL}pdd.svg`,
+  },
 ];
 
 export const navigationGroups: NavigationGroup[] = [
@@ -160,6 +173,21 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "配置管理",
         route: "tiktok-drama/config",
+        icon: FineTune,
+      },
+    ],
+  },
+  {
+    title: "拼多多短剧",
+    items: [
+      {
+        title: "服务控制",
+        route: "pinduoduo-drama/service",
+        icon: Terminal,
+      },
+      {
+        title: "配置管理",
+        route: "pinduoduo-drama/config",
         icon: FineTune,
       },
     ],

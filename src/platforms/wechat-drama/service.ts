@@ -47,6 +47,14 @@ export type WechatVideoConfigResult = {
   restartRequired: boolean
 }
 
+const contractSubjectLabels: Record<string, string> = {
+  MINGXINGSHUO: "明星说",
+  MISU: "米苏",
+  WEITAO: "微淘",
+  HUANZOU: "幻走",
+  XIAOSHILIU: "小石榴",
+}
+
 async function invokeWechatVideo<T>(channel: string, ...args: unknown[]): Promise<T> {
   if (!window.ipcRenderer) {
     throw new Error("微信视频号服务控制仅在 Electron 应用内可用。")
@@ -95,7 +103,24 @@ function readableWechatVideoError(message: string) {
     return message.replace("[local-video-invalid]", "微信剧集视频不正确：")
   }
 
+  const emptyContractSubjectMatch = /Video account list must contain at least one account after contract subject filter: ([^;]+); available contract subjects: (.*)/.exec(message)
+  if (emptyContractSubjectMatch) {
+    const selectedSubjects = formatContractSubjectList(emptyContractSubjectMatch[1])
+    const availableSubjects = formatContractSubjectList(emptyContractSubjectMatch[2])
+    return `当前选择的主体没有可用视频号账号：${selectedSubjects}。当前接口返回的可用主体：${availableSubjects}。请在配置页选择已有主体，或让后端为所选主体配置 ON 状态的视频号账号。`
+  }
+
   return message
+}
+
+function formatContractSubjectList(value: string) {
+  const subjects = value
+    .split(",")
+    .map((subject) => subject.trim())
+    .filter(Boolean)
+    .map((subject) => contractSubjectLabels[subject] ?? subject)
+
+  return subjects.length ? subjects.join("、") : "无"
 }
 
 export const wechatVideoService = {

@@ -38,7 +38,7 @@ import {
 
 const emptyConfig: WechatVideoConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
-  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO",
+  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/wechat-drama",
@@ -98,6 +98,8 @@ const contractSubjectOptions = [
   { label: "明星说", value: "MINGXINGSHUO" },
   { label: "米苏", value: "MISU" },
   { label: "微淘", value: "WEITAO" },
+  { label: "幻走", value: "HUANZOU" },
+  { label: "小石榴", value: "XIAOSHILIU" },
 ];
 
 const sections: Array<{
@@ -119,7 +121,7 @@ const sections: Array<{
         kind: "subjects",
         key: "videoAccountContractSubjects",
         label: "主体配置",
-        description: "只启动所选主体下的视频号账号。",
+        description: "只启动所选主体下的视频号账号，后端账号接口也必须已配置对应主体。",
         options: contractSubjectOptions,
       },
     ],

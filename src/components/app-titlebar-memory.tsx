@@ -19,6 +19,7 @@ import {
 import {
   getBaiduNetdiskStatus,
   openBaiduNetdiskWindow,
+  type BaiduNetdiskWindowPlatformId,
   type BaiduNetdiskCdpStatus,
 } from "@/platforms/baidu-netdisk/service";
 
@@ -162,6 +163,18 @@ async function getAppRuntimeStatus() {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function baiduNetdiskPlatformId(platformId: string): BaiduNetdiskWindowPlatformId {
+  switch (platformId) {
+    case "wechat-drama":
+    case "meituan-drama":
+    case "kuaishou-drama":
+    case "tiktok-drama":
+      return platformId;
+    default:
+      return "wechat-drama";
+  }
 }
 
 function ensureTitlebarMemoryHost() {
@@ -335,7 +348,7 @@ export function AppTitlebarMemory() {
   const dDrivePercentText = formatPercent(dDrivePercent);
   const browserInstanceCount = runtimeStatus?.browserInstanceCount ?? 0;
   const runningPlatformCount = runtimeStatus?.runningPlatformCount ?? 0;
-  const totalPlatformCount = runtimeStatus?.totalPlatformCount ?? 4;
+  const totalPlatformCount = runtimeStatus?.totalPlatformCount ?? 5;
   const runningPlatformText = `${runningPlatformCount}/${totalPlatformCount}`;
   const memoryText = memory
     ? `${formatBytes(memory.systemUsedBytes)} / ${formatBytes(memory.systemTotalBytes)}（${percentText}）`
@@ -412,7 +425,7 @@ export function AppTitlebarMemory() {
               type="button"
               className={titlebarIconButtonClass}
               onClick={() => {
-                void openBaiduNetdiskWindow(activePlatform.id);
+                void openBaiduNetdiskWindow(baiduNetdiskPlatformId(activePlatform.id));
               }}
             />
           }

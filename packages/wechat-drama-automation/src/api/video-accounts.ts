@@ -12,7 +12,7 @@ interface VideoAccountRecord {
   videoAccountName: string;
   loginAccount: string;
   rpaProfileKey: string;
-  contractSubject?: string | null;
+  contractSubject?: string | number | null;
   sortNo: number;
   status: "ON" | "OFF";
   remark?: string;
@@ -36,7 +36,7 @@ export async function fetchVideoAccountsApi(): Promise<VideoAccount[]> {
     "/dramaAiRpa/videoAccountConfig/page",
     {
       page: 1,
-      pageSize: 100,
+      pageSize: 500,
       status: "ON",
     },
   );
@@ -51,12 +51,14 @@ export async function fetchVideoAccountsApi(): Promise<VideoAccount[]> {
 
   return records.map((record, index) => {
     if (!record.videoAccountId || !record.videoAccountName) {
-      throw new Error(`Video account record at index ${index} requires videoAccountId and videoAccountName.`);
+      throw new Error(
+        `Video account record at index ${index} requires videoAccountId and videoAccountName.`,
+      );
     }
     return {
       id: record.videoAccountId,
       name: record.videoAccountName,
-      contractSubject: record.contractSubject ?? undefined,
+      contractSubject: record.contractSubject == null ? undefined : String(record.contractSubject),
     };
   });
 }
