@@ -289,8 +289,7 @@ function assertWechatVideoConfigReady(config = readConfig()) {
 async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath()
 
-  const runtimePackage = '@drama/wechat-drama-automation'
-  const { startWechatVideoRuntime } = await import(/* @vite-ignore */ runtimePackage)
+  const { startWechatVideoRuntime } = await import('@drama/wechat-drama-automation')
   return startWechatVideoRuntime({
     settings: readConfig(),
     ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,

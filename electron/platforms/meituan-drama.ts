@@ -225,8 +225,7 @@ async function startRuntime() {
   const config = readConfig();
   const taskPayload = loadMeituanCreationTaskPayload();
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
-  const runtimePackage = "@drama/meituan-drama-automation";
-  const { startMeituanCreationRuntime } = await import(/* @vite-ignore */ runtimePackage);
+  const { startMeituanCreationRuntime } = await import("@drama/meituan-drama-automation");
   return startMeituanCreationRuntime({
     userDataDir: meituanCreationUserDataDir(),
     credentialStatePath: meituanCreationCredentialStatePath(),

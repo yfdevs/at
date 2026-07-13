@@ -2,9 +2,7 @@ import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
 import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 
 export type BaiduNetdiskConfig = {
   debugPort: string;
@@ -141,7 +139,6 @@ const defaultBaiduNetdiskConfig: BaiduNetdiskConfig = {
 
 const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
 
-const require = createRequire(import.meta.url);
 let store: Store<BaiduNetdiskStore> | null = null;
 const activeDownloadPromises = new Map<string, Promise<BaiduNetdiskDownloadRecord>>();
 
@@ -844,11 +841,7 @@ function cdpPort(config = readConfig()) {
 }
 
 async function importBaiduNetdiskRuntimePackage() {
-  const packageJsonPath = require.resolve("@drama/baidu-netdisk-automation/package.json");
-  const entryUrl = pathToFileURL(path.join(path.dirname(packageJsonPath), "dist", "index.mjs"));
-  entryUrl.searchParams.set("cacheBust", String(Date.now()));
-
-  return import(/* @vite-ignore */ entryUrl.href) as Promise<{
+  return import("@drama/baidu-netdisk-automation") as Promise<{
     checkBaiduNetdiskCdpStatus: (options: {
       port: number;
       executablePath?: string;
@@ -862,13 +855,7 @@ async function importBaiduNetdiskRuntimePackage() {
 }
 
 async function importBaiduNetdiskDownloadRuntimePackage() {
-  const packageJsonPath = require.resolve("@drama/baidu-netdisk-automation/package.json");
-  const entryUrl = pathToFileURL(
-    path.join(path.dirname(packageJsonPath), "dist", "download-baidu-folder.mjs"),
-  );
-  entryUrl.searchParams.set("cacheBust", String(Date.now()));
-
-  return import(/* @vite-ignore */ entryUrl.href) as Promise<{
+  return import("@drama/baidu-netdisk-automation/download-baidu-folder") as Promise<{
     downloadBaiduNetdiskShare: (options: {
       shareText: string;
       resourceName?: string;

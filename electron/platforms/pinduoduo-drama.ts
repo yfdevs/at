@@ -305,8 +305,7 @@ async function startRuntime() {
   const workAreaSize = screen.getPrimaryDisplay().workAreaSize;
   const browserWindowWidth = Number.parseInt(config.browserWindowWidth, 10) || workAreaSize.width;
   const browserWindowHeight = workAreaSize.height;
-  const runtimePackage = "@drama/pinduoduo-drama-automation";
-  const { startPinduoduoDramaRuntime } = await import(/* @vite-ignore */ runtimePackage);
+  const { startPinduoduoDramaRuntime } = await import("@drama/pinduoduo-drama-automation");
 
   return startPinduoduoDramaRuntime({
     accountProfileName: config.accountProfileName,

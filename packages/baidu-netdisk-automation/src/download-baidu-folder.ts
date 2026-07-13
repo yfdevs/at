@@ -444,7 +444,7 @@ async function enterShareCode(target: CdpTarget, share: ShareInfo) {
   input.dispatchEvent(new Event("input", { bubbles: true }));
   input.dispatchEvent(new Event("change", { bubbles: true }));
   input.dispatchEvent(new KeyboardEvent("keyup", {
-    key: ${JSON.stringify(pwd.at(-1) ?? "")},
+    key: ${JSON.stringify(pwd[pwd.length - 1] ?? "")},
     bubbles: true,
     cancelable: true,
   }));

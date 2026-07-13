@@ -1,8 +1,7 @@
 import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
-import { chromium } from "playwright-extra";
-import StealthPlugin from "puppeteer-extra-plugin-stealth";
 import {
+  chromium,
   type BrowserContext,
   type Page,
 } from "playwright";
@@ -29,15 +28,62 @@ import type {
   PinduoduoDramaRuntimeStatus,
 } from "../shared/types.js";
 import {
-  buildPinduoduoShortplayApplyEditRequest,
   PinduoduoShortplayApplyEditError,
   submitPinduoduoShortplayApplyEdit,
 } from "./shortplay-apply.js";
 
-chromium.use(StealthPlugin());
-
 const LOGIN_REDIRECT_WAIT_MS = 10_000;
+const LOGIN_API_WAIT_MS = 12_000;
+const PINDUODUO_USER_INFO_URL = `${PINDUODUO_MCN_ORIGIN}/api/cafe/login/user_info`;
 
+function pinduoduoBrowserLaunchOptions(
+  options: PinduoduoDramaRuntimeOptions,
+  windowWidth: number,
+  windowHeight: number,
+) {
+  return {
+    args: [
+      "--disable-blink-features=AutomationControlled",
+      "--window-position=0,0",
+      `--window-size=${windowWidth},${windowHeight}`,
+    ],
+    extraHTTPHeaders: {
+      "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
+    },
+    headless: options.config?.browser?.headless ?? false,
+    ignoreDefaultArgs: ["--enable-automation"],
+    locale: "zh-CN",
+    slowMo: options.config?.browser?.slowMo ?? 0,
+    timezoneId: "Asia/Shanghai",
+    viewport: null,
+  } satisfies Parameters<typeof chromium.launchPersistentContext>[1];
+}
+
+async function launchPinduoduoBrowserContext(
+  userDataDir: string,
+  options: PinduoduoDramaRuntimeOptions,
+  windowWidth: number,
+  windowHeight: number,
+): Promise<BrowserContext> {
+  const launchOptions = pinduoduoBrowserLaunchOptions(options, windowWidth, windowHeight);
+
+  try {
+    const context = await chromium.launchPersistentContext(userDataDir, {
+      ...launchOptions,
+      channel: "chrome",
+    });
+    log(options, "info", "runtime", "started browser with Google Chrome channel");
+    return context;
+  } catch (error) {
+    log(options, "error", "runtime", "failed to start Google Chrome channel", {
+      error,
+    });
+    throw Object.assign(
+      new Error("Pinduoduo drama requires local Google Chrome. Install Google Chrome or repair the Chrome installation, then restart the service."),
+      { cause: error },
+    );
+  }
+}
 export function pinduoduoDramaLoginStateFromUrl(url: string | undefined): PinduoduoDramaLoginState {
   if (!url || url === "about:blank") {
     return "unknown";
@@ -54,25 +100,31 @@ export function pinduoduoDramaLoginStateFromUrl(url: string | undefined): Pinduo
   return "unknown";
 }
 
-function maskNavigatorWebdriver(): void {
-  const defineWebdriverGetter = (target: object | null | undefined) => {
-    if (!target) {
-      return;
-    }
+function isPinduoduoLoginRequiredPayload(payload: unknown): boolean {
+  if (typeof payload !== "object" || payload === null) {
+    return false;
+  }
 
-    try {
-      Object.defineProperty(target, "webdriver", {
-        configurable: true,
-        get: () => false,
-      });
-    } catch {
-      // Some browser objects reject direct redefinition; keep the other targets active.
-    }
-  };
+  const errorCode = "error_code" in payload ? payload.error_code : undefined;
+  return errorCode === 40001 || errorCode === "40001";
+}
 
-  defineWebdriverGetter(Navigator.prototype);
-  defineWebdriverGetter(Object.getPrototypeOf(navigator));
-  defineWebdriverGetter(navigator);
+async function waitForPinduoduoUserInfoLoginState(page: Page): Promise<PinduoduoDramaLoginState> {
+  const response = await page.waitForResponse(
+    (nextResponse) => nextResponse.url().startsWith(PINDUODUO_USER_INFO_URL),
+    { timeout: LOGIN_API_WAIT_MS },
+  ).catch(() => undefined);
+
+  if (!response) {
+    return "unknown";
+  }
+
+  const payload = await response.json().catch(() => undefined);
+  if (!response.ok() || isPinduoduoLoginRequiredPayload(payload)) {
+    return "login-required";
+  }
+
+  return "logged-in";
 }
 
 async function waitForLoginStateAfterNavigation(page: Page): Promise<PinduoduoDramaLoginState> {
@@ -81,12 +133,17 @@ async function waitForLoginStateAfterNavigation(page: Page): Promise<PinduoduoDr
     return loginState;
   }
 
+  const apiLoginState = await waitForPinduoduoUserInfoLoginState(page);
+  if (apiLoginState !== "unknown") {
+    return apiLoginState;
+  }
+
   await page.waitForURL((url) => pinduoduoDramaLoginStateFromUrl(url.href) === "login-required", {
     timeout: LOGIN_REDIRECT_WAIT_MS,
   }).catch(() => undefined);
 
   loginState = pinduoduoDramaLoginStateFromUrl(page.url());
-  return loginState;
+  return loginState === "login-required" ? "login-required" : "unknown";
 }
 
 async function waitForManualLoginAndOpenShortplayManagePage(
@@ -97,6 +154,11 @@ async function waitForManualLoginAndOpenShortplayManagePage(
     activeUrl: page.url(),
     loginExpiredUrl: PINDUODUO_LOGIN_EXPIRED_URL,
   });
+
+  await page.goto(PINDUODUO_LOGIN_EXPIRED_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  }).catch(() => undefined);
 
   while (!page.isClosed()) {
     await page.waitForURL((url) => pinduoduoDramaLoginStateFromUrl(url.href) === "logged-in", {
@@ -160,10 +222,11 @@ async function openShortplayManagePage(
   });
 
   const loginState = await waitForLoginStateAfterNavigation(page);
-  if (loginState === "login-required") {
-    log(options, "warn", "runtime", "login expired, redirected to register page", {
+  if (loginState !== "logged-in") {
+    log(options, "warn", "runtime", "login is required before opening shortplay manage page", {
       activeUrl: page.url(),
       loginExpiredUrl: PINDUODUO_LOGIN_EXPIRED_URL,
+      loginState,
     });
     await waitForManualLoginAndOpenShortplayManagePage(page, options);
     return;
@@ -195,13 +258,11 @@ async function claimAndSubmitNextTask(
   });
 
   try {
-    const requestBody = buildPinduoduoShortplayApplyEditRequest(task);
     log(options, "info", "runtime", "shortplay apply edit request", {
       accountTaskId: task.accountTaskId,
       dramaId: task.dramaId,
+      title: task.playlet.title,
       url: PINDUODUO_SHORTPLAY_APPLY_EDIT_URL,
-      body: requestBody,
-      bodyJson: JSON.stringify(requestBody),
     });
 
     const response = await submitPinduoduoShortplayApplyEdit(page, task);
@@ -262,25 +323,13 @@ export async function startPinduoduoDramaRuntime(
   const windowWidth = Math.max(800, Math.floor(options.config?.browser?.windowWidth ?? 1440));
   const windowHeight = Math.max(600, Math.floor(options.config?.browser?.windowHeight ?? 960));
 
-  context = await chromium.launchPersistentContext(userDataDir, {
-    args: [
-      "--disable-blink-features=AutomationControlled",
-      "--window-position=0,0",
-      `--window-size=${windowWidth},${windowHeight}`,
-    ],
-    headless: options.config?.browser?.headless ?? false,
-    ignoreDefaultArgs: ["--enable-automation"],
-    slowMo: options.config?.browser?.slowMo ?? 0,
-    viewport: null,
-  });
+  context = await launchPinduoduoBrowserContext(userDataDir, options, windowWidth, windowHeight);
+
   context.on("close", () => {
     running = false;
   });
 
-  await context.addInitScript(maskNavigatorWebdriver);
-
   page = context.pages()[0] ?? (await context.newPage());
-  await page.evaluate(maskNavigatorWebdriver).catch(() => undefined);
   let managePageReady = false;
   await openShortplayManagePage(page, options).then(() => {
     managePageReady = true;

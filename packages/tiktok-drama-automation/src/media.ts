@@ -3,7 +3,7 @@ import { existsSync } from 'node:fs';
 import { mkdir, readdir, lstat, writeFile } from 'node:fs/promises';
 import path from 'node:path';
 import { promisify } from 'node:util';
-import { config, logger } from './config.js';
+import { config } from './config.js';
 
 const execFileAsync = promisify(execFile);
 const maxCoverBytes = 10 * 1024 * 1024;

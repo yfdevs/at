@@ -1,9 +1,7 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
-import { createRequire } from "node:module";
 import path from "node:path";
-import { pathToFileURL } from "node:url";
 import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
@@ -76,7 +74,6 @@ const defaultKuaishouDramaConfig: KuaishouDramaConfig = {
 };
 
 const runtimeController = new RuntimeController<KuaishouDramaRuntime>();
-const require = createRequire(import.meta.url);
 let store: Store<KuaishouDramaStore> | null = null;
 
 export function getKuaishouDramaBrowserInstanceCount() {
@@ -235,11 +232,7 @@ function ensureStorageDirectories(paths = storagePaths()) {
 }
 
 async function importKuaishouDramaRuntimePackage() {
-  const packageJsonPath = require.resolve("@drama/kuaishou-drama-automation/package.json");
-  const entryUrl = pathToFileURL(path.join(path.dirname(packageJsonPath), "dist", "index.mjs"));
-  entryUrl.searchParams.set("cacheBust", String(Date.now()));
-
-  return import(/* @vite-ignore */ entryUrl.href) as Promise<{
+  return import("@drama/kuaishou-drama-automation") as Promise<{
     createMockKuaishouDramaTaskInput: () => unknown;
     startKuaishouDramaRuntime: (
       options: Record<string, unknown>,

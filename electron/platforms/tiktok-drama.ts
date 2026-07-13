@@ -194,8 +194,7 @@ async function startRuntime() {
 
   const config = readConfig();
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
-  const runtimePackage = "@drama/tiktok-drama-automation";
-  const { startTiktokDramaCenterRuntime } = await import(/* @vite-ignore */ runtimePackage);
+  const { startTiktokDramaCenterRuntime } = await import("@drama/tiktok-drama-automation");
   return startTiktokDramaCenterRuntime({
     userDataDir: tiktokDramaCenterUserDataDir(),
     credentialStatePath: tiktokDramaCenterCredentialStatePath(),

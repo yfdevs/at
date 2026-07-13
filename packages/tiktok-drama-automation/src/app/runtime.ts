@@ -35,6 +35,7 @@ type TiktokDramaCenterRuntimeConfig = {
   draftUrl?: string;
   headless?: boolean;
   keepBrowserOpen?: boolean;
+  feishuBotWebhookUrl?: string;
   logFile?: string;
   logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
   loginUrl?: string;
