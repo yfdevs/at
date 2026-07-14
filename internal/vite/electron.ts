@@ -8,6 +8,7 @@ const electronRequireBanner = [
 ].join("\n");
 
 const electronMainExternals = [
+  /^better-sqlite3(?:\/.*)?$/,
   /^playwright(?:\/.*)?$/,
   /^playwright-core(?:\/.*)?$/,
   /^chromium-bidi(?:\/.*)?$/,

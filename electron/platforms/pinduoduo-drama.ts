@@ -3,6 +3,10 @@ import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
+  ensureBaiduNetdiskShareDownloaded,
+  type BaiduNetdiskEnsureDownloadedRequest,
+} from "./baidu-netdisk";
+import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
   openExistingPath,
@@ -11,6 +15,7 @@ import {
   RuntimeController,
   selectDirectory,
 } from "./shared";
+import { automationDatabasePath } from "../storage/database";
 
 type PinduoduoDramaRuntimeStatus = {
   platform: "pinduoduo-drama";
@@ -38,6 +43,8 @@ export type PinduoduoDramaConfig = {
   runDataDir: string;
   logRetentionDays: string;
   browserWindowWidth: string;
+  localEpisodeVideoRoot: string;
+  baiduNetdiskDownloadRetryAttempts: string;
 };
 
 export type PinduoduoDramaServiceStatus = PinduoduoDramaRuntimeStatus & {
@@ -58,6 +65,7 @@ type PinduoduoDramaStoragePaths = {
   credentialStatePath: string;
   logDir: string;
   logFilePath: string;
+  databasePath: string;
 };
 
 type PinduoduoDramaStore = {
@@ -71,6 +79,8 @@ const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
   browserWindowWidth: "0",
+  localEpisodeVideoRoot: "",
+  baiduNetdiskDownloadRetryAttempts: "3",
 };
 
 const runtimeController = new RuntimeController<PinduoduoDramaRuntime>();
@@ -94,12 +104,14 @@ export function getPinduoduoDramaPlatformRuntimeSummary() {
     running,
     browserInstanceCount: running ? 1 : 0,
     browserInstances: running
-      ? [{
-          id: runtimeStatus?.accountProfileName ?? "default",
-          label: runtimeStatus?.accountProfileName ?? "拼多多短剧",
-          loginState: runtimeStatus?.loginState ?? "unknown",
-          activeUrl: runtimeStatus?.activeUrl,
-        }]
+      ? [
+          {
+            id: runtimeStatus?.accountProfileName ?? "default",
+            label: runtimeStatus?.accountProfileName ?? "拼多多短剧",
+            loginState: runtimeStatus?.loginState ?? "unknown",
+            activeUrl: runtimeStatus?.activeUrl,
+          },
+        ]
       : [],
     logDir: paths.logDir,
   };
@@ -173,6 +185,13 @@ function normalizeConfig(
       defaultPinduoduoDramaConfig.browserWindowWidth,
       800,
     ),
+    localEpisodeVideoRoot:
+      config.localEpisodeVideoRoot ?? defaultPinduoduoDramaConfig.localEpisodeVideoRoot,
+    baiduNetdiskDownloadRetryAttempts: normalizePositiveInteger(
+      config.baiduNetdiskDownloadRetryAttempts,
+      defaultPinduoduoDramaConfig.baiduNetdiskDownloadRetryAttempts,
+      0,
+    ),
   };
 }
 
@@ -236,6 +255,7 @@ function storagePaths(config = readConfig()): PinduoduoDramaStoragePaths {
     credentialStatePath: pinduoduoDramaCredentialStatePath(config),
     logDir: pinduoduoDramaLogDir(config),
     logFilePath: pinduoduoDramaLogFile(config),
+    databasePath: automationDatabasePath(),
   };
 }
 
@@ -310,10 +330,13 @@ async function startRuntime() {
   return startPinduoduoDramaRuntime({
     accountProfileName: config.accountProfileName,
     accountDir: paths.accountDir,
+    databasePath: paths.databasePath,
     userDataDir: paths.userDataDir,
     credentialStatePath: paths.credentialStatePath,
     logFilePath: paths.logFilePath,
     logRetentionDays,
+    ensureBaiduNetdiskResource: (request: BaiduNetdiskEnsureDownloadedRequest) =>
+      ensureBaiduNetdiskShareDownloaded(request),
     onLog: (message: string) => {
       console.log(message);
     },
@@ -323,6 +346,10 @@ async function startRuntime() {
         slowMo: operationDelayMs,
         windowWidth: browserWindowWidth,
         windowHeight: browserWindowHeight,
+      },
+      video: {
+        baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts,
+        localEpisodeVideoRoot: config.localEpisodeVideoRoot,
       },
     },
   });
@@ -360,6 +387,17 @@ export function registerPinduoduoDramaPlatformHandlers() {
       });
 
       return normalizePlatformRunDataDir(selectedPath, "pinduoduo-drama");
+    },
+  );
+
+  ipcMain.handle(
+    "pinduoduo-drama:config:select-local-episode-video-root",
+    async (event, currentPath?: string) => {
+      return selectDirectory(event, {
+        title: "选择拼多多剧集视频根目录",
+        defaultPath: directoryDefaultPath(currentPath, app.getPath("videos")),
+        properties: ["openDirectory", "createDirectory"],
+      });
     },
   );
 

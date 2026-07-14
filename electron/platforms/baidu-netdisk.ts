@@ -3,6 +3,11 @@ import Store from "electron-store";
 import { createHash } from "node:crypto";
 import { access, copyFile, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import {
+  BaiduNetdiskDownloadRecordsRepository,
+  type BaiduNetdiskDownloadRecord,
+  type BaiduNetdiskDownloadState,
+} from "../storage/baidu-netdisk";
 
 export type BaiduNetdiskConfig = {
   debugPort: string;
@@ -11,7 +16,6 @@ export type BaiduNetdiskConfig = {
 
 type BaiduNetdiskStore = {
   config: Partial<BaiduNetdiskConfig> & Record<string, string | undefined>;
-  downloads: BaiduNetdiskDownloadRecord[];
 };
 
 type BaiduNetdiskCdpStatus = {
@@ -89,30 +93,7 @@ type BaiduNetdiskShareDownloadRequest = {
   shareText?: string;
 };
 
-export type BaiduNetdiskDownloadState = "pending" | "downloading" | "completed" | "failed";
-
-export type BaiduNetdiskDownloadRecord = {
-  id: string;
-  shareKey: string;
-  shareText: string;
-  resourceName: string;
-  localEpisodeVideoRoot?: string;
-  episodeCount?: number;
-  downloadDir: string;
-  localPath?: string;
-  progressPercent?: number;
-  transferredBytes?: number;
-  totalBytes?: number;
-  speedText?: string;
-  nativeStatus?: string;
-  state: BaiduNetdiskDownloadState;
-  skippedExisting: boolean;
-  error?: string;
-  createdAt: string;
-  updatedAt: string;
-  startedAt?: string;
-  completedAt?: string;
-};
+export type { BaiduNetdiskDownloadRecord, BaiduNetdiskDownloadState };
 
 export type BaiduNetdiskEnsureDownloadedRequest = {
   shareText: string;
@@ -126,7 +107,12 @@ export type BaiduNetdiskDownloadRecordResult = {
   path: string;
 };
 
-type PlatformId = "wechat-drama" | "meituan-drama" | "kuaishou-drama" | "tiktok-drama";
+type PlatformId =
+  | "wechat-drama"
+  | "meituan-drama"
+  | "kuaishou-drama"
+  | "tiktok-drama"
+  | "pinduoduo-drama";
 
 type RegisterBaiduNetdiskPlatformHandlersOptions = {
   openWindow?: (platformId: PlatformId) => void;
@@ -140,6 +126,7 @@ const defaultBaiduNetdiskConfig: BaiduNetdiskConfig = {
 const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
 
 let store: Store<BaiduNetdiskStore> | null = null;
+let downloadRecordsRepository: BaiduNetdiskDownloadRecordsRepository | null = null;
 const activeDownloadPromises = new Map<string, Promise<BaiduNetdiskDownloadRecord>>();
 
 function getStore() {
@@ -148,7 +135,6 @@ function getStore() {
       name: "baidu-netdisk-config",
       defaults: {
         config: defaultBaiduNetdiskConfig,
-        downloads: [],
       },
     });
   }
@@ -187,31 +173,21 @@ function configPath() {
   return getStore().path;
 }
 
+function getDownloadRecordsRepository() {
+  if (!downloadRecordsRepository) {
+    downloadRecordsRepository = new BaiduNetdiskDownloadRecordsRepository();
+  }
+
+  return downloadRecordsRepository;
+}
+
 function readDownloadRecords() {
-  return [...(getStore().get("downloads") ?? [])].sort((left, right) =>
-    right.updatedAt.localeCompare(left.updatedAt),
-  );
+  return getDownloadRecordsRepository().list();
 }
 
-function writeDownloadRecords(records: BaiduNetdiskDownloadRecord[]) {
-  getStore().set("downloads", records.slice(0, 100));
+function upsertDownloadRecord(record: BaiduNetdiskDownloadRecord): BaiduNetdiskDownloadRecord {
+  const nextRecord = getDownloadRecordsRepository().upsert(record);
   broadcastDownloadRecordsChanged();
-}
-
-function upsertDownloadRecord(
-  record: BaiduNetdiskDownloadRecord,
-): BaiduNetdiskDownloadRecord {
-  const records = readDownloadRecords();
-  const nextRecord = {
-    ...record,
-    updatedAt: new Date().toISOString(),
-  };
-  const nextRecords = [
-    nextRecord,
-    ...records.filter((item) => item.id !== record.id),
-  ];
-
-  writeDownloadRecords(nextRecords);
   return nextRecord;
 }
 
@@ -247,11 +223,9 @@ function shareKeyFromText(shareText: string) {
       shareText.match(/(?:提取码|密码|pwd)[:：\s]*([a-zA-Z0-9]{4})/)?.[1] ??
       "";
 
-    return [
-      url.origin.toLowerCase(),
-      url.pathname.replace(/\/+$/, ""),
-      pwd.toLowerCase(),
-    ].filter(Boolean).join("|");
+    return [url.origin.toLowerCase(), url.pathname.replace(/\/+$/, ""), pwd.toLowerCase()]
+      .filter(Boolean)
+      .join("|");
   } catch {
     return link;
   }
@@ -291,7 +265,10 @@ function playletDir(root: string, resourceName: string) {
 }
 
 async function pathExists(filePath: string) {
-  return access(filePath).then(() => true, () => false);
+  return access(filePath).then(
+    () => true,
+    () => false,
+  );
 }
 
 function escapeRegExp(value: string): string {
@@ -387,7 +364,9 @@ async function logLocalEpisodeDirectoryDetails(
       if (episodeIndex === undefined) {
         unmatchedMp4.push(entry.name);
       } else {
-        matchedMp4.push(`${episodeIndex}:${entry.name}${size === undefined ? "" : ` size=${size}`}`);
+        matchedMp4.push(
+          `${episodeIndex}:${entry.name}${size === undefined ? "" : ` size=${size}`}`,
+        );
       }
     }
 
@@ -397,7 +376,10 @@ async function logLocalEpisodeDirectoryDetails(
   }
 
   const logged = summaries
-    .sort((left, right) => right.matchedMp4.length - left.matchedMp4.length || left.dir.localeCompare(right.dir))
+    .sort(
+      (left, right) =>
+        right.matchedMp4.length - left.matchedMp4.length || left.dir.localeCompare(right.dir),
+    )
     .slice(0, 8);
   if (logged.length <= 0) {
     const standardDir = playletDir(root, resourceName);
@@ -411,7 +393,8 @@ async function logLocalEpisodeDirectoryDetails(
 
   for (const summary of logged) {
     const sample = summary.matchedMp4.slice(0, 5).join(" | ") || "无";
-    const unmatched = summary.unmatchedMp4.length > 0 ? ` unmatched=${summary.unmatchedMp4.length}` : "";
+    const unmatched =
+      summary.unmatchedMp4.length > 0 ? ` unmatched=${summary.unmatchedMp4.length}` : "";
     console.log(
       `[baidu] 本地目录：${summary.dir} 文件=${summary.fileCount} 目录=${summary.directoryCount}` +
         ` matched=${summary.matchedMp4.length}/${episodeCount} 示例=${sample}${unmatched}`,
@@ -421,7 +404,10 @@ async function logLocalEpisodeDirectoryDetails(
 
 type LocalEpisodeFile = { index: number; file: string; size: number };
 
-async function listDirectLocalEpisodeFiles(scanDir: string, resourceName: string): Promise<LocalEpisodeFile[]> {
+async function listDirectLocalEpisodeFiles(
+  scanDir: string,
+  resourceName: string,
+): Promise<LocalEpisodeFile[]> {
   const files: LocalEpisodeFile[] = [];
   const entries = await readdir(scanDir, { withFileTypes: true }).catch(() => []);
 
@@ -468,7 +454,11 @@ async function recursiveLocalEpisodeScanDirs(root: string, resourceName: string)
   return dirs;
 }
 
-async function listLocalEpisodeFiles(root: string, resourceName: string, allowArbitraryDir = false) {
+async function listLocalEpisodeFiles(
+  root: string,
+  resourceName: string,
+  allowArbitraryDir = false,
+) {
   const scanDirs = allowArbitraryDir
     ? await recursiveLocalEpisodeScanDirs(root, resourceName)
     : localEpisodeScanDirs(root, resourceName);
@@ -479,9 +469,8 @@ async function listLocalEpisodeFiles(root: string, resourceName: string, allowAr
     candidates.push({ dir: scanDir, files });
   }
 
-  const best = candidates.sort((left, right) =>
-    right.files.length - left.files.length ||
-    left.dir.localeCompare(right.dir),
+  const best = candidates.sort(
+    (left, right) => right.files.length - left.files.length || left.dir.localeCompare(right.dir),
   )[0];
   return (best?.files ?? []).sort((left, right) => left.index - right.index);
 }
@@ -515,9 +504,7 @@ async function hasCompleteLocalEpisodeVideos(
 }
 
 function fileSetSignature(files: Array<{ index: number; file: string; size: number }>) {
-  return files
-    .map((file) => `${file.index}:${file.size}`)
-    .join("|");
+  return files.map((file) => `${file.index}:${file.size}`).join("|");
 }
 
 function episodeFileSummary(files: LocalEpisodeFile[]) {
@@ -562,8 +549,9 @@ async function standardizeDownloadedEpisodeFilesToWechatRoot(
   const targetDir = playletDir(targetRoot, resourceName);
   const sourceDir = localEpisodeSourceDir(files);
   const sourceLabel = sourceDir ?? "多个目录";
-  let workingFiles = [...files]
-    .sort((left, right) => left.index - right.index || left.file.localeCompare(right.file));
+  let workingFiles = [...files].sort(
+    (left, right) => left.index - right.index || left.file.localeCompare(right.file),
+  );
   let directoryRenamed = false;
   let targetExists = await pathExists(targetDir);
 
@@ -639,7 +627,8 @@ function normalizeDownloadProgress(transferredBytes: number, totalBytes: number 
     return {
       progressPercent: undefined,
       transferredBytes: undefined,
-      totalBytes: Number.isFinite(totalBytes) && totalBytes && totalBytes > 0 ? totalBytes : undefined,
+      totalBytes:
+        Number.isFinite(totalBytes) && totalBytes && totalBytes > 0 ? totalBytes : undefined,
     };
   }
 
@@ -666,7 +655,11 @@ function normalizeDownloadProgress(transferredBytes: number, totalBytes: number 
   };
 }
 
-function currentDownloadLocalPaths(paths: Array<string | undefined>, targetRoot: string, resourceName: string) {
+function currentDownloadLocalPaths(
+  paths: Array<string | undefined>,
+  targetRoot: string,
+  resourceName: string,
+) {
   const standardTargetDir = playletDir(targetRoot, resourceName);
   const normalized = paths
     .filter((item): item is string => Boolean(item?.trim()))
@@ -713,9 +706,12 @@ async function listCurrentDownloadEpisodeFiles(
     });
   }
 
-  return candidates
-    .sort((left, right) => right.files.length - left.files.length || left.label.localeCompare(right.label))[0]
-    ?.files ?? [];
+  return (
+    candidates.sort(
+      (left, right) =>
+        right.files.length - left.files.length || left.label.localeCompare(right.label),
+    )[0]?.files ?? []
+  );
 }
 
 async function waitForCompleteLocalEpisodeVideos(options: {
@@ -741,9 +737,11 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.targetRoot,
       options.resourceName,
     );
-    let bestLocalSummary: ReturnType<typeof episodeFileSummary> | undefined;
-    let files = await listCurrentDownloadEpisodeFiles(localPaths, options.targetRoot, options.resourceName);
-    bestLocalSummary = episodeFileSummary(files);
+    let files = await listCurrentDownloadEpisodeFiles(
+      localPaths,
+      options.targetRoot,
+      options.resourceName,
+    );
     let complete = isCompleteEpisodeFileSet(files, options.episodeCount);
     let signature = fileSetSignature(files);
     let stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
@@ -755,13 +753,18 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     stableSignatures.set(stableKey, nextStable);
 
     if (complete && nextStable.count >= 2) {
-      await standardizeDownloadedEpisodeFilesToWechatRoot(files, options.targetRoot, options.resourceName);
+      await standardizeDownloadedEpisodeFilesToWechatRoot(
+        files,
+        options.targetRoot,
+        options.resourceName,
+      );
 
       return playletDir(options.targetRoot, options.resourceName);
     }
 
     if (options.port) {
-      const { getBaiduNetdiskDownloadTaskStatus } = await importBaiduNetdiskDownloadRuntimePackage();
+      const { getBaiduNetdiskDownloadTaskStatus } =
+        await importBaiduNetdiskDownloadRuntimePackage();
       const taskStatus = await getBaiduNetdiskDownloadTaskStatus({
         port: options.port,
         targetName: options.downloadTaskName || options.resourceName,
@@ -773,8 +776,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.targetRoot,
           options.resourceName,
         );
-        files = await listCurrentDownloadEpisodeFiles(localPaths, options.targetRoot, options.resourceName);
-        bestLocalSummary = episodeFileSummary(files);
+        files = await listCurrentDownloadEpisodeFiles(
+          localPaths,
+          options.targetRoot,
+          options.resourceName,
+        );
+        const bestLocalSummary = episodeFileSummary(files);
         complete = isCompleteEpisodeFileSet(files, options.episodeCount);
         signature = fileSetSignature(files);
         stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
@@ -801,7 +808,9 @@ async function waitForCompleteLocalEpisodeVideos(options: {
             `[baidu] 下载状态：${options.resourceName}` +
               (bestLocalSummary
                 ? ` 本地识别=${bestLocalSummary.count}/${options.episodeCount}集` +
-                  (bestLocalSummary.min !== undefined ? `(${bestLocalSummary.min}-${bestLocalSummary.max})` : "")
+                  (bestLocalSummary.min !== undefined
+                    ? `(${bestLocalSummary.min}-${bestLocalSummary.max})`
+                    : "")
                 : "") +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
               (taskStatus.status ? ` status=${taskStatus.status}` : ""),
@@ -810,7 +819,11 @@ async function waitForCompleteLocalEpisodeVideos(options: {
         }
 
         if ((complete && nextStable.count >= 2) || (taskStatus.completed && complete)) {
-          await standardizeDownloadedEpisodeFilesToWechatRoot(files, options.targetRoot, options.resourceName);
+          await standardizeDownloadedEpisodeFilesToWechatRoot(
+            files,
+            options.targetRoot,
+            options.resourceName,
+          );
 
           return playletDir(options.targetRoot, options.resourceName);
         }
@@ -820,11 +833,9 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     await new Promise((resolve) => setTimeout(resolve, 10000));
   }
 
-  for (const root of [
-    options.targetRoot,
-    options.sourceLocalPath,
-    options.record.localPath,
-  ].filter((item): item is string => Boolean(item?.trim()))) {
+  for (const root of [options.targetRoot, options.sourceLocalPath, options.record.localPath].filter(
+    (item): item is string => Boolean(item?.trim()),
+  )) {
     await logLocalEpisodeDirectoryDetails(
       root,
       options.resourceName,
@@ -833,7 +844,9 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     );
   }
 
-  throw new Error(`等待百度网盘资源下载完成超时：${playletDir(options.targetRoot, options.resourceName)}`);
+  throw new Error(
+    `等待百度网盘资源下载完成超时：${playletDir(options.targetRoot, options.resourceName)}`,
+  );
 }
 
 function cdpPort(config = readConfig()) {
@@ -863,10 +876,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
-    getBaiduNetdiskDownloadTaskStatus: (options: {
-      port: number;
-      targetName: string;
-    }) => Promise<{
+    getBaiduNetdiskDownloadTaskStatus: (options: { port: number; targetName: string }) => Promise<{
       found: boolean;
       name?: string;
       localPath?: string;
@@ -921,7 +931,7 @@ export async function ensureBaiduNetdiskCdpReadyOnStartup() {
   const launchResult = await startCdp(currentStatus.appRunning);
 
   return {
-    action: currentStatus.appRunning ? "restart" as const : "start" as const,
+    action: currentStatus.appRunning ? ("restart" as const) : ("start" as const),
     status: launchResult.status,
     launchResult,
   };
@@ -944,7 +954,7 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
   const shareKey = shareKeyFromText(shareText);
   const recordId = createRecordId(shareKey, shareKey);
   const now = new Date().toISOString();
-  let record = upsertDownloadRecord({
+  const record = upsertDownloadRecord({
     id: recordId,
     shareKey,
     shareText,
@@ -967,17 +977,16 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
     });
   } catch (error) {
     const message = readableError(error);
-    record = upsertDownloadRecord({
+    upsertDownloadRecord({
       ...record,
       state: "failed",
       error: message,
     });
-    throw new Error(message);
+    throw Object.assign(new Error(message), { cause: error });
   }
 
-  const state: BaiduNetdiskDownloadState = result.completed || result.skippedExisting
-    ? "completed"
-    : "downloading";
+  const state: BaiduNetdiskDownloadState =
+    result.completed || result.skippedExisting ? "completed" : "downloading";
   upsertDownloadRecord({
     ...record,
     resourceName: result.share.name,
@@ -1076,7 +1085,9 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     }).catch(() => undefined);
 
     if (!existingTaskStatus?.found) {
-      console.log(`[baidu] 下载记录为进行中，但客户端未找到任务，重新提交下载：${existingTaskName}`);
+      console.log(
+        `[baidu] 下载记录为进行中，但客户端未找到任务，重新提交下载：${existingTaskName}`,
+      );
     } else {
       console.log(
         `[baidu] 发现已有客户端下载任务，继续等待：${existingTaskName}` +
@@ -1105,12 +1116,12 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         });
       } catch (error) {
         const message = readableError(error);
-        record = upsertDownloadRecord({
+        upsertDownloadRecord({
           ...record,
           state: "failed",
           error: message,
         });
-        throw new Error(message);
+        throw Object.assign(new Error(message), { cause: error });
       }
     }
   }
@@ -1165,12 +1176,12 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     });
   } catch (error) {
     const message = readableError(error);
-    record = upsertDownloadRecord({
+    upsertDownloadRecord({
       ...record,
       state: "failed",
       error: message,
     });
-    throw new Error(message);
+    throw Object.assign(new Error(message), { cause: error });
   }
 }
 
@@ -1190,7 +1201,11 @@ function readableError(error: unknown) {
       };
       const apiMessage = data.show_msg || data.errmsg || data.message || "";
 
-      if (data.errno === -6 || apiMessage.includes("账户已过期") || apiMessage.includes("重新登陆")) {
+      if (
+        data.errno === -6 ||
+        apiMessage.includes("账户已过期") ||
+        apiMessage.includes("重新登陆")
+      ) {
         return "百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。";
       }
 
@@ -1210,14 +1225,16 @@ function readableError(error: unknown) {
 }
 
 function downloadRecordsResult(): BaiduNetdiskDownloadRecordResult {
+  const repository = getDownloadRecordsRepository();
   return {
-    records: readDownloadRecords(),
-    path: configPath(),
+    path: repository.databasePath,
+    records: repository.list(),
   };
 }
 
 function clearDownloadRecords(): BaiduNetdiskDownloadRecordResult {
-  writeDownloadRecords([]);
+  getDownloadRecordsRepository().clear();
+  broadcastDownloadRecordsChanged();
   return downloadRecordsResult();
 }
 
@@ -1234,10 +1251,13 @@ function broadcastDownloadRecordsChanged() {
 export function registerBaiduNetdiskPlatformHandlers(
   options: RegisterBaiduNetdiskPlatformHandlersOptions = {},
 ) {
-  ipcMain.handle("baidu-netdisk:config:get", (): BaiduNetdiskConfigResult => ({
-    config: readConfig(),
-    path: configPath(),
-  }));
+  ipcMain.handle(
+    "baidu-netdisk:config:get",
+    (): BaiduNetdiskConfigResult => ({
+      config: readConfig(),
+      path: configPath(),
+    }),
+  );
 
   ipcMain.handle("baidu-netdisk:config:save", (_event, config: Partial<BaiduNetdiskConfig>) => {
     const nextConfig = normalizeConfig({

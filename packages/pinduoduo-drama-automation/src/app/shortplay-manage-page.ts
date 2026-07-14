@@ -1,4 +1,4 @@
-import type { BrowserContext, Page } from "playwright";
+import type { BrowserContext, Locator, Page } from "playwright";
 import {
   PINDUODUO_LOGIN_EXPIRED_URL,
   PINDUODUO_MCN_ORIGIN,
@@ -12,8 +12,17 @@ const LOGIN_REDIRECT_WAIT_MS = 10_000;
 const LOGIN_API_WAIT_MS = 12_000;
 const SHORTPLAY_TAB_SWITCH_TIMEOUT_MS = 10_000;
 const SHORTPLAY_TAB_ACTIVE_TIMEOUT_MS = 3_000;
-const SHORTPLAY_TAB_REFRESH_SETTLE_MS = 1_200;
+const SHORTPLAY_LIST_RESPONSE_TIMEOUT_MS = 20_000;
+const SHORTPLAY_TAB_REFRESH_SETTLE_MS = 2_000;
+const SHORTPLAY_ROW_SELECT_TIMEOUT_MS = 30_000;
+const SHORTPLAY_ROW_CHECK_SETTLE_TIMEOUT_MS = 1_500;
+const SHORTPLAY_ROW_READY_SETTLE_MS = 3_000;
+const PINDUODUO_SHORTPLAY_APPLY_LIST_PATH = "/mms/gaia/topic/apply/list";
 const PINDUODUO_USER_INFO_URL = `${PINDUODUO_MCN_ORIGIN}/api/cafe/login/user_info`;
+const SHORTPLAY_MANAGE_TAB_TYPES = {
+  已提报短剧: 1,
+  待提报短剧: 0,
+} as const;
 
 function isPinduoduoLoginRequiredPayload(payload: unknown): boolean {
   if (typeof payload !== "object" || payload === null) {
@@ -261,16 +270,537 @@ async function clickShortplayManageTab(
   });
 }
 
+type ShortplayApplyListWaitResult = {
+  containsExpectedTitle?: boolean;
+  records: ShortplayApplyRecord[];
+  received: boolean;
+  totalCount?: number;
+};
+
+export type ShortplayApplyRecord = {
+  id?: number;
+  rejectReason?: string;
+  status?: number;
+  title: string;
+};
+
+function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
+  if (typeof payload !== "object" || payload === null || !("result" in payload)) {
+    return [];
+  }
+
+  const result = payload.result;
+  if (typeof result !== "object" || result === null || !("list" in result)) {
+    return [];
+  }
+
+  const list = result.list;
+  if (!Array.isArray(list)) {
+    return [];
+  }
+
+  return list.flatMap((item): ShortplayApplyRecord[] => {
+    if (typeof item !== "object" || item === null || !("title" in item)) {
+      return [];
+    }
+
+    const title = item.title;
+    if (typeof title !== "string" || !title.trim()) {
+      return [];
+    }
+
+    return [
+      {
+        id: "id" in item && typeof item.id === "number" ? item.id : undefined,
+        rejectReason:
+          "reject_reason" in item && typeof item.reject_reason === "string"
+            ? item.reject_reason
+            : undefined,
+        status: "status" in item && typeof item.status === "number" ? item.status : undefined,
+        title: title.trim(),
+      },
+    ];
+  });
+}
+
+function shortplayApplyListPayloadTabType(payload: string | null): number | undefined {
+  if (!payload) {
+    return undefined;
+  }
+
+  const parsedPayload = (() => {
+    try {
+      return JSON.parse(payload) as unknown;
+    } catch {
+      return undefined;
+    }
+  })();
+  if (
+    typeof parsedPayload !== "object" ||
+    parsedPayload === null ||
+    !("tab_type" in parsedPayload)
+  ) {
+    return undefined;
+  }
+
+  const tabType = parsedPayload.tab_type;
+  return typeof tabType === "number" ? tabType : undefined;
+}
+
+function shortplayApplyListContainsTitle(payload: unknown, title: string): boolean | undefined {
+  if (typeof payload !== "object" || payload === null || !("result" in payload)) {
+    return undefined;
+  }
+
+  const result = payload.result;
+  if (typeof result !== "object" || result === null || !("list" in result)) {
+    return undefined;
+  }
+
+  const list = result.list;
+  if (!Array.isArray(list)) {
+    return undefined;
+  }
+
+  return list.some(
+    (item) =>
+      typeof item === "object" &&
+      item !== null &&
+      "title" in item &&
+      typeof item.title === "string" &&
+      item.title.trim() === title,
+  );
+}
+
+function shortplayApplyListTotalCount(payload: unknown): number | undefined {
+  if (typeof payload !== "object" || payload === null || !("result" in payload)) {
+    return undefined;
+  }
+
+  const result = payload.result;
+  if (typeof result !== "object" || result === null || !("total_count" in result)) {
+    return undefined;
+  }
+
+  return typeof result.total_count === "number" ? result.total_count : undefined;
+}
+
+async function waitForShortplayApplyListResponse(
+  page: Page,
+  tabType: number,
+  expectedTitle?: string,
+): Promise<ShortplayApplyListWaitResult> {
+  const response = await page
+    .waitForResponse(
+      (nextResponse) => {
+        if (
+          !nextResponse
+            .url()
+            .startsWith(`${PINDUODUO_MCN_ORIGIN}${PINDUODUO_SHORTPLAY_APPLY_LIST_PATH}`)
+        ) {
+          return false;
+        }
+
+        return shortplayApplyListPayloadTabType(nextResponse.request().postData()) === tabType;
+      },
+      { timeout: SHORTPLAY_LIST_RESPONSE_TIMEOUT_MS },
+    )
+    .catch(() => undefined);
+
+  if (!response) {
+    return { received: false, records: [] };
+  }
+
+  const payload = await response.json().catch(() => undefined);
+  const records = readShortplayApplyRecords(payload);
+  return {
+    containsExpectedTitle: expectedTitle
+      ? records.some((record) => record.title === expectedTitle) ||
+        shortplayApplyListContainsTitle(payload, expectedTitle)
+      : undefined,
+    records,
+    received: true,
+    totalCount: shortplayApplyListTotalCount(payload),
+  };
+}
+
+async function clickShortplayManageTabAndWaitForList(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  label: string,
+  expectedTitle?: string,
+): Promise<void> {
+  const tabType = SHORTPLAY_MANAGE_TAB_TYPES[label as keyof typeof SHORTPLAY_MANAGE_TAB_TYPES];
+  const listResponsePromise =
+    typeof tabType === "number"
+      ? waitForShortplayApplyListResponse(page, tabType, expectedTitle)
+      : Promise.resolve({ received: false, records: [] } satisfies ShortplayApplyListWaitResult);
+  await clickShortplayManageTab(page, options, label);
+
+  const listResponse = await listResponsePromise;
+  if (!listResponse.received) {
+    log(
+      options,
+      "warn",
+      "runtime",
+      "shortplay apply list response was not detected after tab click",
+      {
+        label,
+        tabType,
+        timeoutMs: SHORTPLAY_LIST_RESPONSE_TIMEOUT_MS,
+      },
+    );
+  } else {
+    log(options, "info", "runtime", "shortplay apply list response detected after tab click", {
+      containsExpectedTitle: listResponse.containsExpectedTitle,
+      expectedTitle,
+      label,
+      tabType,
+      totalCount: listResponse.totalCount,
+    });
+  }
+
+  await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
+}
+
 export async function refreshShortplayManagePendingList(
   page: Page,
   options: PinduoduoDramaRuntimeOptions,
+  expectedTitle?: string,
 ): Promise<void> {
   log(options, "info", "runtime", "refreshing shortplay manage pending list by switching tabs");
 
-  await clickShortplayManageTab(page, options, "已提报短剧");
-  await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
-  await clickShortplayManageTab(page, options, "待提报短剧");
-  await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
+  await clickShortplayManageTabAndWaitForList(page, options, "已提报短剧");
+  await clickShortplayManageTabAndWaitForList(page, options, "待提报短剧", expectedTitle);
 
   log(options, "info", "runtime", "shortplay manage pending list refreshed");
+}
+
+export async function findSubmittedShortplayApplyRecord(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  title: string,
+  filters: {
+    platformApplyId?: number;
+  } = {},
+): Promise<ShortplayApplyRecord | null> {
+  log(options, "info", "runtime", "checking submitted shortplay apply record", {
+    platformApplyId: filters.platformApplyId,
+    title,
+  });
+
+  const tabType = SHORTPLAY_MANAGE_TAB_TYPES["已提报短剧"];
+  const listResponsePromise = waitForShortplayApplyListResponse(page, tabType, title);
+  await clickShortplayManageTab(page, options, "已提报短剧");
+  const listResponse = await listResponsePromise;
+  const record =
+    (filters.platformApplyId
+      ? listResponse.records.find((nextRecord) => nextRecord.id === filters.platformApplyId)
+      : undefined) ??
+    listResponse.records.find((nextRecord) => nextRecord.title === title) ??
+    null;
+
+  log(options, record ? "info" : "warn", "runtime", "submitted shortplay apply record checked", {
+    platformApplyId: filters.platformApplyId,
+    record,
+    title,
+  });
+  return record;
+}
+
+async function clickShortplaySubmitAgreement(page: Page): Promise<void> {
+  await page
+    .evaluate(() => {
+      const agreementText = Array.from(document.querySelectorAll<HTMLElement>("*")).find(
+        (element) => element.textContent?.trim().startsWith("我已阅读并同意"),
+      );
+      const container = agreementText?.closest("div");
+      const checkbox =
+        container?.querySelector<HTMLElement>('[data-testid="beast-core-checkbox"]') ??
+        container?.querySelector<HTMLElement>('input[type="checkbox"]');
+      checkbox?.click();
+      return Boolean(checkbox);
+    })
+    .catch(() => false);
+}
+
+export async function submitSelectedShortplaysForAudit(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+): Promise<void> {
+  log(options, "info", "runtime", "submitting selected shortplays for audit");
+
+  await clickShortplaySubmitAgreement(page);
+  const submitButton = page.getByText("提报全部", { exact: true }).last();
+  await submitButton.waitFor({ state: "visible", timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+  await submitButton.click({ force: true, timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+  await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
+
+  log(options, "info", "runtime", "selected shortplays submitted for audit");
+}
+
+type ShortplayRowCheckboxState = {
+  checked: boolean;
+  found: boolean;
+  hasCheckbox: boolean;
+};
+
+function shortplayTitleCellLocator(page: Page, title: string): Locator {
+  return page
+    .locator('td[data-testid="beast-core-table-td"]')
+    .filter({ hasText: new RegExp(`^\\s*${escapeRegex(title)}\\s*$`) })
+    .first();
+}
+
+function shortplayCheckCellLocator(page: Page, title: string): Locator {
+  return shortplayTitleCellLocator(page, title).locator("xpath=preceding-sibling::td[1]");
+}
+
+async function waitForShortplayTitleCell(page: Page, title: string): Promise<void> {
+  await shortplayTitleCellLocator(page, title).waitFor({
+    state: "visible",
+    timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS,
+  });
+}
+
+async function waitForShortplayRowReadyBeforeSelect(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  title: string,
+): Promise<void> {
+  const startedAt = Date.now();
+  await waitForShortplayTitleCell(page, title);
+
+  log(options, "info", "runtime", "shortplay manage row title found, waiting before selecting", {
+    settleMs: SHORTPLAY_ROW_READY_SETTLE_MS,
+    title,
+  });
+
+  await page.waitForTimeout(SHORTPLAY_ROW_READY_SETTLE_MS);
+  await waitForShortplayTitleCell(page, title);
+
+  log(options, "info", "runtime", "shortplay manage row is ready for selecting", {
+    elapsedMs: Date.now() - startedAt,
+    title,
+  });
+}
+
+async function readShortplayRowCheckboxState(
+  page: Page,
+  title: string,
+): Promise<ShortplayRowCheckboxState> {
+  return page.evaluate((expectedTitle) => {
+    const titleCell = Array.from(
+      document.querySelectorAll<HTMLElement>('td[data-testid="beast-core-table-td"]'),
+    ).find((element) => element.textContent?.trim() === expectedTitle);
+    const checkCell = titleCell?.previousElementSibling;
+    if (!(checkCell instanceof HTMLElement)) {
+      return {
+        checked: false,
+        found: false,
+        hasCheckbox: false,
+      };
+    }
+
+    const checkboxLabel = checkCell.querySelector<HTMLElement>(
+      '[data-testid="beast-core-checkbox"]',
+    );
+    const input = checkCell.querySelector<HTMLInputElement>('input[type="checkbox"]');
+    return {
+      checked: checkboxLabel?.dataset.checked === "true" || input?.checked === true,
+      found: true,
+      hasCheckbox: Boolean(checkboxLabel ?? input),
+    };
+  }, title);
+}
+
+async function waitForShortplayRowChecked(
+  page: Page,
+  title: string,
+  timeout = SHORTPLAY_ROW_CHECK_SETTLE_TIMEOUT_MS,
+): Promise<boolean> {
+  return page
+    .waitForFunction(
+      (expectedTitle) => {
+        const titleCell = Array.from(
+          document.querySelectorAll<HTMLElement>('td[data-testid="beast-core-table-td"]'),
+        ).find((element) => element.textContent?.trim() === expectedTitle);
+        const checkCell = titleCell?.previousElementSibling;
+        if (!(checkCell instanceof HTMLElement)) {
+          return false;
+        }
+
+        const checkboxLabel = checkCell.querySelector<HTMLElement>(
+          '[data-testid="beast-core-checkbox"]',
+        );
+        const input = checkCell.querySelector<HTMLInputElement>('input[type="checkbox"]');
+        return checkboxLabel?.dataset.checked === "true" || input?.checked === true;
+      },
+      title,
+      { timeout },
+    )
+    .then(() => true)
+    .catch(() => false);
+}
+
+async function clickShortplayRowCheckboxLocator(
+  page: Page,
+  title: string,
+  target: Locator,
+  actionName: string,
+  attempts: string[],
+): Promise<boolean> {
+  attempts.push(actionName);
+  await target.click({ force: true, timeout: 3_000 });
+  return waitForShortplayRowChecked(page, title);
+}
+
+async function setShortplayRowCheckboxLocator(
+  page: Page,
+  title: string,
+  target: Locator,
+  attempts: string[],
+): Promise<boolean> {
+  attempts.push("input.setChecked");
+  await target.setChecked(true, { force: true, timeout: 3_000 });
+  return waitForShortplayRowChecked(page, title);
+}
+
+async function clickShortplayRowCheckboxCenter(
+  page: Page,
+  title: string,
+  checkCell: Locator,
+  attempts: string[],
+): Promise<boolean> {
+  attempts.push("checkbox-cell.mouse");
+  const box = await checkCell.boundingBox({ timeout: 3_000 });
+  if (!box) {
+    return false;
+  }
+
+  await page.mouse.click(box.x + Math.min(24, box.width / 2), box.y + box.height / 2);
+  return waitForShortplayRowChecked(page, title);
+}
+
+async function selectShortplayRowCheckbox(
+  page: Page,
+  title: string,
+): Promise<{
+  attempts: string[];
+  checkedBeforeClick: boolean;
+  checkedAfterClick: boolean;
+  found: boolean;
+  hasCheckbox: boolean;
+}> {
+  const attempts: string[] = [];
+  const checkCell = shortplayCheckCellLocator(page, title);
+  await checkCell.waitFor({ state: "attached", timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+
+  const beforeState = await readShortplayRowCheckboxState(page, title);
+  if (!beforeState.found || !beforeState.hasCheckbox || beforeState.checked) {
+    return {
+      attempts,
+      checkedAfterClick: beforeState.checked,
+      checkedBeforeClick: beforeState.checked,
+      found: beforeState.found,
+      hasCheckbox: beforeState.hasCheckbox,
+    };
+  }
+
+  const targets: Array<[string, Locator]> = [
+    [
+      "checkbox-checkIcon.click",
+      checkCell.locator('[data-testid="beast-core-checkbox-checkIcon"]').first(),
+    ],
+    ["checkbox-label.click", checkCell.locator('[data-testid="beast-core-checkbox"]').first()],
+    ["input.click", checkCell.locator('input[type="checkbox"]').first()],
+  ];
+
+  for (const [actionName, target] of targets) {
+    const checked = await clickShortplayRowCheckboxLocator(
+      page,
+      title,
+      target,
+      actionName,
+      attempts,
+    ).catch(() => false);
+    if (checked) {
+      return {
+        attempts,
+        checkedAfterClick: true,
+        checkedBeforeClick: false,
+        found: true,
+        hasCheckbox: true,
+      };
+    }
+  }
+
+  const checkedBySetChecked = await setShortplayRowCheckboxLocator(
+    page,
+    title,
+    checkCell.locator('input[type="checkbox"]').first(),
+    attempts,
+  ).catch(() => false);
+  if (checkedBySetChecked) {
+    return {
+      attempts,
+      checkedAfterClick: true,
+      checkedBeforeClick: false,
+      found: true,
+      hasCheckbox: true,
+    };
+  }
+
+  const checkedByCellCenter = await clickShortplayRowCheckboxCenter(
+    page,
+    title,
+    checkCell,
+    attempts,
+  ).catch(() => false);
+  const afterState = await readShortplayRowCheckboxState(page, title);
+  return {
+    attempts,
+    checkedAfterClick: checkedByCellCenter || afterState.checked,
+    checkedBeforeClick: false,
+    found: afterState.found,
+    hasCheckbox: afterState.hasCheckbox,
+  };
+}
+
+export async function selectShortplayManageRowByTitle(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  title: string,
+): Promise<boolean> {
+  log(options, "info", "runtime", "checking shortplay manage row before selecting", {
+    title,
+  });
+
+  await waitForShortplayRowReadyBeforeSelect(page, options, title);
+  const result = await selectShortplayRowCheckbox(page, title);
+  if (!result.found) {
+    log(options, "warn", "runtime", "shortplay manage row title was not found", {
+      title,
+    });
+    return false;
+  }
+
+  if (!result.hasCheckbox) {
+    log(options, "warn", "runtime", "shortplay manage row checkbox was not found", {
+      title,
+    });
+    return false;
+  }
+
+  if (!result.checkedAfterClick) {
+    throw new Error(`Pinduoduo shortplay manage row checkbox was not checked: ${title}`);
+  }
+
+  log(options, "info", "runtime", "shortplay manage row selected", {
+    checkedAfterClick: result.checkedAfterClick,
+    checkedBeforeClick: result.checkedBeforeClick,
+    clickAttempts: result.attempts,
+    title,
+  });
+  return true;
 }

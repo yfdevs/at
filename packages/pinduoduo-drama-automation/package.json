@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@drama/axios": "workspace:*",
+    "better-sqlite3": "^12.11.1",
     "playwright": "latest",
     "zod": "3.22.4"
   },

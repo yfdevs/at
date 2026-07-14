@@ -8,6 +8,7 @@ import {
   type ClaimedPinduoduoDramaTask,
   type PinduoduoDramaApiConfig,
   type PinduoduoDramaTaskFailStage,
+  type PinduoduoDramaTaskStatus,
 } from "../shared/types.js";
 import { createPinduoduoDramaHttpClient, type PinduoduoDramaHttpClient } from "./http-client.js";
 
@@ -28,6 +29,7 @@ export interface ClaimNextPinduoduoDramaTaskOptions extends PinduoduoDramaTaskAp
   excludedAccountTaskIds?: ReadonlySet<number>;
   pinduoduoAccountId?: string;
   pinduoduoAccountName?: string;
+  rpaStatus?: PinduoduoDramaTaskStatus;
 }
 
 export interface ClaimPinduoduoDramaTaskByIdOptions extends PinduoduoDramaTaskApiOptions {
@@ -38,6 +40,8 @@ export interface ClaimPinduoduoDramaTaskByIdOptions extends PinduoduoDramaTaskAp
 
 export interface PinduoduoDramaTaskSuccessReport extends PinduoduoDramaTaskApiOptions {
   accountTaskId: number;
+  resultJson?: Record<string, unknown>;
+  rpaStatus?: PinduoduoDramaTaskStatus;
 }
 
 export interface PinduoduoDramaTaskErrorReport extends PinduoduoDramaTaskApiOptions {
@@ -140,6 +144,9 @@ const mockClaimedTask = pinduoduoDramaClaimedTaskSchema.parse({
     coverImageUrl: "https://example.com/mock-cover.jpg",
     episodeVideoUrls: [],
     authorName: "许知夏",
+    productionProofFileUrl:
+      "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
+    licenseProofFileUrl: "https://www.w3.org/WAI/ER/tests/xhtml/testfiles/resources/pdf/dummy.pdf",
   },
 });
 
@@ -204,7 +211,7 @@ async function findNextUnclaimedAccountTaskId(
     page: 1,
     pageSize: 100,
     pinduoduoAccountId: options.pinduoduoAccountId,
-    rpaStatus: "READY",
+    rpaStatus: options.rpaStatus ?? "READY",
   };
 
   logger.info("account task page request", {
@@ -322,7 +329,7 @@ export async function claimNextPinduoduoDramaTaskApi(
     logger.info("no claimable account task", {
       pinduoduoAccountId: options.pinduoduoAccountId,
       pinduoduoAccountName: options.pinduoduoAccountName,
-      rpaStatus: "READY",
+      rpaStatus: options.rpaStatus ?? "READY",
     });
     return null;
   }
@@ -347,6 +354,8 @@ export async function reportPinduoduoDramaTaskSuccessApi(
   const client = clientOf(report);
   const requestPayload = {
     accountTaskId: report.accountTaskId,
+    resultJson: report.resultJson ?? {},
+    rpaStatus: report.rpaStatus,
   };
 
   logger.info("success callback request", {
