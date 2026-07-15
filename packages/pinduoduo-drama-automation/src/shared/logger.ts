@@ -1,9 +1,12 @@
-import { appendFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, stat, unlink } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import pino, { type Logger as PinoLogger } from "pino";
 import type { PinduoduoDramaRuntimeOptions } from "./types.js";
 
 export type PinduoduoDramaLogLevel = "info" | "warn" | "error";
 export type PinduoduoDramaLogFields = Record<string, unknown>;
+
+const fileLoggers = new Map<string, PinoLogger>();
 
 function formatChineseDateTime(date: Date): string {
   const year = date.getFullYear();
@@ -15,6 +18,33 @@ function formatChineseDateTime(date: Date): string {
   const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
 
   return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
+}
+
+function getPinoFileLogger(logFilePath: string): PinoLogger {
+  const cachedLogger = fileLoggers.get(logFilePath);
+  if (cachedLogger) {
+    return cachedLogger;
+  }
+
+  const logger = pino(
+    {
+      base: null,
+      messageKey: "message",
+      timestamp: () => `,"time":"${formatChineseDateTime(new Date())}"`,
+      formatters: {
+        level(label) {
+          return { level: label };
+        },
+      },
+    },
+    pino.destination({
+      dest: logFilePath,
+      mkdir: true,
+      sync: false,
+    }),
+  );
+  fileLoggers.set(logFilePath, logger);
+  return logger;
 }
 
 function normalizeFields(fields: PinduoduoDramaLogFields = {}): Record<string, unknown> {
@@ -34,29 +64,35 @@ function normalizeFields(fields: PinduoduoDramaLogFields = {}): Record<string, u
   return normalized;
 }
 
-async function writeLogFile(
+function buildLogFields(
+  options: PinduoduoDramaRuntimeOptions | undefined,
+  scope: string,
+  fields?: PinduoduoDramaLogFields,
+): Record<string, unknown> {
+  return {
+    platform: "pinduoduo-drama",
+    scope,
+    accountProfileName: options?.accountProfileName,
+    ...normalizeFields(fields),
+  };
+}
+
+function writeLogFile(
   options: PinduoduoDramaRuntimeOptions | undefined,
   level: PinduoduoDramaLogLevel,
   scope: string,
   message: string,
   fields?: PinduoduoDramaLogFields,
-): Promise<void> {
+): void {
   if (!options?.logFilePath) {
     return;
   }
 
-  const record = {
-    time: formatChineseDateTime(new Date()),
-    level,
-    platform: "pinduoduo-drama",
-    scope,
-    accountProfileName: options.accountProfileName,
-    ...normalizeFields(fields),
-    message,
-  };
-
-  await mkdir(dirname(options.logFilePath), { recursive: true });
-  await appendFile(options.logFilePath, `${JSON.stringify(record)}\n`, "utf8");
+  try {
+    getPinoFileLogger(options.logFilePath)[level](buildLogFields(options, scope, fields), message);
+  } catch {
+    // Keep logging best-effort; filesystem failures must not break task execution.
+  }
 }
 
 export function log(
@@ -66,12 +102,11 @@ export function log(
   message: string,
   fields?: PinduoduoDramaLogFields,
 ): void {
+  const fieldsRecord = buildLogFields(options, scope, fields);
   const record = {
     time: formatChineseDateTime(new Date()),
     level,
-    platform: "pinduoduo-drama",
-    scope,
-    ...normalizeFields(fields),
+    ...fieldsRecord,
     message,
   };
   if (options?.onLog) {
@@ -79,7 +114,7 @@ export function log(
   } else {
     console[level](JSON.stringify(record));
   }
-  void writeLogFile(options, level, scope, message, fields).catch(() => undefined);
+  writeLogFile(options, level, scope, message, fields);
 }
 
 export function createLogger(scope: string, options?: PinduoduoDramaRuntimeOptions) {

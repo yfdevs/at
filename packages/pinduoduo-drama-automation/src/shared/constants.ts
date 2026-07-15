@@ -1,10 +1,12 @@
 export const PINDUODUO_DRAMA_PLATFORM = "pinduoduo-drama";
+export const PINDUODUO_CREATOR_MANAGEMENT_LIST_URL = "https://mcn.pinduoduo.com/home/management";
 export const PINDUODUO_SHORTPLAY_MANAGE_URL = "https://mcn.pinduoduo.com/home/shortplayManage";
-export const PINDUODUO_SHORTPLAY_APPLY_EDIT_URL = "https://mcn.pinduoduo.com/mms/gaia/topic/apply/edit";
+export const PINDUODUO_SHORTPLAY_APPLY_EDIT_URL =
+  "https://mcn.pinduoduo.com/mms/gaia/topic/apply/edit";
 export const PINDUODUO_LOGIN_EXPIRED_URL = "https://mcn.pinduoduo.com/register";
 export const PINDUODUO_MCN_ORIGIN = "https://mcn.pinduoduo.com";
-// 授权到期日期默认 2026-10-29 00:00:00 +08:00，接口字段 copyright_expire_time 使用毫秒时间戳。
-export const PINDUODUO_DEFAULT_COPYRIGHT_EXPIRE_TIME = 1793203200000;
+// 授权到期日期默认 2026-10-19 00:00:00 +08:00，接口字段 copyright_expire_time 使用毫秒时间戳。
+export const PINDUODUO_DEFAULT_COPYRIGHT_EXPIRE_TIME = 1792348800000;
 
 export const PINDUODUO_DRAMA_CATEGORY_OPTIONS = {
   "5412": "言情",

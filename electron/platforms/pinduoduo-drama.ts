@@ -1,4 +1,4 @@
-import { app, ipcMain, screen } from "electron";
+import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -42,7 +42,7 @@ export type PinduoduoDramaConfig = {
   operationDelaySeconds: string;
   runDataDir: string;
   logRetentionDays: string;
-  browserWindowWidth: string;
+  taskPollIntervalMinutes: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
 };
@@ -78,7 +78,7 @@ const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
   operationDelaySeconds: "0",
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
-  browserWindowWidth: "0",
+  taskPollIntervalMinutes: "120",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
 };
@@ -180,10 +180,10 @@ function normalizeConfig(
         ? defaultPinduoduoDramaConfig.runDataDir
         : config.runDataDir,
     logRetentionDays: config.logRetentionDays ?? defaultPinduoduoDramaConfig.logRetentionDays,
-    browserWindowWidth: normalizePositiveInteger(
-      config.browserWindowWidth,
-      defaultPinduoduoDramaConfig.browserWindowWidth,
-      800,
+    taskPollIntervalMinutes: normalizePositiveInteger(
+      config.taskPollIntervalMinutes,
+      defaultPinduoduoDramaConfig.taskPollIntervalMinutes,
+      1,
     ),
     localEpisodeVideoRoot:
       config.localEpisodeVideoRoot ?? defaultPinduoduoDramaConfig.localEpisodeVideoRoot,
@@ -322,9 +322,6 @@ async function startRuntime() {
   ensureStorageDirectories(paths);
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
   const logRetentionDays = Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3);
-  const workAreaSize = screen.getPrimaryDisplay().workAreaSize;
-  const browserWindowWidth = Number.parseInt(config.browserWindowWidth, 10) || workAreaSize.width;
-  const browserWindowHeight = workAreaSize.height;
   const { startPinduoduoDramaRuntime } = await import("@drama/pinduoduo-drama-automation");
 
   return startPinduoduoDramaRuntime({
@@ -344,9 +341,8 @@ async function startRuntime() {
       browser: {
         headless: config.headless === "true",
         slowMo: operationDelayMs,
-        windowWidth: browserWindowWidth,
-        windowHeight: browserWindowHeight,
       },
+      taskPollIntervalMinutes: config.taskPollIntervalMinutes,
       video: {
         baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts,
         localEpisodeVideoRoot: config.localEpisodeVideoRoot,

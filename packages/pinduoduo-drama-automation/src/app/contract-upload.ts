@@ -6,6 +6,7 @@ import type { ClaimedPinduoduoDramaTask, PinduoduoDramaRuntimeOptions } from "..
 
 const CONTRACT_DOWNLOAD_TIMEOUT_MS = 120_000;
 const CONTRACT_UPLOAD_INPUT_TIMEOUT_MS = 30_000;
+const CONTRACT_REQUIRED_FILE_COUNT = 2;
 const CONTRACT_UPLOAD_INPUT_SELECTOR =
   'input[data-testid="beast-core-upload-input"][type="file"][accept=".pdf"]';
 const invalidFileNameChars = new Set(["<", ">", ":", '"', "/", "\\", "|", "?", "*"]);
@@ -100,11 +101,12 @@ async function downloadContractAsset(
   }
 }
 
-async function waitForUploadedContractFileNames(
+async function waitForUploadedContractPreviews(
   page: Page,
   filePaths: string[],
   options: PinduoduoDramaRuntimeOptions,
 ): Promise<void> {
+  const expectedCount = filePaths.length;
   const fileNames = filePaths
     .map((filePath) => {
       const parts = filePath.split(/[\\/]/);
@@ -112,19 +114,54 @@ async function waitForUploadedContractFileNames(
     })
     .filter(Boolean);
 
-  await Promise.all(
-    fileNames.map(async (fileName) => {
-      await page
-        .getByText(fileName!, { exact: false })
-        .first()
-        .waitFor({ state: "visible", timeout: CONTRACT_UPLOAD_INPUT_TIMEOUT_MS })
-        .catch(() => {
-          log(options, "warn", "runtime", "uploaded contract file name was not visible", {
-            fileName,
-          });
-        });
-    }),
+  await page.waitForFunction(
+    (count) => {
+      const completedPreviews = Array.from(
+        document.querySelectorAll<HTMLAnchorElement>('a[data-testid="beast-core-upload-preview"]'),
+      ).filter((anchor) => {
+        const href = anchor.getAttribute("href")?.trim();
+        const text = anchor.textContent?.trim() ?? "";
+        const successIcon = anchor.querySelector(
+          '[data-testid="beast-core-icon-check-circle_filled"]',
+        );
+
+        return Boolean(href && text.toLowerCase().includes(".pdf") && successIcon);
+      });
+
+      return completedPreviews.length >= count;
+    },
+    expectedCount,
+    { timeout: CONTRACT_UPLOAD_INPUT_TIMEOUT_MS },
   );
+
+  const previews = await page.evaluate(() =>
+    Array.from(
+      document.querySelectorAll<HTMLAnchorElement>('a[data-testid="beast-core-upload-preview"]'),
+    )
+      .map((anchor) => {
+        const href = anchor.getAttribute("href")?.trim() ?? null;
+        const text = anchor.textContent?.trim() ?? null;
+        const completed = Boolean(
+          href &&
+            (text ?? "").toLowerCase().includes(".pdf") &&
+            anchor.querySelector(
+              '[data-testid="beast-core-icon-check-circle_filled"]',
+            ),
+        );
+        return {
+          completed,
+          href,
+          text,
+        };
+      })
+      .filter((preview) => preview.completed),
+  );
+
+  log(options, "info", "runtime", "pinduoduo contract upload previews completed in ui", {
+    expectedCount,
+    files: fileNames,
+    previews,
+  });
 }
 
 export async function uploadPinduoduoContractFiles(
@@ -133,20 +170,24 @@ export async function uploadPinduoduoContractFiles(
   task: ClaimedPinduoduoDramaTask,
 ): Promise<void> {
   const assets = taskContractAssets(task);
-  if (!assets.length) {
-    log(options, "info", "runtime", "pinduoduo contract upload skipped, no contract urls", {
+  if (assets.length !== CONTRACT_REQUIRED_FILE_COUNT) {
+    log(options, "error", "runtime", "pinduoduo contract upload missing required contract urls", {
       accountTaskId: task.accountTaskId,
+      contractCount: assets.length,
       dramaId: task.dramaId,
+      requiredContractCount: CONTRACT_REQUIRED_FILE_COUNT,
       title: task.playlet.title,
     });
-    return;
+    throw new Error(
+      `Pinduoduo contract upload requires ${CONTRACT_REQUIRED_FILE_COUNT} PDF files, got ${assets.length}`,
+    );
   }
 
   const filePaths = await Promise.all(assets.map((asset) => downloadContractAsset(asset, options)));
   const uploadInput = page.locator(CONTRACT_UPLOAD_INPUT_SELECTOR).first();
   await uploadInput.waitFor({ state: "attached", timeout: CONTRACT_UPLOAD_INPUT_TIMEOUT_MS });
   await uploadInput.setInputFiles(filePaths, { timeout: CONTRACT_UPLOAD_INPUT_TIMEOUT_MS });
-  await waitForUploadedContractFileNames(page, filePaths, options);
+  await waitForUploadedContractPreviews(page, filePaths, options);
 
   log(options, "info", "runtime", "pinduoduo contract files uploaded", {
     accountTaskId: task.accountTaskId,

@@ -17,7 +17,10 @@ const SHORTPLAY_TAB_REFRESH_SETTLE_MS = 2_000;
 const SHORTPLAY_ROW_SELECT_TIMEOUT_MS = 30_000;
 const SHORTPLAY_ROW_CHECK_SETTLE_TIMEOUT_MS = 1_500;
 const SHORTPLAY_ROW_READY_SETTLE_MS = 3_000;
+const SHORTPLAY_SUBMIT_TOAST_TIMEOUT_MS = 3_000;
+const SUBMITTED_SHORTPLAY_APPLY_LIST_PAGE_SIZE = 2_000;
 const PINDUODUO_SHORTPLAY_APPLY_LIST_PATH = "/mms/gaia/topic/apply/list";
+const PINDUODUO_SHORTPLAY_APPLY_LIST_URL = `${PINDUODUO_MCN_ORIGIN}${PINDUODUO_SHORTPLAY_APPLY_LIST_PATH}`;
 const PINDUODUO_USER_INFO_URL = `${PINDUODUO_MCN_ORIGIN}/api/cafe/login/user_info`;
 const SHORTPLAY_MANAGE_TAB_TYPES = {
   已提报短剧: 1,
@@ -284,6 +287,13 @@ export type ShortplayApplyRecord = {
   title: string;
 };
 
+export type ShortplaySubmittedApplyListResult = {
+  page: number;
+  pageSize: number;
+  records: ShortplayApplyRecord[];
+  totalCount?: number;
+};
+
 function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
   if (typeof payload !== "object" || payload === null || !("result" in payload)) {
     return [];
@@ -424,6 +434,82 @@ async function waitForShortplayApplyListResponse(
   };
 }
 
+export async function fetchSubmittedShortplayApplyRecords(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  request: {
+    page?: number;
+    pageSize?: number;
+  } = {},
+): Promise<ShortplaySubmittedApplyListResult> {
+  const pageNumber = request.page ?? 1;
+  const pageSize = request.pageSize ?? SUBMITTED_SHORTPLAY_APPLY_LIST_PAGE_SIZE;
+  log(options, "info", "runtime", "fetching submitted shortplay apply records by api", {
+    page: pageNumber,
+    pageSize,
+    url: PINDUODUO_SHORTPLAY_APPLY_LIST_URL,
+  });
+
+  const result = await page.evaluate(
+    async ({ requestBody, url }) => {
+      const response = await fetch(url, {
+        body: JSON.stringify(requestBody),
+        credentials: "include",
+        headers: {
+          accept: "*/*",
+          "content-type": "application/json",
+        },
+        method: "POST",
+        mode: "cors",
+        referrer: "https://mcn.pinduoduo.com/home/shortplayManage",
+      });
+      const text = await response.text();
+      let payload: unknown = text;
+      try {
+        payload = text ? JSON.parse(text) : {};
+      } catch {
+        payload = { message: text };
+      }
+
+      return {
+        ok: response.ok,
+        payload,
+        status: response.status,
+        statusText: response.statusText,
+      };
+    },
+    {
+      requestBody: {
+        page: pageNumber,
+        page_size: pageSize,
+        tab_type: SHORTPLAY_MANAGE_TAB_TYPES["已提报短剧"],
+      },
+      url: PINDUODUO_SHORTPLAY_APPLY_LIST_URL,
+    },
+  );
+
+  if (!result.ok) {
+    throw new Error(
+      `Pinduoduo submitted shortplay apply list failed: HTTP ${result.status} ${result.statusText}`,
+    );
+  }
+
+  const records = readShortplayApplyRecords(result.payload);
+  const totalCount = shortplayApplyListTotalCount(result.payload);
+  log(options, "info", "runtime", "submitted shortplay apply records fetched by api", {
+    page: pageNumber,
+    pageSize,
+    records: records.length,
+    totalCount,
+  });
+  return {
+    page: pageNumber,
+    pageSize,
+    records,
+    totalCount,
+  };
+}
+
 async function clickShortplayManageTabAndWaitForList(
   page: Page,
   options: PinduoduoDramaRuntimeOptions,
@@ -508,20 +594,77 @@ export async function findSubmittedShortplayApplyRecord(
   return record;
 }
 
-async function clickShortplaySubmitAgreement(page: Page): Promise<void> {
-  await page
-    .evaluate(() => {
-      const agreementText = Array.from(document.querySelectorAll<HTMLElement>("*")).find(
-        (element) => element.textContent?.trim().startsWith("我已阅读并同意"),
+async function ensureShortplaySubmitAgreementChecked(page: Page): Promise<void> {
+  const agreementText = page
+    .locator('div[class*="CBX_textWrapper"]')
+    .filter({ hasText: /^我已阅读并同意/ })
+    .last();
+  const checkboxWrapper = agreementText.locator("xpath=preceding-sibling::div[1]");
+  const checkboxInput = checkboxWrapper.locator('input[type="checkbox"]').first();
+
+  await agreementText.waitFor({ state: "visible", timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+  await checkboxInput.waitFor({ state: "attached", timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+
+  const wasAlreadyChecked = await checkboxInput.evaluate(
+    (input) => input instanceof HTMLInputElement && input.checked,
+  );
+
+  if (!wasAlreadyChecked) {
+    await checkboxWrapper.click({ force: true, timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+    await page.waitForFunction(
+      (input) => input instanceof HTMLInputElement && input.checked,
+      await checkboxInput.elementHandle(),
+      { timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS },
+    );
+  }
+}
+
+function shortplaySubmitAllButton(page: Page): Locator {
+  return page
+    .locator('button[data-testid="beast-core-button"]')
+    .filter({ hasText: /^提报全部$/ })
+    .last();
+}
+
+async function waitForShortplaySubmitAllButtonEnabled(page: Page): Promise<void> {
+  await page.waitForFunction(
+    () => {
+      const buttons = Array.from(
+        document.querySelectorAll<HTMLButtonElement>('button[data-testid="beast-core-button"]'),
       );
-      const container = agreementText?.closest("div");
-      const checkbox =
-        container?.querySelector<HTMLElement>('[data-testid="beast-core-checkbox"]') ??
-        container?.querySelector<HTMLElement>('input[type="checkbox"]');
-      checkbox?.click();
-      return Boolean(checkbox);
-    })
-    .catch(() => false);
+      const submitButton = buttons.find((button) => button.textContent?.trim() === "提报全部");
+      return Boolean(submitButton && !submitButton.disabled);
+    },
+    undefined,
+    { timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS },
+  );
+}
+
+async function getShortplaySubmitToastMessage(page: Page): Promise<string | null> {
+  const toast = page
+    .locator(
+      [
+        'div[data-testid="beast-core-toast"] div[class*="TST_noticeWarn"]',
+        'div[data-testid="beast-core-toast"] div[class*="TST_noticeError"]',
+      ].join(", "),
+    )
+    .last();
+
+  const visibleToast = await toast
+    .waitFor({ state: "visible", timeout: SHORTPLAY_SUBMIT_TOAST_TIMEOUT_MS })
+    .then(() => toast)
+    .catch(() => null);
+
+  if (!visibleToast) {
+    return null;
+  }
+
+  return visibleToast
+    .locator('div[class*="TST_noticeContent"]')
+    .last()
+    .textContent({ timeout: SHORTPLAY_SUBMIT_TOAST_TIMEOUT_MS })
+    .then((text) => text?.trim() || null)
+    .catch(() => null);
 }
 
 export async function submitSelectedShortplaysForAudit(
@@ -530,10 +673,18 @@ export async function submitSelectedShortplaysForAudit(
 ): Promise<void> {
   log(options, "info", "runtime", "submitting selected shortplays for audit");
 
-  await clickShortplaySubmitAgreement(page);
-  const submitButton = page.getByText("提报全部", { exact: true }).last();
-  await submitButton.waitFor({ state: "visible", timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
-  await submitButton.click({ force: true, timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+  await ensureShortplaySubmitAgreementChecked(page);
+  await waitForShortplaySubmitAllButtonEnabled(page);
+  const submitButton = shortplaySubmitAllButton(page);
+  await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
+  await submitButton.click({ timeout: SHORTPLAY_ROW_SELECT_TIMEOUT_MS });
+  const toastMessage = await getShortplaySubmitToastMessage(page);
+  if (toastMessage) {
+    log(options, "error", "runtime", "pinduoduo shortplay submit failed with platform toast", {
+      toastMessage,
+    });
+    throw new Error(`Pinduoduo shortplay submit failed: ${toastMessage}`);
+  }
   await page.waitForTimeout(SHORTPLAY_TAB_REFRESH_SETTLE_MS);
 
   log(options, "info", "runtime", "selected shortplays submitted for audit");

@@ -6,7 +6,7 @@ export type PinduoduoDramaConfig = {
   operationDelaySeconds: string;
   runDataDir: string;
   logRetentionDays: string;
-  browserWindowWidth: string;
+  taskPollIntervalMinutes: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
 };

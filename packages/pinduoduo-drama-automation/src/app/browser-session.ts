@@ -5,16 +5,10 @@ import { PINDUODUO_LOGIN_EXPIRED_URL, PINDUODUO_MCN_ORIGIN } from "../shared/con
 import { log } from "../shared/logger.js";
 import type { PinduoduoDramaLoginState, PinduoduoDramaRuntimeOptions } from "../shared/types.js";
 
-function pinduoduoBrowserLaunchOptions(
-  options: PinduoduoDramaRuntimeOptions,
-  windowWidth: number,
-  windowHeight: number,
-) {
+function pinduoduoBrowserLaunchOptions(options: PinduoduoDramaRuntimeOptions) {
   return {
     args: [
       "--disable-blink-features=AutomationControlled",
-      "--window-position=0,0",
-      `--window-size=${windowWidth},${windowHeight}`,
     ],
     extraHTTPHeaders: {
       "accept-language": "zh-CN,zh;q=0.9,en;q=0.8",
@@ -31,10 +25,8 @@ function pinduoduoBrowserLaunchOptions(
 export async function launchPinduoduoBrowserContext(
   userDataDir: string,
   options: PinduoduoDramaRuntimeOptions,
-  windowWidth: number,
-  windowHeight: number,
 ): Promise<BrowserContext> {
-  const launchOptions = pinduoduoBrowserLaunchOptions(options, windowWidth, windowHeight);
+  const launchOptions = pinduoduoBrowserLaunchOptions(options);
 
   try {
     const context = await chromium.launchPersistentContext(userDataDir, {

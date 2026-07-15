@@ -5,6 +5,7 @@ import type {
 } from "../shared/types.js";
 import type { ShortplayApplyRecord } from "../app/shortplay-manage-page.js";
 import { migratePinduoduoApplyRecords } from "./pinduoduo-apply-records-schema.js";
+import { pinduoduoTaskPollIntervalMs } from "../shared/polling.js";
 import type {
   PinduoduoLocalAuditStatus,
   PinduoduoTrackedApplyRecord,
@@ -13,14 +14,34 @@ import type {
 import { openAutomationDatabase } from "./database.js";
 import { nullsToUndefined } from "./record-utils.js";
 
-const AUDIT_CHECK_DELAY_MS = 2 * 60 * 60 * 1000;
+const CHINA_TIME_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+const AUDIT_CHECK_NIGHT_START_HOUR = 0;
+const AUDIT_CHECK_NIGHT_END_HOUR = 8;
 
 function nowIso(): string {
   return new Date().toISOString();
 }
 
-function nextAuditCheckIso(date = new Date()): string {
-  return new Date(date.getTime() + AUDIT_CHECK_DELAY_MS).toISOString();
+function nextAuditCheckIso(delayMs: number, date = new Date()): string {
+  const nextCheck = new Date(date.getTime() + delayMs);
+  const chinaDate = new Date(nextCheck.getTime() + CHINA_TIME_UTC_OFFSET_MS);
+  const hour = chinaDate.getUTCHours();
+
+  if (hour >= AUDIT_CHECK_NIGHT_START_HOUR && hour < AUDIT_CHECK_NIGHT_END_HOUR) {
+    return new Date(
+      Date.UTC(
+        chinaDate.getUTCFullYear(),
+        chinaDate.getUTCMonth(),
+        chinaDate.getUTCDate(),
+        AUDIT_CHECK_NIGHT_END_HOUR,
+        0,
+        0,
+        0,
+      ) - CHINA_TIME_UTC_OFFSET_MS,
+    ).toISOString();
+  }
+
+  return nextCheck.toISOString();
 }
 
 const pinduoduoApplyRecordSelect = `
@@ -132,7 +153,7 @@ export class PinduoduoApplyRecordsRepository {
         accountTaskId: task.accountTaskId,
         createdAt: timestamp,
         dramaId: task.dramaId ?? null,
-        nextCheckAt: nextAuditCheckIso(),
+        nextCheckAt: nextAuditCheckIso(pinduoduoTaskPollIntervalMs(this.options)),
         originalTitle: task.originalTitle,
         payloadJson: JSON.stringify(task.playlet),
         pinduoduoAccountId: task.pinduoduoAccountId ?? null,
@@ -179,12 +200,47 @@ export class PinduoduoApplyRecordsRepository {
         accountTaskId: trackedRecord.accountTaskId,
         auditStatus,
         lastCheckedAt: timestamp,
-        nextCheckAt: auditStatus === "PENDING" ? nextAuditCheckIso() : null,
+        nextCheckAt:
+          auditStatus === "PENDING" ? nextAuditCheckIso(pinduoduoTaskPollIntervalMs(this.options)) : null,
         platformApplyId: record?.id ?? null,
         platformRejectReason: record?.rejectReason ?? null,
         platformStatus: record?.status ?? null,
         platformTitle: record?.title ?? null,
         rawJson: record ? JSON.stringify(record) : null,
+        updatedAt: timestamp,
+      });
+  }
+
+  markAuditRecordMissing(
+    trackedRecord: PinduoduoTrackedApplyRecord,
+    errorMessage: string,
+    context: Record<string, unknown> = {},
+  ): void {
+    const timestamp = nowIso();
+    this.database
+      .prepare(
+        `
+        UPDATE pinduoduo_apply_records
+        SET
+          audit_status='UNKNOWN',
+          platform_reject_reason=@platformRejectReason,
+          raw_json=@rawJson,
+          last_checked_at=@lastCheckedAt,
+          next_check_at=NULL,
+          updated_at=@updatedAt
+        WHERE account_task_id=@accountTaskId
+      `,
+      )
+      .run({
+        accountTaskId: trackedRecord.accountTaskId,
+        lastCheckedAt: timestamp,
+        platformRejectReason: errorMessage,
+        rawJson: JSON.stringify({
+          ...context,
+          errorMessage,
+          failedAt: timestamp,
+          stage: "CHECK_AUDIT",
+        }),
         updatedAt: timestamp,
       });
   }
@@ -205,8 +261,24 @@ export class PinduoduoApplyRecordsRepository {
       });
   }
 
-  findDueAuditRecord(): PinduoduoTrackedApplyRecord | null {
-    const row = this.database
+  markVideoUploading(trackedRecord: PinduoduoTrackedApplyRecord): void {
+    const timestamp = nowIso();
+    this.database
+      .prepare(
+        `
+        UPDATE pinduoduo_apply_records
+        SET video_status='UPLOADING', updated_at=@updatedAt
+        WHERE account_task_id=@accountTaskId
+      `,
+      )
+      .run({
+        accountTaskId: trackedRecord.accountTaskId,
+        updatedAt: timestamp,
+      });
+  }
+
+  findDueAuditRecords(): PinduoduoTrackedApplyRecord[] {
+    const rows = this.database
       .prepare(
         `
         SELECT ${pinduoduoApplyRecordSelect}
@@ -214,28 +286,26 @@ export class PinduoduoApplyRecordsRepository {
         WHERE audit_status='PENDING'
           AND (next_check_at IS NULL OR next_check_at <= @now)
         ORDER BY COALESCE(next_check_at, submitted_at, created_at) ASC
-        LIMIT 1
       `,
       )
-      .get({ now: nowIso() }) as PinduoduoTrackedApplyRecordRow | undefined;
+      .all({ now: nowIso() }) as PinduoduoTrackedApplyRecordRow[];
 
-    return row ? readTrackedApplyRecord(row) : null;
+    return rows.map(readTrackedApplyRecord);
   }
 
-  findVideoReadyRecord(): PinduoduoTrackedApplyRecord | null {
-    const row = this.database
+  findApprovedVideoQueueRecords(): PinduoduoTrackedApplyRecord[] {
+    const rows = this.database
       .prepare(
         `
         SELECT ${pinduoduoApplyRecordSelect}
         FROM pinduoduo_apply_records
         WHERE audit_status='APPROVED'
-          AND video_status='READY'
+          AND video_status IN ('READY', 'RESOURCE_READY')
         ORDER BY updated_at ASC
-        LIMIT 1
       `,
       )
-      .get() as PinduoduoTrackedApplyRecordRow | undefined;
+      .all() as PinduoduoTrackedApplyRecordRow[];
 
-    return row ? readTrackedApplyRecord(row) : null;
+    return rows.map(readTrackedApplyRecord);
   }
 }

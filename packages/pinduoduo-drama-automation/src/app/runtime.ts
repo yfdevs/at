@@ -10,6 +10,7 @@ import type {
   PinduoduoDramaRuntimeOptions,
   PinduoduoDramaRuntimeStatus,
 } from "../shared/types.js";
+import { pinduoduoTaskPollIntervalMs } from "../shared/polling.js";
 import {
   launchPinduoduoBrowserContext,
   pinduoduoDramaLoginStateFromUrl,
@@ -17,6 +18,38 @@ import {
 } from "./browser-session.js";
 import { openShortplayManagePage } from "./shortplay-manage-page.js";
 import { claimAndSubmitNextTask } from "./task-runner.js";
+
+const CHINA_TIME_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
+const TASK_POLL_NIGHT_START_HOUR = 0;
+const TASK_POLL_NIGHT_END_HOUR = 8;
+
+function nextTaskPollDelayMs(options: PinduoduoDramaRuntimeOptions, date = new Date()): number {
+  const nextPoll = new Date(date.getTime() + pinduoduoTaskPollIntervalMs(options));
+  const chinaDate = new Date(nextPoll.getTime() + CHINA_TIME_UTC_OFFSET_MS);
+  const hour = chinaDate.getUTCHours();
+
+  if (hour >= TASK_POLL_NIGHT_START_HOUR && hour < TASK_POLL_NIGHT_END_HOUR) {
+    const nextChinaMorning = new Date(
+      Date.UTC(
+        chinaDate.getUTCFullYear(),
+        chinaDate.getUTCMonth(),
+        chinaDate.getUTCDate(),
+        TASK_POLL_NIGHT_END_HOUR,
+        0,
+        0,
+        0,
+      ) - CHINA_TIME_UTC_OFFSET_MS,
+    );
+    return Math.max(1_000, nextChinaMorning.getTime() - date.getTime());
+  }
+
+  return Math.max(1_000, nextPoll.getTime() - date.getTime());
+}
+
+function formatChinaTimeIso(date: Date): string {
+  const chinaDate = new Date(date.getTime() + CHINA_TIME_UTC_OFFSET_MS);
+  return `${chinaDate.toISOString().replace("Z", "")}+08:00`;
+}
 
 export async function startPinduoduoDramaRuntime(
   options: PinduoduoDramaRuntimeOptions = {},
@@ -29,16 +62,59 @@ export async function startPinduoduoDramaRuntime(
   let running = true;
   let page: Page | null = null;
   let context: BrowserContext | null = null;
+  let taskLoopPromise: Promise<void> | null = null;
+  let taskLoopTimer: ReturnType<typeof setTimeout> | null = null;
+  let wakeTaskLoop: (() => void) | null = null;
+
+  async function waitForNextTaskPoll(delayMs: number): Promise<void> {
+    await new Promise<void>((resolve) => {
+      wakeTaskLoop = resolve;
+      taskLoopTimer = setTimeout(resolve, delayMs);
+    });
+    if (taskLoopTimer) {
+      clearTimeout(taskLoopTimer);
+      taskLoopTimer = null;
+    }
+    wakeTaskLoop = null;
+  }
+
+  function stopTaskLoopWait(): void {
+    if (taskLoopTimer) {
+      clearTimeout(taskLoopTimer);
+      taskLoopTimer = null;
+    }
+    wakeTaskLoop?.();
+    wakeTaskLoop = null;
+  }
+
+  async function runTaskLoop(activePage: Page): Promise<void> {
+    while (running && !activePage.isClosed()) {
+      await claimAndSubmitNextTask(activePage, options).catch((error: unknown) => {
+        log(options, "error", "runtime", "failed to run pinduoduo drama task loop tick", {
+          error,
+        });
+      });
+
+      if (!running || activePage.isClosed()) {
+        break;
+      }
+
+      const delayMs = nextTaskPollDelayMs(options);
+      log(options, "info", "runtime", "pinduoduo drama task loop sleeping", {
+        delayMs,
+        nextPollAt: new Date(Date.now() + delayMs).toISOString(),
+        nextPollAtChina: formatChinaTimeIso(new Date(Date.now() + delayMs)),
+      });
+      await waitForNextTaskPoll(delayMs);
+    }
+  }
 
   await cleanupOldLogFiles(options).catch(() => undefined);
   log(options, "info", "runtime", "starting browser", {
     userDataDir,
     accountProfileName: options.accountProfileName,
   });
-  const windowWidth = Math.max(800, Math.floor(options.config?.browser?.windowWidth ?? 1440));
-  const windowHeight = Math.max(600, Math.floor(options.config?.browser?.windowHeight ?? 960));
-
-  context = await launchPinduoduoBrowserContext(userDataDir, options, windowWidth, windowHeight);
+  context = await launchPinduoduoBrowserContext(userDataDir, options);
 
   context.on("close", () => {
     running = false;
@@ -57,11 +133,7 @@ export async function startPinduoduoDramaRuntime(
     });
 
   if (managePageReady) {
-    await claimAndSubmitNextTask(page, options).catch((error: unknown) => {
-      log(options, "error", "runtime", "failed to claim and submit pinduoduo drama task", {
-        error,
-      });
-    });
+    taskLoopPromise = runTaskLoop(page);
   }
 
   return {
@@ -82,11 +154,13 @@ export async function startPinduoduoDramaRuntime(
       };
     },
     async stop() {
+      running = false;
+      stopTaskLoopWait();
       if (context) {
         await saveCredentialState(context, options).catch(() => undefined);
       }
-      running = false;
       await context?.close();
+      await taskLoopPromise?.catch(() => undefined);
       log(options, "info", "runtime", "runtime stopped");
     },
   };

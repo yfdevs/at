@@ -114,8 +114,8 @@ const mockClaimedTask = pinduoduoDramaClaimedTaskSchema.parse({
   accountTaskId: 2026071101,
   dramaId: 880001,
   originalTitle: "归来后我成了全城首富",
-  pinduoduoAccountId: "pdd-mcn-demo-001",
-  pinduoduoAccountName: "星河短剧测试账号",
+  pinduoduoAccountId: "1053168546",
+  pinduoduoAccountName: "草莓漫剧",
   playlet: {
     contentType: 1,
     subContentType: 2,

@@ -179,8 +179,6 @@ export interface PinduoduoDramaBrowserOptions {
   headless?: boolean;
   slowMo?: number;
   keepOpenAfterRun?: boolean;
-  windowWidth?: number;
-  windowHeight?: number;
 }
 
 export interface PinduoduoDramaConfig {
@@ -188,6 +186,7 @@ export interface PinduoduoDramaConfig {
   browser?: PinduoduoDramaBrowserOptions;
   dryRun?: boolean;
   logRetentionDays?: number | string;
+  taskPollIntervalMinutes?: number | string;
   publish?: {
     submit?: boolean;
   };

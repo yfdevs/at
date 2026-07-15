@@ -16,19 +16,23 @@ import {
   PinduoduoApplyRecordsRepository,
   type PinduoduoTrackedApplyRecord,
 } from "../storage/index.js";
+import { runPinduoduoApprovedShortplayFlow } from "./approved-shortplay-flow.js";
 import { uploadPinduoduoContractFiles } from "./contract-upload.js";
 import {
   PinduoduoShortplayApplyEditError,
   submitPinduoduoShortplayApplyEdit,
 } from "./shortplay-apply.js";
 import {
+  fetchSubmittedShortplayApplyRecords,
   findSubmittedShortplayApplyRecord,
+  type ShortplayApplyRecord,
   refreshShortplayManagePendingList,
   selectShortplayManageRowByTitle,
   submitSelectedShortplaysForAudit,
 } from "./shortplay-manage-page.js";
 
 const VIDEO_RESOURCE_DOWNLOAD_RETRY_DELAY_MS = 5_000;
+const SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE = 2_000;
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => {
@@ -91,12 +95,12 @@ async function claimAndSubmitApplyTask(
 
     await uploadPinduoduoContractFiles(page, options, task);
     await submitSelectedShortplaysForAudit(page, options);
+
     const submittedRecord = await findSubmittedShortplayApplyRecord(
       page,
       options,
       task.playlet.title,
     );
-    applyRecordsRepository.upsertSubmittedRecord(task, submittedRecord);
 
     await reportPinduoduoDramaTaskSuccessApi({
       apiConfig: options.config?.api,
@@ -109,6 +113,9 @@ async function claimAndSubmitApplyTask(
       },
       rpaStatus: "AUDIT_PENDING",
     });
+
+    // 后端成功接收提报结果后，再写入本地数据库用于后续审核轮询。
+    applyRecordsRepository.upsertSubmittedRecord(task, submittedRecord);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     log(options, "error", "runtime", "failed to submit shortplay apply edit", {
@@ -143,36 +150,87 @@ async function checkLocalAuditTask(
   options: PinduoduoDramaRuntimeOptions,
   applyRecordsRepository: PinduoduoApplyRecordsRepository,
 ): Promise<boolean> {
-  const trackedRecord = applyRecordsRepository.findDueAuditRecord();
-  if (!trackedRecord) return false;
+  const trackedRecords = applyRecordsRepository.findDueAuditRecords();
+  if (!trackedRecords.length) return false;
 
+  const submittedRecords = await fetchSubmittedShortplayApplyRecords(page, options, {
+    page: 1,
+    pageSize: SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE,
+  });
+  log(options, "info", "runtime", "checking due pinduoduo audit records in batch", {
+    dueRecords: trackedRecords.length,
+    submittedRecords: submittedRecords.records.length,
+    submittedTotalCount: submittedRecords.totalCount,
+  });
+
+  for (const trackedRecord of trackedRecords) {
+    const record = matchSubmittedShortplayApplyRecord(submittedRecords.records, trackedRecord);
+    await reportAndUpdateAuditRecord(page, options, applyRecordsRepository, trackedRecord, record);
+  }
+
+  return true;
+}
+
+function matchSubmittedShortplayApplyRecord(
+  records: ShortplayApplyRecord[],
+  trackedRecord: PinduoduoTrackedApplyRecord,
+): ShortplayApplyRecord | null {
+  return (
+    (trackedRecord.platformApplyId
+      ? records.find((nextRecord) => nextRecord.id === trackedRecord.platformApplyId)
+      : undefined) ??
+    records.find((nextRecord) => nextRecord.title === trackedRecord.title) ??
+    null
+  );
+}
+
+async function reportAndUpdateAuditRecord(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  applyRecordsRepository: PinduoduoApplyRecordsRepository,
+  trackedRecord: PinduoduoTrackedApplyRecord,
+  record: ShortplayApplyRecord | null,
+): Promise<void> {
   try {
-    const record = await findSubmittedShortplayApplyRecord(page, options, trackedRecord.title, {
-      platformApplyId: trackedRecord.platformApplyId,
-    });
     if (!record) {
-      applyRecordsRepository.markAuditChecked(trackedRecord, "PENDING", null);
-      await reportPinduoduoDramaTaskSuccessApi({
+      const errorMessage = `Pinduoduo submitted shortplay record was not found in first ${SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE} submitted records.`;
+      const resultJson = {
+        activeUrl: page.url(),
+        checkedSubmittedRecordCount: SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE,
+        platformApplyId: trackedRecord.platformApplyId,
+        title: trackedRecord.title,
+      };
+      applyRecordsRepository.markAuditRecordMissing(trackedRecord, errorMessage, resultJson);
+      await reportPinduoduoDramaTaskErrorApi({
         apiConfig: options.config?.api,
         accountTaskId: trackedRecord.accountTaskId,
-        resultJson: {
-          auditStatus: "PENDING",
-          message: "submitted shortplay record was not found in current submitted list page",
-          platformApplyId: trackedRecord.platformApplyId,
-          title: trackedRecord.title,
-        },
-        rpaStatus: "AUDIT_PENDING",
+        dramaId: trackedRecord.dramaId,
+        errorMessage,
+        failStage: "CHECK_AUDIT",
+        resultJson,
       });
-      return true;
+      return;
     }
 
     if (record.status === 3) {
+      const errorMessage = record.rejectReason || "Pinduoduo shortplay audit rejected.";
+      await reportPinduoduoDramaTaskErrorApi({
+        apiConfig: options.config?.api,
+        accountTaskId: trackedRecord.accountTaskId,
+        dramaId: trackedRecord.dramaId,
+        errorMessage,
+        failStage: "CHECK_AUDIT",
+        resultJson: {
+          activeUrl: page.url(),
+          platformApplyId: trackedRecord.platformApplyId,
+          title: trackedRecord.title,
+        },
+      });
       applyRecordsRepository.markAuditChecked(trackedRecord, "REJECTED", record);
-      throw new Error(record.rejectReason || "Pinduoduo shortplay audit rejected.");
+      return;
     }
 
     if (record.status === 1) {
-      applyRecordsRepository.markAuditChecked(trackedRecord, "PENDING", record);
       await reportPinduoduoDramaTaskSuccessApi({
         apiConfig: options.config?.api,
         accountTaskId: trackedRecord.accountTaskId,
@@ -184,10 +242,10 @@ async function checkLocalAuditTask(
         },
         rpaStatus: "AUDIT_PENDING",
       });
-      return true;
+      applyRecordsRepository.markAuditChecked(trackedRecord, "PENDING", record);
+      return;
     }
 
-    applyRecordsRepository.markAuditChecked(trackedRecord, "APPROVED", record);
     await reportPinduoduoDramaTaskSuccessApi({
       apiConfig: options.config?.api,
       accountTaskId: trackedRecord.accountTaskId,
@@ -199,6 +257,7 @@ async function checkLocalAuditTask(
       },
       rpaStatus: "VIDEO_UPLOAD_READY",
     });
+    applyRecordsRepository.markAuditChecked(trackedRecord, "APPROVED", record);
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await reportPinduoduoDramaTaskErrorApi({
@@ -214,8 +273,6 @@ async function checkLocalAuditTask(
       },
     });
   }
-
-  return true;
 }
 
 async function ensurePinduoduoVideoResourceReady(
@@ -271,15 +328,12 @@ function trackedRecordToTask(record: PinduoduoTrackedApplyRecord): ClaimedPinduo
 async function prepareLocalVideoResourceTask(
   options: PinduoduoDramaRuntimeOptions,
   applyRecordsRepository: PinduoduoApplyRecordsRepository,
+  trackedRecord: PinduoduoTrackedApplyRecord,
 ): Promise<boolean> {
-  const trackedRecord = applyRecordsRepository.findVideoReadyRecord();
-  if (!trackedRecord) return false;
-
   const task = trackedRecordToTask(trackedRecord);
 
   try {
     await ensurePinduoduoVideoResourceReady(options, task);
-    applyRecordsRepository.markVideoResourceReady(trackedRecord);
     await reportPinduoduoDramaTaskSuccessApi({
       apiConfig: options.config?.api,
       accountTaskId: task.accountTaskId,
@@ -291,6 +345,8 @@ async function prepareLocalVideoResourceTask(
       },
       rpaStatus: "VIDEO_RESOURCE_READY",
     });
+    applyRecordsRepository.markVideoResourceReady(trackedRecord);
+    return true;
   } catch (error) {
     const errorMessage = error instanceof Error ? error.message : String(error);
     await reportPinduoduoDramaTaskErrorApi({
@@ -304,6 +360,74 @@ async function prepareLocalVideoResourceTask(
         title: task.playlet.title,
       },
     });
+    return false;
+  }
+}
+
+async function runApprovedShortplayFlowTask(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  applyRecordsRepository: PinduoduoApplyRecordsRepository,
+  trackedRecord: PinduoduoTrackedApplyRecord,
+): Promise<boolean> {
+  const task = trackedRecordToTask(trackedRecord);
+
+  try {
+    const result = await runPinduoduoApprovedShortplayFlow(page, options, task);
+    await reportPinduoduoDramaTaskSuccessApi({
+      apiConfig: options.config?.api,
+      accountTaskId: task.accountTaskId,
+      resultJson: {
+        contentManagementUrl: result.contentManagementUrl,
+        originalTitle: task.originalTitle,
+        title: task.playlet.title,
+        videoStatus: "UPLOADING",
+      },
+      rpaStatus: "VIDEO_UPLOADING",
+    });
+    applyRecordsRepository.markVideoUploading(trackedRecord);
+    return true;
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await reportPinduoduoDramaTaskErrorApi({
+      apiConfig: options.config?.api,
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      errorMessage,
+      failStage: "UPLOAD_VIDEO",
+      resultJson: {
+        activeUrl: page.url(),
+        originalTitle: task.originalTitle,
+        title: task.playlet.title,
+      },
+    });
+    return false;
+  }
+}
+
+async function runApprovedShortplayQueue(
+  page: Page,
+  options: PinduoduoDramaRuntimeOptions,
+  applyRecordsRepository: PinduoduoApplyRecordsRepository,
+): Promise<boolean> {
+  const trackedRecords = applyRecordsRepository.findApprovedVideoQueueRecords();
+  if (!trackedRecords.length) return false;
+
+  log(options, "info", "runtime", "processing approved pinduoduo shortplay upload queue", {
+    queuedRecords: trackedRecords.length,
+  });
+
+  for (const trackedRecord of trackedRecords) {
+    if (trackedRecord.videoStatus === "READY") {
+      const prepared = await prepareLocalVideoResourceTask(
+        options,
+        applyRecordsRepository,
+        trackedRecord,
+      );
+      if (!prepared) continue;
+    }
+
+    await runApprovedShortplayFlowTask(page, options, applyRecordsRepository, trackedRecord);
   }
 
   return true;
@@ -314,10 +438,13 @@ export async function claimAndSubmitNextTask(
   options: PinduoduoDramaRuntimeOptions,
 ): Promise<void> {
   const applyRecordsRepository = new PinduoduoApplyRecordsRepository(options);
+  let checkedAuditRecords = false;
+  let processedApprovedQueue = false;
   try {
+    checkedAuditRecords = await checkLocalAuditTask(page, options, applyRecordsRepository);
+    processedApprovedQueue = await runApprovedShortplayQueue(page, options, applyRecordsRepository);
+    if (checkedAuditRecords || processedApprovedQueue) return;
     if (await claimAndSubmitApplyTask(page, options, applyRecordsRepository)) return;
-    if (await checkLocalAuditTask(page, options, applyRecordsRepository)) return;
-    if (await prepareLocalVideoResourceTask(options, applyRecordsRepository)) return;
   } finally {
     applyRecordsRepository.close();
   }
