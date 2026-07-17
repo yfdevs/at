@@ -9,6 +9,8 @@ import { KuaishouDramaServiceControlPage } from "@/pages/kuaishou-drama/service-
 import { KuaishouProjectsPage } from "@/pages/kuaishou-drama/projects"
 import { KuaishouSchedulePage } from "@/pages/kuaishou-drama/schedule"
 import { KuaishouSettingsPage } from "@/pages/kuaishou-drama/settings"
+import { QqDramaConfigurationPage } from "@/pages/qq-drama/configuration"
+import { QqDramaServiceControlPage } from "@/pages/qq-drama/service-control"
 import { WechatAccountsPage } from "@/pages/wechat-drama/accounts"
 import { WechatConfigurationPage } from "@/pages/wechat-drama/configuration"
 import { WechatPublishTasksPage } from "@/pages/wechat-drama/publish-tasks"
@@ -34,6 +36,8 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "kuaishou-drama/schedule": KuaishouSchedulePage,
   "kuaishou-drama/analytics": KuaishouAnalyticsPage,
   "kuaishou-drama/settings": KuaishouSettingsPage,
+  "qq-drama/service": QqDramaServiceControlPage,
+  "qq-drama/config": QqDramaConfigurationPage,
   "tiktok-drama/service": TiktokDramaCenterServiceControlPage,
   "tiktok-drama/config": TiktokDramaCenterConfigurationPage,
   "pinduoduo-drama/service": PinduoduoDramaServiceControlPage,

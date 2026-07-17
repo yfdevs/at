@@ -95,6 +95,11 @@ export const runConfig = {
       cwd: "packages/baidu-netdisk-automation",
       output: [],
     },
+    "pkg:qq:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/qq-drama-automation",
+      output: [],
+    },
     "app:typecheck": {
       command: "tsc --noEmit",
       output: [],

@@ -2,6 +2,9 @@
   $schema: "https://raw.githubusercontent.com/electron-userland/electron-builder/master/packages/app-builder-lib/scheme.json",
   appId: "com.yfdevs.autodrama",
   asar: true,
+  asarUnpack: [
+    "node_modules/better-sqlite3/build/Release/*.node",
+  ],
   npmRebuild: false,
   nodeGypRebuild: false,
   buildDependenciesFromSource: false,

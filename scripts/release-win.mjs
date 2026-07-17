@@ -86,7 +86,7 @@ try {
 
   await run("pnpm", ["build:app"]);
   clearPublishProxyEnvironment();
-  await run("electron-builder", ["--config", "electron-builder.json5", "--win", "--publish", "always"]);
+  await run("node", ["scripts/package-electron-hoisted.mjs", "--win", "--publish", "always"]);
 } catch (error) {
   console.error(error instanceof Error ? error.message : String(error));
   process.exit(1);

@@ -19,6 +19,22 @@ export function createElectronPlugin(rootDir: string) {
     main: {
       entry: "electron/main.ts",
       vite: {
+        resolve: {
+          alias: [
+            {
+              find: /^@drama\/drama-video-assets\/baidu-netdisk$/,
+              replacement: path.join(rootDir, "packages/drama-video-assets/src/baidu-netdisk.ts"),
+            },
+            {
+              find: /^@drama\/drama-video-assets$/,
+              replacement: path.join(rootDir, "packages/drama-video-assets/src/index.ts"),
+            },
+            {
+              find: /^@drama\/qq-drama-automation$/,
+              replacement: path.join(rootDir, "packages/qq-drama-automation/src/index.ts"),
+            },
+          ],
+        },
         build: {
           rollupOptions: {
             external: electronMainExternals,

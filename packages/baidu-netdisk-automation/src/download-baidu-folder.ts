@@ -1050,12 +1050,12 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   const episodePatterns = episodeBaseNames.flatMap((baseName) => {
     const escaped = escapeRegExp(baseName);
     return [
-      new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集\\\\.mp4$", "i"),
-      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\s*集?\\\\.mp4$", "i"),
+      new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集.*\\\\.mp4$", "i"),
+      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\s*集?.*\\\\.mp4$", "i"),
     ];
   });
   episodePatterns.push(
-    /^第(\\d+)集\\.mp4$/i,
+    /^第(\\d+)集.*\\.mp4$/i,
     /^(?:ep|episode|e)[\\s._-]*(\\d+)\\.mp4$/i,
     /^(\\d+)\\.mp4$/i,
   );
@@ -1218,6 +1218,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       }];
     })
     .sort((left, right) => left.index - right.index || left.path.localeCompare(right.path));
+  const matchedVideoPaths = new Set(files.map((file) => file.path));
+  const unmatchedVideoFiles = selectedVideoFiles.filter((file) => !matchedVideoPaths.has(file.path));
   if (selectedVideoFiles.length > 0 && files.length === 0) {
     console.log(
       "[baidu] 集数匹配诊断：" +
@@ -1225,6 +1227,16 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
           .slice(0, 5)
           .map((file) => file.name + "=>" + String(matchEpisodeIndex(file.name) ?? "未匹配"))
           .join(" | "),
+    );
+  }
+  if (unmatchedVideoFiles.length > 0) {
+    console.log(
+      "[baidu] 未匹配集数视频：" +
+        unmatchedVideoFiles
+          .slice(0, 10)
+          .map((file) => file.name + "=>" + String(matchEpisodeIndex(file.name) ?? "未匹配"))
+          .join(" | ") +
+        (unmatchedVideoFiles.length > 10 ? " | ...另" + (unmatchedVideoFiles.length - 10) + "项" : ""),
     );
   }
   const duplicateIndexes = [...new Set(files
@@ -1241,6 +1253,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       rootPath: selectedVideoDir.path || savedPath,
       files,
       allVideoFiles,
+      unmatchedVideoFiles,
       scannedDirs,
       duplicateIndexes,
     },
@@ -1973,6 +1986,18 @@ async function submitSavedDownload(
       `全部mp4=${remoteVideos.allVideoFiles.length}个`,
   );
   logRemoteVideoScanDetails(remoteVideos);
+  if (remoteVideos.unmatchedVideoFiles?.length) {
+    log(
+      `网盘未匹配集数视频：` +
+        remoteVideos.unmatchedVideoFiles
+          .slice(0, 10)
+          .map((file) => file.name)
+          .join(" | ") +
+        (remoteVideos.unmatchedVideoFiles.length > 10
+          ? ` | ...另${remoteVideos.unmatchedVideoFiles.length - 10}项`
+          : ""),
+    );
+  }
   if (remoteVideos.files.length > 0) {
     log(
       `网盘匹配摘要：数量=${remoteVideos.files.length}，集数=${formatNumberRanges(remoteIndexes)}，` +

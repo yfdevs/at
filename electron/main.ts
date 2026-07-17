@@ -36,6 +36,14 @@ import {
   stopKuaishouDramaPlatformRuntime,
 } from "./platforms/kuaishou-drama";
 import {
+  getQqDramaBrowserInstanceCount,
+  getQqDramaPlatformRuntimeSummary,
+  getQqDramaRunningPlatformCount,
+  openQqDramaLogDir,
+  registerQqDramaPlatformHandlers,
+  stopQqDramaPlatformRuntime,
+} from "./platforms/qq-drama";
+import {
   getTiktokDramaCenterBrowserInstanceCount,
   getTiktokDramaCenterPlatformRuntimeSummary,
   getTiktokDramaCenterRunningPlatformCount,
@@ -86,6 +94,7 @@ type PlatformId =
   | "wechat-drama"
   | "meituan-drama"
   | "kuaishou-drama"
+  | "qq-drama"
   | "tiktok-drama"
   | "pinduoduo-drama";
 
@@ -104,7 +113,7 @@ function createWindow() {
 
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
-    width: 520,
+    width: 680,
     height: 720,
   };
   const mainWindowState = windowStateKeeper({
@@ -229,6 +238,7 @@ app.on("before-quit", () => {
   stopWechatVideoPlatformRuntime();
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
+  stopQqDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
   stopPinduoduoDramaPlatformRuntime();
 });
@@ -247,6 +257,7 @@ app.whenReady().then(() => {
     registerWechatVideoPlatformHandlers();
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
+    registerQqDramaPlatformHandlers();
     registerTiktokDramaCenterPlatformHandlers();
     registerPinduoduoDramaPlatformHandlers();
     registerBaiduNetdiskPlatformHandlers({
@@ -323,6 +334,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getMeituanCreationPlatformRuntimeSummary();
     case "kuaishou-drama":
       return getKuaishouDramaPlatformRuntimeSummary();
+    case "qq-drama":
+      return getQqDramaPlatformRuntimeSummary();
     case "tiktok-drama":
       return getTiktokDramaCenterPlatformRuntimeSummary();
     case "pinduoduo-drama":
@@ -340,6 +353,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openMeituanCreationLogDir();
     case "kuaishou-drama":
       return openKuaishouDramaLogDir();
+    case "qq-drama":
+      return openQqDramaLogDir();
     case "tiktok-drama":
       return openTiktokDramaCenterLogDir();
     case "pinduoduo-drama":
@@ -354,6 +369,7 @@ function getGlobalBrowserInstanceCount() {
     getWechatVideoBrowserInstanceCount,
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
+    getQqDramaBrowserInstanceCount,
     getTiktokDramaCenterBrowserInstanceCount,
     getPinduoduoDramaBrowserInstanceCount,
   ];
@@ -372,6 +388,7 @@ function getGlobalRunningPlatformStatus() {
     getWechatVideoRunningPlatformCount,
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
+    getQqDramaRunningPlatformCount,
     getTiktokDramaCenterRunningPlatformCount,
     getPinduoduoDramaRunningPlatformCount,
   ];

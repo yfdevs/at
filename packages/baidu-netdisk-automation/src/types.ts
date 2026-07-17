@@ -51,6 +51,11 @@ export type BaiduNetdiskRemoteVideoListing = {
     path: string;
     size?: number;
   }>;
+  unmatchedVideoFiles?: Array<{
+    name: string;
+    path: string;
+    size?: number;
+  }>;
   scannedDirs?: Array<{
     path: string;
     name?: string;
