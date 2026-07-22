@@ -24,6 +24,7 @@ import { log, logRemoteVideoScanDetails } from "./logging.js";
 import { parseBaiduNetdiskShareText, readShareInfo, sanitizeWindowsName } from "./share-text.js";
 import type {
   BaiduNetdiskDownloadTaskStatus,
+  BaiduNetdiskRemoteOwnershipListing,
   BaiduNetdiskRemoteVideoListing,
   BaiduNetdiskShareDownloadOptions,
   BaiduNetdiskShareDownloadResult,
@@ -38,6 +39,8 @@ export { parseBaiduNetdiskShareText } from "./share-text.js";
 export type {
   BaiduNetdiskDownloadTaskStatus,
   BaiduNetdiskRemoteEpisodeFile,
+  BaiduNetdiskRemoteOwnershipFile,
+  BaiduNetdiskRemoteOwnershipListing,
   BaiduNetdiskRemoteVideoListing,
   BaiduNetdiskShareDownloadOptions,
   BaiduNetdiskShareDownloadResult,
@@ -627,9 +630,13 @@ type SavedShareResult = {
   fileName: string;
   savedPath: string;
   fsId: number | string;
+  resourceRootName: string;
+  resourceRootPath: string;
+  resourceRootFsId: number | string;
   alreadySaved: boolean;
   locateSource: string;
   remoteVideos: BaiduNetdiskRemoteVideoListing;
+  remoteOwnership: BaiduNetdiskRemoteOwnershipListing;
 };
 
 async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
@@ -1143,6 +1150,9 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     depth: 0,
   }];
   const allEntriesByPath = new Map();
+  const ownershipByKind = { juchuang: new Map(), jianying: new Map(), contract: new Map() };
+  let ownershipRootPath = "";
+  let ownershipRootFsId = "";
   const candidateDirs = [];
 
   while (queue.length > 0 && scannedDirs.length < REMOTE_VIDEO_SCAN_MAX_DIRS) {
@@ -1170,7 +1180,32 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
         }
         continue;
       }
-      if (!name.toLowerCase().endsWith(".mp4")) continue;
+      const lowerName = name.toLowerCase();
+      if (/\.(?:png|jpe?g)$/i.test(lowerName)) {
+        const compactName = name.replace(/\s+/g, "");
+        const kind = compactName.includes("合同") || compactName.includes("contract")
+          ? "contract"
+          : compactName.includes("剧创") || compactName.includes("即梦")
+          ? "juchuang"
+          : compactName.includes("剪映") ? "jianying" : "";
+        if (kind) {
+          if (!ownershipRootPath) {
+            ownershipRootPath = current.path;
+            ownershipRootFsId = current.fsId;
+          }
+          const stem = name.replace(/\.[^.]+$/, "");
+          const indexMatch = stem.match(/(\d{1,4})\s*$/);
+          ownershipByKind[kind].set(entryPath, {
+            kind,
+            index: indexMatch ? Number(indexMatch[1]) : undefined,
+            name,
+            path: entryPath,
+            fsId: itemFsId(entry),
+            size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+          });
+        }
+      }
+      if (!lowerName.endsWith(".mp4")) continue;
       const videoFile = {
         name,
         path: entryPath,
@@ -1247,6 +1282,9 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     fileName: selectedVideoDir.name || finalFileName,
     savedPath: selectedVideoDir.path || savedPath,
     fsId: selectedVideoDir.fsId || itemFsId(ownRoot),
+    resourceRootName: finalFileName,
+    resourceRootPath: normalizeDir(savedPath),
+    resourceRootFsId: itemFsId(ownRoot),
     alreadySaved,
     locateSource,
     remoteVideos: {
@@ -1257,6 +1295,18 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       scannedDirs,
       duplicateIndexes,
     },
+    remoteOwnership: Object.assign(Object.fromEntries(["juchuang", "jianying", "contract"].map((kind) => {
+      const seenIndexes = new Set();
+      const files = [...ownershipByKind[kind].values()]
+        .sort((left, right) => (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER) || left.path.localeCompare(right.path))
+        .filter((file) => {
+          if (file.index === undefined) return true;
+          if (seenIndexes.has(file.index)) return false;
+          seenIndexes.add(file.index);
+          return true;
+        });
+      return [kind, files];
+    })), { rootPath: ownershipRootPath, rootFsId: ownershipRootFsId }),
   };
 })()
 `,
@@ -1769,6 +1819,12 @@ export async function getBaiduNetdiskDownloadTaskStatus(options: {
   };
 }
 
+export async function controlBaiduNetdiskDownloadTask(options: { port?: number; targetName: string; action: "pause" | "resume" | "delete" }) {
+  const target = findUsableCoreTarget(await getTargets(options.port ?? 9337));
+  if (!target) throw new Error("百度网盘 CDP 页面不可用。");
+  return withPage(target, (page) => page.evaluate(`(async()=>{const app=require("@electron/remote").app;const wanted=${JSON.stringify(options.targetName)};const action=${JSON.stringify(options.action)};const d=app.$downloader;let payload;d.getDownloadTasks((e,f,i)=>payload=i,0,1000,"0");for(let n=0;!payload&&n<20;n++)await new Promise(r=>setTimeout(r,100));const list=Array.isArray(payload?.tasks)?payload.tasks:[];const t=list.find(x=>String(x?.name||x?.server_path||"").includes(wanted));if(!t)throw new Error("未找到下载任务");const id=t.id;const names=action==="pause"?["pauseTask","pauseDownloadTask","pause"]:action==="resume"?["resumeTask","resumeDownloadTask","startTask"]:["deleteTask","removeTask","deleteDownloadTask"];const fn=names.find(k=>typeof d[k]==="function");if(!fn)throw new Error("百度网盘当前版本不支持该操作");await Promise.resolve(d[fn](id));return true;})()`));
+}
+
 async function submitNativeDownloadTask(port: number, task: SavedDownloadTask) {
   if (!task.downloadRoot) return false;
 
@@ -1942,6 +1998,7 @@ async function submitSavedDownload(
   share: ShareInfo,
   downloadDir?: string,
   expectedEpisodeCount?: number,
+  expectedOwnershipCounts?: BaiduNetdiskShareDownloadOptions["expectedOwnershipCounts"],
 ) {
   const saved = await saveShareToOwnNetdisk(shareTarget, share);
   log(
@@ -1953,6 +2010,7 @@ async function submitSavedDownload(
   const targetName = saved.fileName || share.name;
   log(`选中视频目录：${saved.savedPath}，名称=${targetName}`);
   const remoteVideos = saved.remoteVideos;
+  const remoteOwnership = saved.remoteOwnership;
   const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
     (left, right) => left - right,
   );
@@ -2034,33 +2092,66 @@ async function submitSavedDownload(
       );
     }
   }
+  const requiredJuchuang = Math.max(0, expectedOwnershipCounts?.juchuang ?? 0);
+  const requiredJianying = Math.max(0, expectedOwnershipCounts?.jianying ?? 0);
+  log(
+    `网盘权属材料清单：剧创=${remoteOwnership.juchuang.length}/${requiredJuchuang}，` +
+      `剪映=${remoteOwnership.jianying.length}/${requiredJianying}`,
+  );
+  if (
+    remoteOwnership.juchuang.length < requiredJuchuang
+    || remoteOwnership.jianying.length < requiredJianying
+  ) {
+    throw new Error(
+      `百度网盘权属材料数量不足：${targetName}。` +
+        `剧创要求${requiredJuchuang}张，远程${remoteOwnership.juchuang.length}张；` +
+        `剪映要求${requiredJianying}张，远程${remoteOwnership.jianying.length}张。`,
+    );
+  }
+  // Keep the large video download scoped to the selected episode directory. Ownership
+  // images are submitted as individual files below, so unrelated share folders are skipped.
+  const downloadTargetName = targetName;
   const task = {
-    targetName,
+    targetName: downloadTargetName,
     savedPath: saved.savedPath,
     fsId: saved.fsId,
     downloadRoot: downloadDir,
   };
   let downloadRoot = downloadDir;
   const nativeSubmitted = await submitNativeDownloadTask(port, task);
+  let videoSubmitted = nativeSubmitted;
   if (nativeSubmitted) {
     await openClientTransfers(port);
     const started = Date.now();
     while (Date.now() - started < 15000) {
-      if (await isPresentInClientTransfers(port, targetName)) {
-        return { downloadRoot, targetName, remoteVideos };
+      if (await isPresentInClientTransfers(port, downloadTargetName)) {
+        break;
       }
       await sleep(500);
     }
-    log(`客户端内部下载任务未出现在传输列表，回退界面下载：${targetName}`);
+    if (!await isPresentInClientTransfers(port, downloadTargetName)) {
+      videoSubmitted = false;
+      log(`客户端内部下载任务未出现在传输列表，回退界面下载：${downloadTargetName}`);
+    }
   }
 
-  await downloadSavedFolderFromClientSearch(port, targetName);
-  downloadRoot = await confirmDownloadSetting(port, downloadDir);
-  await waitForDownloadSubmitted(port, {
-    ...task,
-    downloadRoot,
-  });
-  return { downloadRoot, targetName, remoteVideos };
+  // Download the small ownership directory as one task. Baidu's native API treats
+  // file paths as directories, so submitting individual images creates empty folders.
+  if (remoteOwnership.rootPath && remoteOwnership.rootFsId) {
+    await submitNativeDownloadTask(port, {
+      targetName: remoteOwnership.rootPath.split("/").filter(Boolean).pop() || "权属文件",
+      savedPath: remoteOwnership.rootPath,
+      fsId: remoteOwnership.rootFsId,
+      downloadRoot: downloadDir,
+    });
+  }
+
+  if (!videoSubmitted) {
+    await downloadSavedFolderFromClientSearch(port, downloadTargetName);
+    downloadRoot = await confirmDownloadSetting(port, downloadDir);
+    await waitForDownloadSubmitted(port, { ...task, downloadRoot });
+  }
+  return { downloadRoot, targetName: downloadTargetName, remoteVideos, remoteOwnership };
 }
 
 export async function downloadBaiduNetdiskShare(
@@ -2107,12 +2198,13 @@ export async function downloadBaiduNetdiskShare(
   const shareTarget = await openSharePage(port, share);
   await enterShareCode(shareTarget, share);
   const listTarget = await waitForShareList(port, share, [shareTarget]);
-  const { downloadRoot, targetName, remoteVideos } = await submitSavedDownload(
+  const { downloadRoot, targetName, remoteVideos, remoteOwnership } = await submitSavedDownload(
     port,
     listTarget,
     share,
     downloadDir,
     options.expectedEpisodeCount,
+    options.expectedOwnershipCounts,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
@@ -2126,6 +2218,7 @@ export async function downloadBaiduNetdiskShare(
     downloadRoot: resolvedDownloadRoot,
     localPath: predictedLocalPath,
     remoteVideos,
+    remoteOwnership,
     completed: false,
     skippedExisting: false,
   };

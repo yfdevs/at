@@ -12,6 +12,7 @@ import { runWithLogContext } from "../shared/logger.js";
 import { attachFailStage } from "../shared/errors.js";
 import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { booleanSetting, secondsSettingToMs } from "../shared/settings-value.js";
+import { cleanupWechatProductionProofMaterials } from "../shared/production-proof-materials.js";
 
 function shouldCloseFailedTaskPages(): boolean {
   return booleanSetting(getWechatVideoRuntimeSettings().closeFailedTaskPages);
@@ -151,6 +152,9 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
     failed = true;
     throw error;
   } finally {
+    if (playletConfig) {
+      await cleanupWechatProductionProofMaterials(playletConfig).catch(() => undefined);
+    }
     if (ownsBrowserContext) {
       await saveStorageState(browserContext, standaloneStateFile).catch(() => undefined);
       if (playletConfig) {

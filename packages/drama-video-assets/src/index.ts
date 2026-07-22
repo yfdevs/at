@@ -1,5 +1,6 @@
 import { access, copyFile, link, mkdir, readdir, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 
 export type LocalEpisodeVideo = {
   index: number;
@@ -12,6 +13,20 @@ export type LocalEpisodeFile = {
   file: string;
   size: number;
 };
+
+export type OwnershipMaterialKind = "juchuang" | "jianying";
+
+export type LocalOwnershipMaterialFile = {
+  kind: OwnershipMaterialKind;
+  index?: number;
+  name: string;
+  file: string;
+  size: number;
+};
+
+export type OwnershipMaterialRequirements = Partial<Record<OwnershipMaterialKind, number>>;
+
+export type LocalOwnershipMaterialSet = Record<OwnershipMaterialKind, LocalOwnershipMaterialFile[]>;
 
 export type PreparedEpisodeUploadFiles = {
   uploadDir: string;
@@ -27,6 +42,7 @@ export type EpisodeDirectorySummary = {
 };
 
 const knownEpisodeSubDirs = ["成片", "成品", "视频", "正片"];
+const ownershipImageExtensions = new Set([".png", ".jpg", ".jpeg"]);
 const invalidUploadFileNameChars = new Set(["<", ">", ":", '"', "/", "\\", "|", "?", "*"]);
 
 function escapeRegExp(value: string) {
@@ -134,6 +150,207 @@ export async function recursiveLocalEpisodeScanDirs(root: string, resourceName: 
   }
 
   return dirs;
+}
+
+async function recursiveDirs(root: string, maxDepth = 5, maxDirs = 200) {
+  const dirs: string[] = [];
+  const seen = new Set<string>();
+  const queue = [{ dir: root, depth: 0 }];
+
+  while (queue.length > 0 && dirs.length < maxDirs) {
+    const current = queue.shift();
+    if (!current) continue;
+    const resolved = path.resolve(current.dir).toLowerCase();
+    if (seen.has(resolved)) continue;
+    seen.add(resolved);
+    dirs.push(current.dir);
+    if (current.depth >= maxDepth) continue;
+
+    const entries = await readdir(current.dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory()) queue.push({ dir: path.join(current.dir, entry.name), depth: current.depth + 1 });
+    }
+  }
+
+  return dirs;
+}
+
+function ownershipMaterialKind(fileName: string): OwnershipMaterialKind | undefined {
+  const normalized = fileName.replace(/\s+/g, "");
+  if (normalized.includes("剧创") || normalized.includes("即梦")) return "juchuang";
+  if (normalized.includes("剪映")) return "jianying";
+  return undefined;
+}
+
+function ownershipMaterialIndex(fileName: string) {
+  const stem = fileName.replace(/\.[^.]+$/, "");
+  const match = stem.match(/(\d{1,4})\s*$/);
+  return match ? Number(match[1]) : undefined;
+}
+
+function ownershipMaterialPriority(file: LocalOwnershipMaterialFile, resourceName: string) {
+  const normalizedName = file.name.replace(/\s+/g, "").toLowerCase();
+  const normalizedResourceName = resourceName.replace(/\s+/g, "").toLowerCase();
+  return (normalizedResourceName && normalizedName.includes(normalizedResourceName) ? 4 : 0)
+    + (normalizedName.includes("工程文件") ? 2 : 0)
+    + (file.index !== undefined ? 1 : 0);
+}
+
+export async function listLocalOwnershipMaterials(options: {
+  root: string;
+  resourceName: string;
+  rootIsResourceDir?: boolean;
+}): Promise<LocalOwnershipMaterialSet> {
+  const resourceDir = options.rootIsResourceDir ? options.root : playletDir(options.root, options.resourceName);
+  const result: LocalOwnershipMaterialSet = { juchuang: [], jianying: [] };
+  const seenFiles = new Set<string>();
+
+  for (const dir of await recursiveDirs(resourceDir)) {
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !ownershipImageExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+      const kind = ownershipMaterialKind(entry.name);
+      if (!kind) continue;
+
+      const file = path.join(dir, entry.name);
+      const resolved = path.resolve(file).toLowerCase();
+      if (seenFiles.has(resolved)) continue;
+      const fileStat = await stat(file).catch(() => undefined);
+      if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      seenFiles.add(resolved);
+      result[kind].push({
+        kind,
+        index: ownershipMaterialIndex(entry.name),
+        name: entry.name,
+        file,
+        size: fileStat.size,
+      });
+    }
+  }
+
+  for (const kind of ["juchuang", "jianying"] as const) {
+    result[kind].sort((left, right) =>
+      ownershipMaterialPriority(right, options.resourceName)
+      - ownershipMaterialPriority(left, options.resourceName)
+      || (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+      || left.name.localeCompare(right.name, "zh-CN", { numeric: true })
+      || left.file.localeCompare(right.file));
+    const seenIndexes = new Set<number>();
+    result[kind] = result[kind].filter((file) => {
+      if (file.index === undefined) return true;
+      if (seenIndexes.has(file.index)) return false;
+      seenIndexes.add(file.index);
+      return true;
+    });
+  }
+  return result;
+}
+
+export function hasRequiredOwnershipMaterials(
+  materials: LocalOwnershipMaterialSet,
+  requirements: OwnershipMaterialRequirements = {},
+) {
+  return (["juchuang", "jianying"] as const).every(
+    (kind) => materials[kind].length >= Math.max(0, requirements[kind] ?? 0),
+  );
+}
+
+export function selectRequiredOwnershipMaterials(
+  materials: LocalOwnershipMaterialSet,
+  requirements: OwnershipMaterialRequirements,
+) {
+  return {
+    juchuang: materials.juchuang.slice(0, Math.max(0, requirements.juchuang ?? 0)),
+    jianying: materials.jianying.slice(0, Math.max(0, requirements.jianying ?? 0)),
+  };
+}
+
+export async function standardizeOwnershipMaterialsToRoot(options: {
+  materials: LocalOwnershipMaterialSet;
+  requirements: OwnershipMaterialRequirements;
+  targetRoot: string;
+  resourceName: string;
+  onLog?: (message: string) => void;
+}) {
+  const selected = selectRequiredOwnershipMaterials(options.materials, options.requirements);
+  const targetDir = path.join(playletDir(options.targetRoot, options.resourceName), "权属文件");
+  await mkdir(targetDir, { recursive: true });
+  const standardized: LocalOwnershipMaterialSet = { juchuang: [], jianying: [] };
+
+  for (const kind of ["juchuang", "jianying"] as const) {
+    for (const [position, material] of selected[kind].entries()) {
+      const extension = path.extname(material.file).toLowerCase() || ".jpg";
+      const label = kind === "juchuang" ? "剧创" : "剪映";
+      const target = path.join(targetDir, `${options.resourceName} - 工程文件${label}${position + 1}${extension}`);
+      if (!sameResolvedPath(material.file, target)) await copyFile(material.file, target);
+      const targetStat = await stat(target);
+      standardized[kind].push({ ...material, index: position + 1, name: path.basename(target), file: target, size: targetStat.size });
+    }
+  }
+
+  options.onLog?.(
+    `[video-assets] 权属材料标准化完成：剧创=${standardized.juchuang.length} 剪映=${standardized.jianying.length} dir=${targetDir}`,
+  );
+  return standardized;
+}
+
+export async function composeOwnershipMaterials(options: {
+  files: LocalOwnershipMaterialFile[];
+  outputDir: string;
+  resourceName: string;
+  onLog?: (message: string) => void;
+}) {
+  if (options.files.length === 0) throw new Error("[production-proof-invalid] 没有可合成的权属图片。");
+  const labelHeight = 56;
+  const padding = 12;
+  const maxHeight = 1400;
+  const prepared = await Promise.all(options.files.map(async (file) => {
+    const image = sharp(file.file, { failOn: "error" });
+    const metadata = await image.metadata();
+    if (!metadata.width || !metadata.height) throw new Error(`[production-proof-invalid] 无法读取权属图片尺寸: ${file.file}`);
+    const buffer = await image
+      .resize({ height: maxHeight - labelHeight - padding * 2, fit: "inside", withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    const resized = await sharp(buffer).metadata();
+    return { file, buffer, width: resized.width ?? metadata.width, height: resized.height ?? metadata.height };
+  }));
+  const canvasWidth = prepared.reduce((sum, item) => sum + item.width + padding * 2, 0);
+  const canvasHeight = Math.max(...prepared.map((item) => item.height + labelHeight + padding * 2));
+  const composites = prepared.map((item, index) => {
+    const left = prepared.slice(0, index).reduce((sum, previous) => sum + previous.width + padding * 2, 0);
+    const top = 0;
+    const label = item.file.kind === "juchuang" ? "剧创" : "剪映";
+    const caption = Buffer.from(
+      `<svg width="${item.width + padding * 2}" height="${labelHeight}"><style>text{font-family:Microsoft YaHei,Arial;font-size:24px;fill:#222}</style><text x="${padding}" y="38">${label}${item.file.index ?? index + 1} · ${escapeXml(item.file.name)}</text></svg>`,
+    );
+    return [
+      { input: caption, left, top },
+      { input: item.buffer, left: left + padding, top: top + labelHeight + padding },
+    ];
+  }).flat();
+  const outputBase = path.join(options.outputDir, `${safeEpisodeFileBaseName(options.resourceName)}-权属工程文件合成`);
+  await mkdir(options.outputDir, { recursive: true });
+  const pngPath = `${outputBase}.png`;
+  await sharp({ create: { width: canvasWidth, height: canvasHeight, channels: 3, background: "white" } })
+    .composite(composites)
+    .png()
+    .toFile(pngPath);
+  const pngStat = await stat(pngPath);
+  if (pngStat.size <= 9_500_000) return pngPath;
+  const jpgPath = `${outputBase}.jpg`;
+  await sharp(pngPath).jpeg({ quality: 82, progressive: true }).toFile(jpgPath);
+  await rm(pngPath, { force: true });
+  options.onLog?.(`[video-assets] 权属合成图超过10MB，已压缩为JPEG：${jpgPath}`);
+  return jpgPath;
+}
+
+function escapeXml(value: string) {
+  return value.replace(/[<>&'"]/g, (char) => ({ "<": "&lt;", ">": "&gt;", "&": "&amp;", "'": "&apos;", '"': "&quot;" })[char] ?? char);
+}
+
+function sameResolvedPath(left: string, right: string) {
+  return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }
 
 export async function listLocalEpisodeFiles(options: {

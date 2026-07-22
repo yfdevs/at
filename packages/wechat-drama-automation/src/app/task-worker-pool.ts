@@ -13,6 +13,10 @@ import { classifyError, ErrorType, inferRpaFailStage } from "../shared/errors.js
 import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { integerSetting } from "../shared/settings-value.js";
 import type { EnsureBaiduNetdiskResource } from "./runtime.js";
+import {
+  prepareWechatProductionProofMaterials,
+  wechatOwnershipRequirements,
+} from "../shared/production-proof-materials.js";
 
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
@@ -22,6 +26,7 @@ const nonRetryableBaiduNetdiskErrorPatterns = [
   "账户已过期",
   "重新登录",
   "重新登陆",
+  "百度网盘权属材料数量不足",
 ];
 
 function sleep(ms: number): Promise<void> {
@@ -177,6 +182,7 @@ export class TaskWorkerPool {
             const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
             await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
+            await prepareWechatProductionProofMaterials(playletConfig);
 
             const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
               videoAccountId,
@@ -292,6 +298,10 @@ export class TaskWorkerPool {
           resourceName: claimedAccountTask.originalTitle,
           localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
           episodeCount: playletConfig.playlet.episodeCount,
+          requiredOwnership: wechatOwnershipRequirements,
+          mergeOwnershipMaterials: !["false", "0", "no", "off"].includes(
+            String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
+          ),
         });
 
         logger.info("baidu netdisk resource ready", {

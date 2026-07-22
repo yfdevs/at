@@ -4,6 +4,7 @@ import { CloudDownload } from "@mynaui/icons-react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
+import { Switch } from "@/components/ui/switch";
 import {
   Table,
   TableBody,
@@ -16,6 +17,7 @@ import { Textarea } from "@/components/ui/textarea";
 import { platformNavigation, type PlatformId } from "@/config/navigation";
 import {
   clearBaiduNetdiskDownloadRecords,
+  controlBaiduNetdiskDownloadTask,
   controlBaiduNetdiskCdp,
   ensureBaiduNetdiskShareDownloaded,
   getBaiduNetdiskConfig,
@@ -41,21 +43,6 @@ type PlatformDownloadTarget = {
   rootLabel: string;
   rootPath: string;
 };
-
-function formatBytes(bytes: number) {
-  if (!Number.isFinite(bytes) || bytes <= 0) return "-";
-
-  const units = ["B", "KB", "MB", "GB", "TB"];
-  let value = bytes;
-  let unitIndex = 0;
-
-  while (value >= 1024 && unitIndex < units.length - 1) {
-    value /= 1024;
-    unitIndex += 1;
-  }
-
-  return `${value.toFixed(value >= 10 || unitIndex === 0 ? 0 : 1)} ${units[unitIndex]}`;
-}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -111,16 +98,7 @@ function baiduDownloadStateClass(state: BaiduNetdiskDownloadRecord["state"]) {
 }
 
 function baiduDownloadProgressText(record: BaiduNetdiskDownloadRecord) {
-  if (record.progressPercent !== undefined) {
-    const transferred = record.transferredBytes ? formatBytes(record.transferredBytes) : null;
-    const total = record.totalBytes ? formatBytes(record.totalBytes) : null;
-    const sizeText = transferred && total ? ` · ${transferred}/${total}` : "";
-    const speedText = record.speedText ? ` · ${record.speedText}` : "";
-
-    return `${record.progressPercent}%${sizeText}${speedText}`;
-  }
-
-  return record.nativeStatus ?? "";
+  return record.nativeStatus || "";
 }
 
 function baiduDownloadDetailText(record: BaiduNetdiskDownloadRecord) {
@@ -215,10 +193,22 @@ export function BaiduNetdiskWindowPage() {
   const [resourceName, setResourceName] = useState("");
   const [resourceNameEdited, setResourceNameEdited] = useState(false);
   const [episodeCount, setEpisodeCount] = useState("");
+  const [mergeOwnershipMaterials, setMergeOwnershipMaterials] = useState(true);
   const [downloadState, setDownloadState] = useState<BaiduDownloadState>("idle");
   const [downloadMessage, setDownloadMessage] = useState<string | null>(null);
   const [downloadRecords, setDownloadRecords] = useState<BaiduNetdiskDownloadRecord[]>([]);
   const [downloadRecordsClearing, setDownloadRecordsClearing] = useState(false);
+  const [taskActionId, setTaskActionId] = useState<string | null>(null);
+  const refreshDownloadRecords = async () => {
+    const result = await getBaiduNetdiskDownloadRecords();
+    setDownloadRecords(result.records);
+  };
+  const handleTaskAction = async (record: BaiduNetdiskDownloadRecord, action: "pause" | "resume" | "delete") => {
+    setTaskActionId(record.id);
+    try { await controlBaiduNetdiskDownloadTask(record.resourceName, action); await refreshDownloadRecords(); }
+    catch (error) { setDownloadMessage(errorMessage(error)); }
+    finally { setTaskActionId(null); }
+  };
 
   const summary = baiduNetdiskSummary(status, statusError);
   const iconClass = baiduNetdiskIconClass(status, statusError, actionPending);
@@ -386,6 +376,10 @@ export function BaiduNetdiskWindowPage() {
           resourceName: resourceName.trim(),
           localEpisodeVideoRoot: platformDownloadTarget.rootPath,
           episodeCount: parsedEpisodeCount,
+          mergeOwnershipMaterials,
+          ...(platformDownloadTarget.platformId === "wechat-drama"
+            ? { requiredOwnership: { juchuang: 2, jianying: 1 } }
+            : {}),
         });
         const target = result.localPath ?? result.downloadDir;
         setDownloadState("success");
@@ -484,6 +478,16 @@ export function BaiduNetdiskWindowPage() {
                   />
                 </div>
               </div>
+
+              {platformDownloadTarget?.platformId === "wechat-drama" ? (
+                <div className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-muted/35 px-3 py-2">
+                  <div>
+                    <div className="text-xs font-medium">合并权属工程图片</div>
+                    <div className="text-[11px] text-muted-foreground">将2张剧创和1张剪映拼接为一张图片</div>
+                  </div>
+                  <Switch checked={mergeOwnershipMaterials} onCheckedChange={setMergeOwnershipMaterials} />
+                </div>
+              ) : null}
 
               <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-3 text-xs">
                 <div className="flex items-center justify-between gap-3">
@@ -664,6 +668,7 @@ export function BaiduNetdiskWindowPage() {
                         <TableHead>详情</TableHead>
                         <TableHead className="w-[22%]">目录</TableHead>
                         <TableHead className="w-28 text-right">更新时间</TableHead>
+                        <TableHead className="w-32 text-right">操作</TableHead>
                       </TableRow>
                     </TableHeader>
                     <TableBody>
@@ -694,6 +699,12 @@ export function BaiduNetdiskWindowPage() {
                             </TableCell>
                             <TableCell className="text-right text-xs text-muted-foreground">
                               {formatDateTime(record.updatedAt)}
+                            </TableCell>
+                            <TableCell className="w-32 text-right">
+                              <div className="flex justify-end gap-1">
+                                <Button type="button" size="xs" variant="outline" disabled={taskActionId === record.id || record.state !== "downloading"} onClick={() => void handleTaskAction(record, "pause")}>暂停</Button>
+                                <Button type="button" size="xs" variant="ghost" className="text-destructive" disabled={taskActionId === record.id} onClick={() => void handleTaskAction(record, "delete")}>删除</Button>
+                              </div>
                             </TableCell>
                           </TableRow>
                         );

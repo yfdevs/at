@@ -7,12 +7,18 @@ const electronRequireBanner = [
   "globalThis.require = __electronCreateRequire(import.meta.url);",
 ].join("\n");
 
-const electronMainExternals = [
+const electronMainExternalPatterns = [
   /^better-sqlite3(?:\/.*)?$/,
   /^playwright(?:\/.*)?$/,
   /^playwright-core(?:\/.*)?$/,
   /^chromium-bidi(?:\/.*)?$/,
+  /^sharp(?:\/.*)?$/,
+  /^@img(?:\/.*)?$/,
 ];
+
+const electronMainExternals = (id: string) =>
+  electronMainExternalPatterns.some((pattern) => pattern.test(id))
+  || /[\\/]node_modules[\\/](?:sharp|@img)(?:[\\/]|$)/.test(id);
 
 export function createElectronPlugin(rootDir: string) {
   return electron({

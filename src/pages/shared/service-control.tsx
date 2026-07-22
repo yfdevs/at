@@ -1,5 +1,5 @@
 import { useCallback, useEffect, useRef, useState, type ReactNode } from "react";
-import { Power } from "@mynaui/icons-react";
+import { ThinkingOrb } from "thinking-orbs";
 import { motion, useReducedMotion } from "motion/react";
 import { toast } from "sonner";
 
@@ -147,7 +147,7 @@ export function ServiceControlButtonPage({
         aria-label={label}
         aria-pressed={running}
         className={cn(
-          "h-12 min-w-36 gap-2 rounded-lg px-6 text-base",
+          "h-10 min-w-32 gap-2 rounded-lg px-6",
           running &&
             "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20",
         )}
@@ -157,7 +157,19 @@ export function ServiceControlButtonPage({
         variant={running ? "destructive" : "default"}
         onClick={onToggle}
       >
-        <Power className={cn("size-5", loading ? "animate-pulse" : "service-shiny-icon")} />
+        <ThinkingOrb
+          aria-label={label}
+          state={loading ? "working" : running ? "composing" : "solving"}
+          size={20}
+          style={
+            running
+              ? {
+                  filter:
+                    "brightness(0) saturate(100%) invert(34%) sepia(88%) saturate(1800%) hue-rotate(335deg) brightness(92%) contrast(92%)",
+                }
+              : undefined
+          }
+        />
         <ShinyButtonText disabled={loading}>{label}</ShinyButtonText>
       </Button>
     </main>

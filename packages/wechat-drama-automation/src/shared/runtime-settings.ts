@@ -15,6 +15,7 @@ export interface WechatVideoRuntimeSettings {
   basicInfoStepTimeoutSeconds: string;
   remoteFileDownloadTimeoutSeconds: string;
   baiduNetdiskDownloadRetryAttempts: string;
+  mergeOwnershipMaterials: string;
   episodeUploadWaitTimeoutSeconds: string;
   episodeUploadFailedRetryAttempts: string;
   feishuBotWebhookUrl: string;
@@ -37,6 +38,7 @@ export const defaultWechatVideoRuntimeSettings: WechatVideoRuntimeSettings = {
   basicInfoStepTimeoutSeconds: "600",
   remoteFileDownloadTimeoutSeconds: "120",
   baiduNetdiskDownloadRetryAttempts: "3",
+  mergeOwnershipMaterials: "true",
   episodeUploadWaitTimeoutSeconds: "7200",
   episodeUploadFailedRetryAttempts: "3",
   feishuBotWebhookUrl: "",

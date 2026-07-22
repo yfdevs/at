@@ -57,6 +57,7 @@ export type WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: string
   remoteFileDownloadTimeoutSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
+  mergeOwnershipMaterials: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string
@@ -89,6 +90,7 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: '600',
   remoteFileDownloadTimeoutSeconds: '120',
   baiduNetdiskDownloadRetryAttempts: '3',
+  mergeOwnershipMaterials: 'true',
   episodeUploadWaitTimeoutSeconds: '7200',
   episodeUploadFailedRetryAttempts: '3',
   feishuBotWebhookUrl: '',
@@ -237,6 +239,7 @@ function normalizeConfig(
     basicInfoStepTimeoutSeconds: config.basicInfoStepTimeoutSeconds ?? defaultWechatVideoConfig.basicInfoStepTimeoutSeconds,
     remoteFileDownloadTimeoutSeconds: config.remoteFileDownloadTimeoutSeconds ?? defaultWechatVideoConfig.remoteFileDownloadTimeoutSeconds,
     baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts ?? defaultWechatVideoConfig.baiduNetdiskDownloadRetryAttempts,
+    mergeOwnershipMaterials: config.mergeOwnershipMaterials ?? defaultWechatVideoConfig.mergeOwnershipMaterials,
     episodeUploadWaitTimeoutSeconds: config.episodeUploadWaitTimeoutSeconds ?? defaultWechatVideoConfig.episodeUploadWaitTimeoutSeconds,
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatVideoConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatVideoConfig.feishuBotWebhookUrl,

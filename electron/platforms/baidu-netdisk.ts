@@ -100,6 +100,11 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount: number;
+  requiredOwnership?: {
+    juchuang?: number;
+    jianying?: number;
+  };
+  mergeOwnershipMaterials?: boolean;
 };
 
 export type BaiduNetdiskDownloadRecordResult = {
@@ -236,6 +241,12 @@ function shareKeyFromText(shareText: string) {
   }
 }
 
+function uniqueBaiduDownloadDir(resourceName: string, shareKey: string) {
+  const safeName = resourceName.replace(/[<>:"/\\|?*\x00-\x1F]/g, "_").trim() || "资源";
+  const suffix = createHash("sha1").update(shareKey).digest("hex").slice(0, 10);
+  return path.join(defaultBaiduNetdiskDownloadDir, `${safeName}__${suffix}`);
+}
+
 function normalizeEnsureDownloadRequest(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): BaiduNetdiskEnsureDownloadedRequest {
@@ -262,6 +273,8 @@ function normalizeEnsureDownloadRequest(
     resourceName,
     localEpisodeVideoRoot,
     episodeCount,
+    requiredOwnership: request.requiredOwnership,
+    mergeOwnershipMaterials: request.mergeOwnershipMaterials,
   };
 }
 
@@ -293,6 +306,10 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       shareText: string;
       resourceName?: string;
       expectedEpisodeCount?: number;
+      expectedOwnershipCounts?: {
+        juchuang?: number;
+        jianying?: number;
+      };
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -307,6 +324,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       completed: boolean;
       tasks: string[];
     }>;
+    controlBaiduNetdiskDownloadTask: (options: { port: number; targetName: string; action: "pause" | "resume" | "delete" }) => Promise<boolean>;
   }>;
 }
 
@@ -318,6 +336,14 @@ async function status() {
     port: cdpPort(config),
     executablePath: config.executablePath || undefined,
   });
+}
+
+async function controlDownloadTask(targetName: string, action: "pause" | "resume" | "delete") {
+  const config = readConfig();
+  const runtime = await importBaiduNetdiskDownloadRuntimePackage();
+  const result = await runtime.controlBaiduNetdiskDownloadTask({ port: cdpPort(config), targetName, action });
+  if (action === "delete") clearDownloadRecords();
+  return result;
 }
 
 async function startCdp(restart: boolean) {
@@ -451,6 +477,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
   shareKey: string,
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): Promise<BaiduNetdiskDownloadRecord> {
+  const uniqueDownloadDir = uniqueBaiduDownloadDir(request.resourceName, shareKey);
   const existingRecord = readDownloadRecords().find((record) => record.id === id);
   const localPath = playletDir(request.localEpisodeVideoRoot, request.resourceName);
   const now = new Date().toISOString();
@@ -461,7 +488,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     resourceName: request.resourceName,
     localEpisodeVideoRoot: request.localEpisodeVideoRoot,
     episodeCount: request.episodeCount,
-    downloadDir: request.localEpisodeVideoRoot,
+    downloadDir: uniqueDownloadDir,
     localPath,
     state: existingRecord?.state ?? "pending",
     skippedExisting: existingRecord?.skippedExisting ?? false,
@@ -493,7 +520,9 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       resourceName: request.resourceName,
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
       episodeCount: request.episodeCount,
-      downloadDir: request.localEpisodeVideoRoot,
+      requiredOwnership: request.requiredOwnership,
+      mergeOwnershipMaterials: request.mergeOwnershipMaterials,
+      downloadDir: uniqueDownloadDir,
       sourceLocalPath: existingRecord?.localPath,
       downloadTaskName: existingRecord?.resourceName,
       downloadShare: (downloadRequest) =>
@@ -501,6 +530,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           shareText: downloadRequest.shareText,
           resourceName: downloadRequest.resourceName,
           expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
+          expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
           port,
           downloadDir: downloadRequest.downloadDir,
         }),
@@ -643,6 +673,9 @@ export function registerBaiduNetdiskPlatformHandlers(
   ipcMain.handle("baidu-netdisk:service:restart-cdp", () => startCdp(true));
   ipcMain.handle("baidu-netdisk:downloads:list", () => downloadRecordsResult());
   ipcMain.handle("baidu-netdisk:downloads:clear", () => clearDownloadRecords());
+  ipcMain.handle("baidu-netdisk:downloads:control", (_event, request: { targetName: string; action: "pause" | "resume" | "delete" }) =>
+    controlDownloadTask(request.targetName, request.action),
+  );
   ipcMain.handle("baidu-netdisk:share:download", (_event, request) =>
     downloadShare(request as BaiduNetdiskShareDownloadRequest | undefined),
   );

@@ -94,6 +94,11 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount: number;
+  requiredOwnership?: {
+    juchuang?: number;
+    jianying?: number;
+  };
+  mergeOwnershipMaterials?: boolean;
 };
 
 export type BaiduNetdiskDownloadRecordResult = {
@@ -208,6 +213,10 @@ export async function clearBaiduNetdiskDownloadRecords() {
   return requireIpcRenderer("清空百度网盘下载记录").invoke(
     "baidu-netdisk:downloads:clear",
   ) as Promise<BaiduNetdiskDownloadRecordResult>;
+}
+
+export async function controlBaiduNetdiskDownloadTask(targetName: string, action: "pause" | "resume" | "delete") {
+  return requireIpcRenderer("百度网盘下载任务控制").invoke("baidu-netdisk:downloads:control", { targetName, action }) as Promise<boolean>;
 }
 
 export function onBaiduNetdiskDownloadRecordsChanged(

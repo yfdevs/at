@@ -174,8 +174,8 @@ function validatePlayletConfig(playletConfig: Config): Config {
   if (!playletConfig.playlet.summary) throw new Error("data.playlet.summary is required");
   if (!playletConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
   const productionProofFileCount = playletConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
-  if (productionProofFileCount < 2) {
-    throw new Error("data.playlet.copyright.productionProofFiles must contain at least 2 files.");
+  if (productionProofFileCount < 1) {
+    throw new Error("data.playlet.copyright.productionProofFiles must contain at least 1 contract file.");
   }
 
   return playletConfig;
