@@ -1,6 +1,6 @@
 import path from "node:path";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
-import { numberSetting, secondsSettingToMs } from "./settings-value.js";
+import { hoursToMs, numberSetting, secondsSettingToMs } from "./settings-value.js";
 import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
@@ -11,6 +11,8 @@ const emptyClaimDelaySeconds = 5;
 const slowEmptyClaimThreshold = 10;
 const slowEmptyClaimDelaySeconds = 30;
 const videoAccountSyncIntervalSeconds = 60;
+const auditStatusTaskDelaySeconds = 3;
+const auditStatusPollingIntervalHours = 3;
 const idlePageRefreshIntervalSeconds = 1500;
 const idlePageRefreshTimeoutSeconds = 60;
 const idlePageRefreshJitterSeconds = 300;
@@ -24,8 +26,9 @@ const contractSubjectAliases: Record<string, string> = {
 };
 // 兼容后端历史数据：contractSubject=0 表示未写入有效主体枚举，精确匹配不到时兜底使用。
 const legacyUnscopedContractSubjects = new Set(["0"]);
+export const mingxingshuoContractSubject = "MINGXINGSHUO";
 
-function normalizeContractSubject(value: string): string {
+export function normalizeContractSubject(value: string): string {
   const trimmedValue = value.trim();
   return contractSubjectAliases[trimmedValue] ?? trimmedValue.toUpperCase();
 }
@@ -112,6 +115,10 @@ export interface ServiceConfig {
   videoAccountSync: {
     intervalMs: number;
   };
+  auditStatusPolling: {
+    taskDelayMs: number;
+    intervalMs: number;
+  };
   idlePageRefresh: {
     intervalMs: number;
     timeoutMs: number;
@@ -143,6 +150,13 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   if (videoAccounts.some((account) => !account.id || !account.name)) {
     throw new Error("Video account id and name are required.");
   }
+  if (!videoAccounts.some((account) => (
+    account.contractSubject
+      ? normalizeContractSubject(account.contractSubject) === mingxingshuoContractSubject
+      : false
+  ))) {
+    throw new Error("MINGXINGSHUO_VIDEO_ACCOUNT_REQUIRED");
+  }
 
   return {
     videoAccounts,
@@ -159,6 +173,13 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
     },
     videoAccountSync: {
       intervalMs: secondsSettingToMs(settings.videoAccountSyncIntervalSeconds, videoAccountSyncIntervalSeconds),
+    },
+    auditStatusPolling: {
+      taskDelayMs: secondsSettingToMs(settings.auditStatusTaskDelaySeconds, auditStatusTaskDelaySeconds),
+      intervalMs: hoursToMs(numberSetting(
+        settings.auditStatusPollingIntervalHours,
+        auditStatusPollingIntervalHours,
+      )),
     },
     idlePageRefresh: {
       intervalMs: secondsSettingToMs(settings.idlePageRefreshIntervalSeconds, idlePageRefreshIntervalSeconds),

@@ -11,6 +11,7 @@ import { IdlePageRefreshService } from "./idle-page-refresh-service.js";
 import { TaskService } from "./task-service.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 import { VideoAccountSyncService } from "./video-account-sync-service.js";
+import { AuditStatusPollingService } from "./audit-status-polling-service.js";
 
 export type EnsureBaiduNetdiskResourceRequest = {
   shareText: string;
@@ -71,11 +72,18 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
     options.ensureBaiduNetdiskResource,
   );
   const idlePageRefreshService = new IdlePageRefreshService(serviceConfig, browserContexts, taskService);
+  const auditStatusPollingService = new AuditStatusPollingService(
+    serviceConfig,
+    browserContexts,
+    taskService,
+    notifier,
+  );
   const videoAccountSyncService = new VideoAccountSyncService(
     serviceConfig,
     browserContexts,
     taskWorkerPool,
     idlePageRefreshService,
+    auditStatusPollingService,
   );
 
   logger.info("initialized video accounts", {
@@ -90,6 +98,8 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
     });
   }
 
+  // 先让明星说完成登录和首轮审核同步，再开放各账号领取上剧任务。
+  auditStatusPollingService.start();
   taskWorkerPool.start();
   videoAccountSyncService.start();
   idlePageRefreshService.start();
@@ -109,6 +119,7 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
       logger.info("stopping");
       log(options, "[runtime] stopping");
       idlePageRefreshService.stop();
+      auditStatusPollingService.stop();
       videoAccountSyncService.stop();
       taskWorkerPool.stop();
       await browserContexts.close();

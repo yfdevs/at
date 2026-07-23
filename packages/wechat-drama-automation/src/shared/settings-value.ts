@@ -21,6 +21,10 @@ export function minutesToMs(minutes: number): number {
   return secondsToMs(minutes * 60);
 }
 
+export function hoursToMs(hours: number): number {
+  return minutesToMs(hours * 60);
+}
+
 export function secondsSettingToMs(value: string | undefined, fallbackSeconds: number): number {
   return secondsToMs(numberSetting(value, fallbackSeconds));
 }

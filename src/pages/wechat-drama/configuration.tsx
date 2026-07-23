@@ -47,6 +47,8 @@ const emptyConfig: WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: "30",
   workerSlowEmptyClaimDelaySeconds: "30",
   videoAccountSyncIntervalSeconds: "600",
+  auditStatusTaskDelaySeconds: "3",
+  auditStatusPollingIntervalHours: "3",
   idlePageRefreshIntervalSeconds: "10800",
   idlePageRefreshTimeoutSeconds: "60",
   idlePageRefreshJitterSeconds: "300",
@@ -122,7 +124,7 @@ const sections: Array<{
         kind: "subjects",
         key: "videoAccountContractSubjects",
         label: "主体配置",
-        description: "只启动所选主体下的视频号账号，后端账号接口也必须已配置对应主体。",
+        description: "明星说是其他主体上剧的审核前置，固定启用；后端账号接口也必须配置明星说视频号。",
         options: contractSubjectOptions,
       },
     ],
@@ -188,6 +190,20 @@ const sections: Array<{
         type: "number",
         description: "定时同步视频号账号状态。",
         suffix: "秒",
+      },
+      {
+        key: "auditStatusTaskDelaySeconds",
+        label: "单剧审核查询间隔",
+        type: "number",
+        description: "明星说待确认剧目逐个查询微信平台时的等待间隔。",
+        suffix: "秒",
+      },
+      {
+        key: "auditStatusPollingIntervalHours",
+        label: "审核全量轮询间隔",
+        type: "number",
+        description: "完成一轮明星说待确认剧目后，等待多久再开始下一轮。",
+        suffix: "小时",
       },
     ],
   },
@@ -460,6 +476,7 @@ function ConfigFieldControl({
     );
 
     const toggleSubject = (subject: string, checked: boolean) => {
+      if (subject === "MINGXINGSHUO" && !checked) return;
       const nextSubjects = new Set(selectedSubjects);
 
       if (checked) {
@@ -491,9 +508,16 @@ function ConfigFieldControl({
             >
               <Checkbox
                 checked={selectedSubjects.has(option.value)}
+                disabled={option.value === "MINGXINGSHUO"}
                 onCheckedChange={(checked) => toggleSubject(option.value, checked === true)}
+                aria-label={option.value === "MINGXINGSHUO" ? "明星说（必选）" : option.label}
               />
-              <span className="truncate">{option.label}</span>
+              <span className="truncate">
+                {option.label}
+                {option.value === "MINGXINGSHUO" ? (
+                  <span className="ml-1 text-xs text-muted-foreground">必选</span>
+                ) : null}
+              </span>
             </label>
           ))}
         </div>

@@ -9,6 +9,8 @@ export interface WechatVideoRuntimeSettings {
   workerSlowEmptyClaimThreshold: string;
   workerSlowEmptyClaimDelaySeconds: string;
   videoAccountSyncIntervalSeconds: string;
+  auditStatusTaskDelaySeconds: string;
+  auditStatusPollingIntervalHours: string;
   idlePageRefreshIntervalSeconds: string;
   idlePageRefreshTimeoutSeconds: string;
   idlePageRefreshJitterSeconds: string;
@@ -32,6 +34,8 @@ export const defaultWechatVideoRuntimeSettings: WechatVideoRuntimeSettings = {
   workerSlowEmptyClaimThreshold: "30",
   workerSlowEmptyClaimDelaySeconds: "30",
   videoAccountSyncIntervalSeconds: "600",
+  auditStatusTaskDelaySeconds: "3",
+  auditStatusPollingIntervalHours: "3",
   idlePageRefreshIntervalSeconds: "10800",
   idlePageRefreshTimeoutSeconds: "60",
   idlePageRefreshJitterSeconds: "300",

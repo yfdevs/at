@@ -51,6 +51,8 @@ export type WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: string
   workerSlowEmptyClaimDelaySeconds: string
   videoAccountSyncIntervalSeconds: string
+  auditStatusTaskDelaySeconds: string
+  auditStatusPollingIntervalHours: string
   idlePageRefreshIntervalSeconds: string
   idlePageRefreshTimeoutSeconds: string
   idlePageRefreshJitterSeconds: string
@@ -84,6 +86,8 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: '30',
   workerSlowEmptyClaimDelaySeconds: '30',
   videoAccountSyncIntervalSeconds: '600',
+  auditStatusTaskDelaySeconds: '3',
+  auditStatusPollingIntervalHours: '3',
   idlePageRefreshIntervalSeconds: '10800',
   idlePageRefreshTimeoutSeconds: '60',
   idlePageRefreshJitterSeconds: '300',
@@ -219,9 +223,20 @@ function broadcastConfigChanged(result: WechatVideoConfigResult) {
 function normalizeConfig(
   config: Partial<WechatVideoConfig> & Record<string, string | undefined>,
 ): WechatVideoConfig {
+  const selectedContractSubjects = new Set(
+    (config.videoAccountContractSubjects ?? defaultWechatVideoConfig.videoAccountContractSubjects)
+      .split(',')
+      .map((subject) => subject.trim())
+      .filter(Boolean),
+  )
+  selectedContractSubjects.add('MINGXINGSHUO')
+
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatVideoConfig.apiBaseUrl,
-    videoAccountContractSubjects: config.videoAccountContractSubjects ?? defaultWechatVideoConfig.videoAccountContractSubjects,
+    videoAccountContractSubjects: contractSubjectOptions
+      .map((option) => option.value)
+      .filter((subject) => selectedContractSubjects.has(subject))
+      .join(','),
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatVideoConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatVideoConfig.closeFailedTaskPages,
     runDataDir:
@@ -233,6 +248,8 @@ function normalizeConfig(
     workerSlowEmptyClaimThreshold: config.workerSlowEmptyClaimThreshold ?? defaultWechatVideoConfig.workerSlowEmptyClaimThreshold,
     workerSlowEmptyClaimDelaySeconds: config.workerSlowEmptyClaimDelaySeconds ?? defaultWechatVideoConfig.workerSlowEmptyClaimDelaySeconds,
     videoAccountSyncIntervalSeconds: config.videoAccountSyncIntervalSeconds ?? defaultWechatVideoConfig.videoAccountSyncIntervalSeconds,
+    auditStatusTaskDelaySeconds: config.auditStatusTaskDelaySeconds ?? defaultWechatVideoConfig.auditStatusTaskDelaySeconds,
+    auditStatusPollingIntervalHours: config.auditStatusPollingIntervalHours ?? defaultWechatVideoConfig.auditStatusPollingIntervalHours,
     idlePageRefreshIntervalSeconds: config.idlePageRefreshIntervalSeconds ?? defaultWechatVideoConfig.idlePageRefreshIntervalSeconds,
     idlePageRefreshTimeoutSeconds: config.idlePageRefreshTimeoutSeconds ?? defaultWechatVideoConfig.idlePageRefreshTimeoutSeconds,
     idlePageRefreshJitterSeconds: config.idlePageRefreshJitterSeconds ?? defaultWechatVideoConfig.idlePageRefreshJitterSeconds,

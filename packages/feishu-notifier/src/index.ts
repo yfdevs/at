@@ -27,6 +27,14 @@ export interface TaskStartedNotificationPayload extends TaskNotificationPayload 
   mode: string;
 }
 
+export interface AuditStatusNotificationPayload extends TaskNotificationPayload {
+  auditStatus?: string;
+  dramaStatus?: number;
+  pendingCount?: number;
+  selectedTitle?: string;
+  summary?: string;
+}
+
 function formatChineseDateTime(date: Date): string {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -83,6 +91,29 @@ export class FeishuNotifier {
     ]));
   }
 
+  async notifyAuditStatusResult(payload: AuditStatusNotificationPayload): Promise<void> {
+    await this.send(this.formatMessage("审核状态查询完成", payload, [
+      ["剧名", payload.selectedTitle],
+      ["微信状态", payload.dramaStatus],
+      ["回写状态", payload.auditStatus],
+      ["结果", payload.summary],
+    ]));
+  }
+
+  async notifyAuditStatusFailed(payload: AuditStatusNotificationPayload): Promise<void> {
+    await this.send(this.formatMessage("审核状态查询失败", payload, [
+      ["剧名", payload.selectedTitle],
+      ["错误信息", payload.errorMessage],
+    ]));
+  }
+
+  async notifyAuditStatusCycleCompleted(payload: AuditStatusNotificationPayload): Promise<void> {
+    await this.send(this.formatMessage("审核状态轮询完成", payload, [
+      ["待查询任务数", payload.pendingCount],
+      ["结果", payload.summary],
+    ]));
+  }
+
   private formatMessage(
     title: string,
     payload: TaskNotificationPayload,
@@ -123,7 +154,10 @@ export class FeishuNotifier {
       });
 
       if (!response.ok) {
-        throw new Error(`Feishu webhook failed: ${response.status} ${response.statusText}`);
+        const responseBody = await response.text().catch(() => "");
+        throw new Error(
+          `Feishu webhook failed: ${response.status} ${response.statusText}${responseBody ? ` ${responseBody}` : ""}`,
+        );
       }
     } catch (error) {
       this.logger?.warn("send failed", {

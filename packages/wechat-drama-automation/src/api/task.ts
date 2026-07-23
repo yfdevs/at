@@ -34,13 +34,20 @@ interface ClaimTaskResponse {
   } | null;
 }
 
-interface AccountTaskPageItem {
+export type AuditStatus = "NONE" | "UNDER_REVIEW" | "APPROVED" | "REJECTED";
+
+export interface AccountTaskPageItem {
   id: number;
   dramaId?: number;
   videoAccountId: string;
   videoAccountName?: string;
   rpaStatus?: string;
+  auditStatus?: string;
   originalTitle?: string;
+  selectedTitle?: string;
+  contractSubject?: string;
+  versionNo?: number;
+  updateTime?: string;
 }
 
 interface AccountTaskPageResponse {
@@ -61,6 +68,96 @@ function assertTaskApiResponseOk(payload: TaskCallbackResponse, action: string):
   if (typeof payload.code === "number" && payload.code !== 0) {
     throw new Error(`${action} failed: ${payload.msg || `code=${payload.code}`}`);
   }
+}
+
+export async function fetchPendingAuditAccountTasksApi(
+  videoAccount: VideoAccount,
+): Promise<AccountTaskPageItem[]> {
+  const url = "/dramaAiRpa/accountTask/page";
+  const requestPayload = {
+    page: 1,
+    pageSize: 1000,
+    dramaId: null,
+    originalTitle: null,
+    selectedTitle: null,
+    videoAccountId: videoAccount.id,
+    videoAccountName: null,
+    status: null,
+    rpaStatus: null,
+  };
+  const payload = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
+  if (payload.code !== 0) {
+    throw new Error(`Failed to query audit account tasks: ${payload.msg || `code=${payload.code}`}`);
+  }
+
+  const items = payload.data?.data ?? [];
+  const pendingItems = items.filter((item) => (
+    item.videoAccountId === videoAccount.id
+    && item.rpaStatus === "SUCCESS"
+    && (item.auditStatus === "NONE" || item.auditStatus === "UNDER_REVIEW")
+    && Boolean(item.selectedTitle?.trim() || item.originalTitle?.trim())
+  ));
+  logger.info("pending audit account tasks fetched", {
+    videoAccountId: videoAccount.id,
+    total: payload.data?.total ?? 0,
+    rows: items.length,
+    pendingRows: pendingItems.length,
+  });
+  return pendingItems;
+}
+
+export async function updateAccountTaskAuditStatusApi(
+  taskId: number,
+  auditStatus: Extract<AuditStatus, "APPROVED" | "REJECTED">,
+): Promise<void> {
+  const url = "/dramaAiRpa/accountTask/auditStatus";
+  const payload = await httpClient.post<TaskCallbackResponse>(url, { taskId, auditStatus });
+  assertTaskApiResponseOk(payload, "Account task audit status update");
+  logger.info("account task audit status updated", { taskId, auditStatus });
+}
+
+export async function fetchMingxingshuoAuditTaskBySelectedTitleApi(
+  selectedTitle: string,
+): Promise<AccountTaskPageItem | null> {
+  const normalizedTitle = selectedTitle.trim();
+  const url = "/dramaAiRpa/accountTask/page";
+  const requestPayload = {
+    page: 1,
+    pageSize: 1000,
+    dramaId: null,
+    originalTitle: null,
+    selectedTitle: normalizedTitle,
+    videoAccountId: null,
+    videoAccountName: null,
+    status: null,
+    rpaStatus: null,
+  };
+  logger.info("mingxingshuo audit gate request", { url, selectedTitle: normalizedTitle });
+  const payload = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
+  if (payload.code !== 0) {
+    throw new Error(`Failed to query mingxingshuo audit task: ${payload.msg || `code=${payload.code}`}`);
+  }
+
+  const matches = (payload.data?.data ?? [])
+    .filter((item) => (
+      item.contractSubject?.trim().toUpperCase() === "MINGXINGSHUO"
+      && item.selectedTitle?.trim() === normalizedTitle
+    ))
+    .sort((left, right) => (
+      (right.versionNo ?? 0) - (left.versionNo ?? 0)
+      || (right.updateTime ?? "").localeCompare(left.updateTime ?? "")
+      || right.id - left.id
+    ));
+  const task = matches[0] ?? null;
+  logger.info("mingxingshuo audit gate response", {
+    selectedTitle: normalizedTitle,
+    total: payload.data?.total ?? 0,
+    exactMatchCount: matches.length,
+    matchedTaskId: task?.id,
+    matchedRpaStatus: task?.rpaStatus,
+    matchedAuditStatus: task?.auditStatus,
+  });
+  return task;
 }
 
 async function findNextUnclaimedAccountTaskId(

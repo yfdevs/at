@@ -1,6 +1,11 @@
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
-import { filterVideoAccountsByContractSubjects, type ServiceConfig } from "../shared/config.js";
+import {
+  filterVideoAccountsByContractSubjects,
+  mingxingshuoContractSubject,
+  normalizeContractSubject,
+  type ServiceConfig,
+} from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 
@@ -15,6 +20,7 @@ export class VideoAccountSyncService {
     private readonly browserContexts: BrowserContextManager,
     private readonly taskWorkerPool: TaskWorkerPool,
     private readonly idlePageRefreshService?: { syncVideoAccounts(): void },
+    private readonly auditStatusPollingService?: { syncVideoAccounts(): void },
   ) {}
 
   start(): void {
@@ -50,6 +56,7 @@ export class VideoAccountSyncService {
       this.taskWorkerPool.syncVideoAccounts(videoAccounts);
       this.serviceConfig.videoAccounts = videoAccounts;
       this.idlePageRefreshService?.syncVideoAccounts();
+      this.auditStatusPollingService?.syncVideoAccounts();
       logger.info("synced video accounts", {
         selectedContractSubjects: this.serviceConfig.videoAccountContractSubjects,
         totalCount: allVideoAccounts.length,
@@ -85,6 +92,13 @@ export class VideoAccountSyncService {
     }
     if (videoAccounts.some((account) => !account.id || !account.name)) {
       throw new Error("Video account id and name are required.");
+    }
+    if (!videoAccounts.some((account) => (
+      account.contractSubject
+        ? normalizeContractSubject(account.contractSubject) === mingxingshuoContractSubject
+        : false
+    ))) {
+      throw new Error("MINGXINGSHUO_VIDEO_ACCOUNT_REQUIRED");
     }
   }
 }

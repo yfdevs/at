@@ -104,13 +104,30 @@ async function writeHoistedPnpmConfig(packedByName) {
 
 async function workspacePackages() {
   const packagesDir = path.join(rootDir, "packages");
-  const packageNames = await readdir(packagesDir);
+  const entries = await readdir(packagesDir, { withFileTypes: true });
+  const packages = [];
 
-  return Promise.all(packageNames.map(async (directoryName) => {
-    const packageDir = path.join(packagesDir, directoryName);
-    const packageJson = await readJson(path.join(packageDir, "package.json"));
-    return { name: packageJson.name, packageDir };
-  }));
+  for (const entry of entries) {
+    if (!entry.isDirectory()) continue;
+
+    const packageDir = path.join(packagesDir, entry.name);
+    const workspacePackageJsonPath = path.join(packageDir, "package.json");
+    let packageJson;
+    try {
+      packageJson = await readJson(workspacePackageJsonPath);
+    } catch (error) {
+      if (error && typeof error === "object" && error.code === "ENOENT") {
+        continue;
+      }
+      throw error;
+    }
+    if (!packageJson.name) {
+      throw new Error(`Workspace package name is required: ${workspacePackageJsonPath}`);
+    }
+    packages.push({ name: packageJson.name, packageDir });
+  }
+
+  return packages;
 }
 
 async function packWorkspacePackages() {

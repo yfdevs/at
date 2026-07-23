@@ -1,11 +1,18 @@
 import {
+  mingxingshuoContractSubject,
   normalizeClaimedTaskConfig,
+  normalizeContractSubject,
   type ServiceConfig,
 } from "../shared/config.js";
 import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
-import { claimNextTaskForVideoAccountApi, reportClaimedTaskErrorApi, reportClaimedTaskSuccessApi } from "../api/task.js";
+import {
+  claimNextTaskForVideoAccountApi,
+  fetchMingxingshuoAuditTaskBySelectedTitleApi,
+  reportClaimedTaskErrorApi,
+  reportClaimedTaskSuccessApi,
+} from "../api/task.js";
 import type { VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import { TaskService } from "./task-service.js";
@@ -33,6 +40,13 @@ const nonRetryableBaiduNetdiskErrorPatterns = [
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
+}
+
+function mingxingshuoAuditGateError(message: string): Error {
+  return Object.assign(new Error(message), {
+    errorType: ErrorType.TaskExecution,
+    failStage: "OTHER" as const,
+  });
 }
 
 interface AccountWorkerControl {
@@ -127,6 +141,11 @@ export class TaskWorkerPool {
     logger.info("worker started", { videoAccountId });
 
     while (!this.stopped && !worker.stopped) {
+      const loginReservation = this.taskService.tryReserveChannel(videoAccountId, "worker-login");
+      if (!loginReservation) {
+        await sleep(1000);
+        continue;
+      }
       try {
         logger.info("ensure login before claim", { videoAccountId });
         await this.browserContexts.ensureLoggedIn(videoAccountId);
@@ -139,6 +158,8 @@ export class TaskWorkerPool {
           errorMessage: errorInfo.message,
         });
         await sleep(claimErrorDelayMs);
+      } finally {
+        loginReservation.release();
       }
     }
 
@@ -182,6 +203,7 @@ export class TaskWorkerPool {
 
           try {
             const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
+            await this.assertMingxingshuoAuditApproved(videoAccount, playletConfig.playlet.name);
             await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
             await prepareWechatPosterMaterials(playletConfig);
@@ -347,6 +369,60 @@ export class TaskWorkerPool {
     }
 
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
+  }
+
+  private async assertMingxingshuoAuditApproved(
+    videoAccount: VideoAccount,
+    selectedTitle: string,
+  ): Promise<void> {
+    if (
+      videoAccount.contractSubject
+      && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject
+    ) {
+      return;
+    }
+
+    const normalizedTitle = selectedTitle.trim();
+    logger.info("check mingxingshuo audit gate", {
+      selectedTitle: normalizedTitle,
+      contractSubject: videoAccount.contractSubject,
+    });
+    const mingxingshuoTask = await fetchMingxingshuoAuditTaskBySelectedTitleApi(normalizedTitle);
+    if (!mingxingshuoTask) {
+      throw mingxingshuoAuditGateError(
+        `明星说主体未找到同名剧《${normalizedTitle}》，其他主体暂不可上剧。`,
+      );
+    }
+    if (mingxingshuoTask.rpaStatus !== "SUCCESS") {
+      throw mingxingshuoAuditGateError(
+        `明星说主体同名剧《${normalizedTitle}》尚未上传成功（RPA状态：${mingxingshuoTask.rpaStatus || "无"}），其他主体暂不可上剧。`,
+      );
+    }
+
+    switch (mingxingshuoTask.auditStatus) {
+      case "APPROVED":
+        logger.info("mingxingshuo audit gate approved", {
+          selectedTitle: normalizedTitle,
+          mingxingshuoTaskId: mingxingshuoTask.id,
+        });
+        return;
+      case "REJECTED":
+        throw mingxingshuoAuditGateError(
+          `明星说主体同名剧《${normalizedTitle}》审核未通过，其他主体不可上剧。`,
+        );
+      case "UNDER_REVIEW":
+        throw mingxingshuoAuditGateError(
+          `明星说主体同名剧《${normalizedTitle}》正在审核中，其他主体暂不可上剧。`,
+        );
+      case "NONE":
+        throw mingxingshuoAuditGateError(
+          `明星说主体同名剧《${normalizedTitle}》尚未提交审核，其他主体暂不可上剧。`,
+        );
+      default:
+        throw mingxingshuoAuditGateError(
+          `明星说主体同名剧《${normalizedTitle}》审核状态异常（${mingxingshuoTask.auditStatus || "无"}），其他主体暂不可上剧。`,
+        );
+    }
   }
 }
 
