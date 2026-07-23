@@ -3,7 +3,6 @@ import { createPortal } from "react-dom";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { buttonVariants } from "@/components/ui/button";
-import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
   defaultRoute,
   isAppRoute,
@@ -87,30 +86,26 @@ export function AppTitlebarPlatformNav() {
           const active = activePlatform.id === platform.id;
 
           return (
-            <Tooltip key={platform.id}>
-              <TooltipTrigger
-                type="button"
-                aria-label={`打开${platform.title}`}
-                aria-pressed={active}
-                className={cn(
-                  buttonVariants({ size: "icon-xs", variant: active ? "secondary" : "ghost" }),
-                  "app-titlebar-platform-button",
-                  active && "app-titlebar-platform-button-active",
-                )}
-                onClick={() => navigate(routePath(platform.serviceRoute))}
-              >
-                <img
-                  src={platform.logoSrc}
-                  alt=""
-                  aria-hidden="true"
-                  draggable={false}
-                  className="size-5 object-contain"
-                />
-              </TooltipTrigger>
-              <TooltipContent side="bottom" sideOffset={8}>
-                {platform.title}
-              </TooltipContent>
-            </Tooltip>
+            <button
+              key={platform.id}
+              type="button"
+              aria-label={`打开${platform.title}`}
+              aria-pressed={active}
+              className={cn(
+                buttonVariants({ size: "icon-xs", variant: active ? "secondary" : "ghost" }),
+                "app-titlebar-platform-button",
+                active && "app-titlebar-platform-button-active",
+              )}
+              onClick={() => navigate(routePath(platform.serviceRoute))}
+            >
+              <img
+                src={platform.logoSrc}
+                alt=""
+                aria-hidden="true"
+                draggable={false}
+                className="size-5 object-contain"
+              />
+            </button>
           );
         })}
       </nav>

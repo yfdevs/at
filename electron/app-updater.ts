@@ -1,10 +1,69 @@
 import { app, BrowserWindow, ipcMain } from "electron";
+import { CancellationError, CancellationToken } from "builder-util-runtime";
+import Store from "electron-store";
 import { createRequire } from "node:module";
 import type { ProgressInfo, UpdateInfo } from "electron-updater";
 
 import { logMain } from "./main-logger";
 
 const require = createRequire(import.meta.url);
+
+const appUpdateSources = [
+  {
+    id: "accelerated",
+    label: "down.mxw.xx.kg（默认）",
+    description: "通过 down.mxw.xx.kg 获取 GitHub Release，国内网络通常更快。",
+    url: "https://down.mxw.xx.kg/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "github",
+    label: "GitHub 官方源",
+    description: "直接连接 GitHub Release，适合可稳定访问 GitHub 的网络。",
+    url: "https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "github-dpik-top",
+    label: "github.dpik.top",
+    description: "通过 github.dpik.top 加速获取 GitHub Release。",
+    url: "https://github.dpik.top/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "gh-proxy-com",
+    label: "gh-proxy.com",
+    description: "通过 gh-proxy.com 加速获取 GitHub Release。",
+    url: "https://gh-proxy.com/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "github-tbap-top",
+    label: "github.tbap.top",
+    description: "通过 github.tbap.top 加速获取 GitHub Release。",
+    url: "https://github.tbap.top/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "memory-echoes",
+    label: "github-proxy.memory-echoes.cn",
+    description: "通过 github-proxy.memory-echoes.cn 加速获取 GitHub Release。",
+    url: "https://github-proxy.memory-echoes.cn/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "gh-dpik-top",
+    label: "gh.dpik.top",
+    description: "通过 gh.dpik.top 加速获取 GitHub Release。",
+    url: "https://gh.dpik.top/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "geekertao",
+    label: "ghfile.geekertao.top",
+    description: "通过 ghfile.geekertao.top 加速获取 GitHub Release。",
+    url: "https://ghfile.geekertao.top/https://github.com/yfdevs/at/releases/latest/download",
+  },
+  {
+    id: "ghproxy-net",
+    label: "ghproxy.net",
+    description: "通过 ghproxy.net 加速获取 GitHub Release。",
+    url: "https://ghproxy.net/https://github.com/yfdevs/at/releases/latest/download",
+  },
+] as const;
 
 export type AppUpdateState =
   | "idle"
@@ -23,6 +82,15 @@ export type AppUpdateProgress = {
   total: number;
 };
 
+export type AppUpdateSourceId = (typeof appUpdateSources)[number]["id"];
+
+export type AppUpdateSource = {
+  id: AppUpdateSourceId;
+  label: string;
+  description: string;
+  url: string;
+};
+
 export type AppUpdateStatus = {
   state: AppUpdateState;
   supported: boolean;
@@ -35,7 +103,13 @@ export type AppUpdateStatus = {
   progress?: AppUpdateProgress;
   error?: string;
   disabledReason?: string;
+  source: AppUpdateSource;
+  sources: AppUpdateSource[];
   updatedAt: string;
+};
+
+type AppUpdateStore = {
+  sourceId: AppUpdateSourceId;
 };
 
 type RegisterAppUpdaterHandlersOptions = {
@@ -52,6 +126,26 @@ let autoUpdaterInstance:
   | typeof import("electron-updater").autoUpdater
   | null
   | undefined;
+let store: Store<AppUpdateStore> | null = null;
+let downloadCancellationToken: CancellationToken | null = null;
+
+function getStore() {
+  if (!store) {
+    store = new Store<AppUpdateStore>({
+      name: "app-update-config",
+      defaults: {
+        sourceId: "accelerated",
+      },
+    });
+  }
+
+  return store;
+}
+
+function getSelectedUpdateSource(): AppUpdateSource {
+  const sourceId = getStore().get("sourceId");
+  return appUpdateSources.find((source) => source.id === sourceId) ?? appUpdateSources[0];
+}
 
 function getAutoUpdater() {
   if (autoUpdaterInstance !== undefined) {
@@ -83,7 +177,11 @@ export function registerAppUpdaterHandlers(options: RegisterAppUpdaterHandlersOp
   ipcMain.handle("app:update:status", () => getAppUpdateStatus());
   ipcMain.handle("app:update:check", () => checkForAppUpdate());
   ipcMain.handle("app:update:download", () => downloadAppUpdate());
+  ipcMain.handle("app:update:download:cancel", () => cancelAppUpdateDownload());
   ipcMain.handle("app:update:install", () => installAppUpdate());
+  ipcMain.handle("app:update:source:set", (_event, sourceId: AppUpdateSourceId) =>
+    setAppUpdateSource(sourceId),
+  );
 }
 
 export function getAppUpdateStatus() {
@@ -122,6 +220,7 @@ async function checkForAppUpdate() {
       return getAppUpdateStatus();
     }
 
+    applySelectedUpdateSource(autoUpdater);
     await autoUpdater.checkForUpdates();
   } catch (error) {
     setStatus({
@@ -148,6 +247,8 @@ async function downloadAppUpdate() {
   }
 
   setStatus({ state: "downloading", progress: undefined, error: undefined });
+  const cancellationToken = new CancellationToken();
+  downloadCancellationToken = cancellationToken;
 
   try {
     const autoUpdater = getAutoUpdater();
@@ -156,16 +257,38 @@ async function downloadAppUpdate() {
       throw new Error(readDisabledReason() ?? "更新模块不可用。");
     }
 
-    await autoUpdater.downloadUpdate();
+    await autoUpdater.downloadUpdate(cancellationToken);
   } catch (error) {
+    if (error instanceof CancellationError || cancellationToken.cancelled) {
+      return getAppUpdateStatus();
+    }
+
     setStatus({
       state: "error",
       error: readableError(error),
     });
     throw error;
+  } finally {
+    if (downloadCancellationToken === cancellationToken) {
+      downloadCancellationToken = null;
+    }
+    cancellationToken.dispose();
   }
 
   return getAppUpdateStatus();
+}
+
+function cancelAppUpdateDownload() {
+  if (status?.state !== "downloading" || !downloadCancellationToken) {
+    throw new Error("当前没有正在下载的应用更新。");
+  }
+
+  downloadCancellationToken.cancel();
+  return setStatus({
+    state: "available",
+    progress: undefined,
+    error: undefined,
+  });
 }
 
 function installAppUpdate() {
@@ -222,6 +345,7 @@ function configureAutoUpdater() {
   autoUpdater.autoInstallOnAppQuit = false;
   autoUpdater.allowPrerelease = false;
   autoUpdater.fullChangelog = true;
+  applySelectedUpdateSource(autoUpdater);
 
   autoUpdater.on("checking-for-update", () => {
     setStatus({ state: "checking", progress: undefined, error: undefined });
@@ -271,7 +395,7 @@ function configureAutoUpdater() {
       ...statusFromUpdateInfo(info),
       state: "available",
       progress: undefined,
-      error: "更新下载已取消。",
+      error: undefined,
     });
   });
 
@@ -280,6 +404,53 @@ function configureAutoUpdater() {
       state: "error",
       error: readableError(error),
     });
+  });
+}
+
+function setAppUpdateSource(sourceId: AppUpdateSourceId) {
+  const source = appUpdateSources.find((candidate) => candidate.id === sourceId);
+
+  if (!source) {
+    throw new Error("未知的应用更新源。");
+  }
+
+  if (
+    ["checking", "downloading", "installing", "downloaded"].includes(status?.state ?? "")
+  ) {
+    throw new Error("当前更新任务进行中，暂时不能切换更新源。");
+  }
+
+  getStore().set("sourceId", source.id);
+
+  const autoUpdater = getAutoUpdater();
+  if (autoUpdater) {
+    applySelectedUpdateSource(autoUpdater);
+  }
+
+  latestUpdateInfo = null;
+  return setStatus({
+    state: "idle",
+    latestVersion: undefined,
+    releaseName: undefined,
+    releaseDate: undefined,
+    releaseNotes: undefined,
+    progress: undefined,
+    error: undefined,
+  });
+}
+
+function applySelectedUpdateSource(
+  autoUpdater: typeof import("electron-updater").autoUpdater,
+) {
+  const source = getSelectedUpdateSource();
+  autoUpdater.setFeedURL({
+    provider: "generic",
+    url: source.url,
+    channel: "latest",
+  });
+  logMain("info", "app update source configured", {
+    sourceId: source.id,
+    url: source.url,
   });
 }
 
@@ -296,6 +467,7 @@ function setStatus(nextStatus: Partial<AppUpdateStatus>) {
 
 function normalizeStatus(nextStatus: AppUpdateStatus) {
   const disabledReason = readDisabledReason();
+  const source = getSelectedUpdateSource();
 
   return {
     ...nextStatus,
@@ -303,6 +475,8 @@ function normalizeStatus(nextStatus: AppUpdateStatus) {
     enabled: !disabledReason,
     currentVersion: app.getVersion(),
     disabledReason,
+    source,
+    sources: [...appUpdateSources],
     updatedAt: nextStatus.updatedAt || new Date().toISOString(),
   };
 }
@@ -314,6 +488,8 @@ function createStatus(state: AppUpdateState): AppUpdateStatus {
     enabled: !readDisabledReason(),
     currentVersion: app.getVersion(),
     disabledReason: readDisabledReason(),
+    source: getSelectedUpdateSource(),
+    sources: [...appUpdateSources],
     updatedAt: new Date().toISOString(),
   });
 }

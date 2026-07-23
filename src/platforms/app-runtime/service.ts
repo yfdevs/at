@@ -38,6 +38,24 @@ export type AppUpdateProgress = {
   total: number;
 };
 
+export type AppUpdateSourceId =
+  | "accelerated"
+  | "github"
+  | "github-dpik-top"
+  | "gh-proxy-com"
+  | "github-tbap-top"
+  | "memory-echoes"
+  | "gh-dpik-top"
+  | "geekertao"
+  | "ghproxy-net";
+
+export type AppUpdateSource = {
+  id: AppUpdateSourceId;
+  label: string;
+  description: string;
+  url: string;
+};
+
 export type AppUpdateStatus = {
   state: AppUpdateState;
   supported: boolean;
@@ -50,6 +68,8 @@ export type AppUpdateStatus = {
   progress?: AppUpdateProgress;
   error?: string;
   disabledReason?: string;
+  source: AppUpdateSource;
+  sources: AppUpdateSource[];
   updatedAt: string;
 };
 
@@ -93,9 +113,22 @@ export function downloadAppUpdate() {
   ) as Promise<AppUpdateStatus>;
 }
 
+export function cancelAppUpdateDownload() {
+  return requireIpcRenderer("取消应用更新下载").invoke(
+    "app:update:download:cancel",
+  ) as Promise<AppUpdateStatus>;
+}
+
 export function installAppUpdate() {
   return requireIpcRenderer("安装应用更新").invoke(
     "app:update:install",
+  ) as Promise<AppUpdateStatus>;
+}
+
+export function setAppUpdateSource(sourceId: AppUpdateSourceId) {
+  return requireIpcRenderer("切换应用更新源").invoke(
+    "app:update:source:set",
+    sourceId,
   ) as Promise<AppUpdateStatus>;
 }
 

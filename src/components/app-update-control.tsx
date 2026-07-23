@@ -5,6 +5,7 @@ import {
   Power,
   Refresh,
   SpinnerOne,
+  StopCircle,
   Zap,
 } from "@mynaui/icons-react";
 import { useEffect, useState } from "react";
@@ -20,18 +21,28 @@ import {
   PopoverTrigger,
 } from "@/components/ui/popover";
 import { Progress } from "@/components/ui/progress";
+import {
+  Select,
+  SelectContent,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import { cn } from "@/lib/utils";
 import {
+  cancelAppUpdateDownload,
   checkForAppUpdate,
   downloadAppUpdate,
   getAppUpdateStatus,
   installAppUpdate,
   onAppUpdateChanged,
+  setAppUpdateSource,
+  type AppUpdateSourceId,
   type AppUpdateStatus,
 } from "@/platforms/app-runtime/service";
 
-type UpdateAction = "check" | "download" | "install";
+type UpdateAction = "check" | "download" | "install" | "source" | "cancel";
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -131,6 +142,7 @@ function updateIconClass(status: AppUpdateStatus | null, actionPending: UpdateAc
 }
 
 function updateButtonLabel(status: AppUpdateStatus | null, actionPending: UpdateAction | null) {
+  if (actionPending === "cancel") return "取消中";
   if (actionPending === "check" || status?.state === "checking") return "检查中";
   if (actionPending === "download" || status?.state === "downloading") {
     return formatPercent(status?.progress?.percent ?? null);
@@ -217,6 +229,8 @@ export function AppUpdateControl() {
           toast.error(nextStatus.error ?? "检查更新失败。");
         } else if (action === "download" && nextStatus.state === "downloaded") {
           toast.success("更新已下载，重启后安装。");
+        } else if (action === "cancel") {
+          toast.info("下载已取消，可以切换更新源后重新检查。");
         }
       } catch (error) {
         toast.error(errorMessage(error));
@@ -243,6 +257,16 @@ export function AppUpdateControl() {
   const downloadText = progress
     ? `${formatBytes(progress.transferred)} / ${formatBytes(progress.total)} · ${formatBytes(progress.bytesPerSecond)}/s`
     : null;
+  const sourceLocked =
+    busy || status?.state === "installing" || status?.state === "downloaded";
+
+  const changeUpdateSource = (sourceId: AppUpdateSourceId) => {
+    if (!status || sourceId === status.source.id) {
+      return;
+    }
+
+    runUpdateAction("source", () => setAppUpdateSource(sourceId));
+  };
 
   return (
     <Popover>
@@ -309,6 +333,41 @@ export function AppUpdateControl() {
           ) : null}
         </div>
 
+        {status ? (
+          <div className="grid gap-1.5">
+            <div className="flex items-center justify-between gap-3">
+              <label htmlFor="app-update-source" className="text-xs text-muted-foreground">
+                更新源
+              </label>
+              <Select
+                value={status.source.id}
+                disabled={sourceLocked}
+                onValueChange={(value) => {
+                  if (value) changeUpdateSource(value as AppUpdateSourceId);
+                }}
+              >
+                <SelectTrigger id="app-update-source" size="sm" className="w-48 bg-background">
+                  <SelectValue />
+                </SelectTrigger>
+                <SelectContent
+                  align="end"
+                  positionerClassName="z-[100001]"
+                  className="max-w-64"
+                >
+                  {status.sources.map((source) => (
+                    <SelectItem key={source.id} value={source.id}>
+                      {source.label}
+                    </SelectItem>
+                  ))}
+                </SelectContent>
+              </Select>
+            </div>
+            <p className="text-xs leading-4 text-muted-foreground">
+              {status.source.description}
+            </p>
+          </div>
+        ) : null}
+
         {progress ? (
           <div className="grid gap-1">
             <div className="flex items-center justify-between gap-3 text-xs leading-5">
@@ -348,6 +407,18 @@ export function AppUpdateControl() {
             />
             <span>{actionPending === "check" ? "检查中" : "检查"}</span>
           </Button>
+          {status?.state === "downloading" ? (
+            <Button
+              type="button"
+              size="xs"
+              variant="outline"
+              disabled={actionPending === "cancel"}
+              onClick={() => runUpdateAction("cancel", cancelAppUpdateDownload)}
+            >
+              <StopCircle aria-hidden="true" />
+              <span>{actionPending === "cancel" ? "取消中" : "取消"}</span>
+            </Button>
+          ) : null}
           {canDownload ? (
             <Button
               type="button"
