@@ -17,7 +17,7 @@
   },
   "dependencies": {
     "@drama/axios": "workspace:*",
-    "@drama/drama-video-assets": "workspace:*",
+    "@drama/drama-media-assets": "workspace:*",
     "@drama/feishu-notifier": "workspace:*",
     "playwright": "latest"
   },

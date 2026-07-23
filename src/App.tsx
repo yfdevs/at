@@ -1,9 +1,9 @@
 import { HashRouter } from "react-router-dom";
-import { useLocation } from "react-router-dom";
 
 import { AppRuntimeDock } from "@/components/app-runtime-dock";
 import { AppTitlebarMemory } from "@/components/app-titlebar-memory";
 import { AppTitlebarPlatformNav } from "@/components/app-titlebar-platform-nav";
+import { BaiduNetdiskDrawerProvider } from "@/platforms/baidu-netdisk/drawer";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppRoutes } from "@/routes/app-routes";
@@ -19,20 +19,19 @@ export default function App() {
 }
 
 function AppContent() {
-  const location = useLocation();
-  const utilityWindow = location.pathname.replace(/^\/+/, "") === "baidu-netdisk/window";
-
   return (
     <TooltipProvider delay={120} closeDelay={0} timeout={250}>
-      <div className="flex h-full min-h-0 flex-col bg-transparent">
-        {!utilityWindow ? <AppTitlebarMemory /> : null}
-        {!utilityWindow ? <AppTitlebarPlatformNav /> : null}
-        <div className="min-h-0 flex-1 overflow-auto bg-transparent">
-          <AppRoutes />
+      <BaiduNetdiskDrawerProvider>
+        <div className="flex h-full min-h-0 flex-col bg-transparent">
+          <AppTitlebarMemory />
+          <AppTitlebarPlatformNav />
+          <div className="min-h-0 flex-1 overflow-auto bg-transparent">
+            <AppRoutes />
+          </div>
+          <AppRuntimeDock />
+          <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
         </div>
-        {!utilityWindow ? <AppRuntimeDock /> : null}
-        <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
-      </div>
+      </BaiduNetdiskDrawerProvider>
     </TooltipProvider>
   );
 }

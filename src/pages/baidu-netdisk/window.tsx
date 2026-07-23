@@ -1,6 +1,4 @@
-import { useEffect, useMemo, useState, type ChangeEvent } from "react";
-import { useLocation } from "react-router-dom";
-import { CloudDownload } from "@mynaui/icons-react";
+import { useEffect, useState, type ChangeEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -28,6 +26,7 @@ import {
   saveBaiduNetdiskConfig,
   type BaiduNetdiskCdpStatus,
   type BaiduNetdiskDownloadRecord,
+  type BaiduNetdiskWindowPlatformId,
 } from "@/platforms/baidu-netdisk/service";
 import { kuaishouDramaService } from "@/platforms/kuaishou-drama/service";
 import { meituanCreationService } from "@/platforms/meituan-drama/service";
@@ -49,23 +48,12 @@ function errorMessage(error: unknown) {
 }
 
 function baiduNetdiskSummary(status: BaiduNetdiskCdpStatus | null, error: string | null) {
-  if (error) return error;
-  if (!status) return "读取中";
-  if (status.ready) return "CDP 已连接";
-  if (!status.appRunning) return "百度网盘未启动";
-  if (!status.cdpRunning) return "未以 CDP 模式启动";
-  return status.message;
-}
-
-function baiduNetdiskIconClass(
-  status: BaiduNetdiskCdpStatus | null,
-  error: string | null,
-  actionPending: BaiduAction | null,
-) {
-  if (actionPending) return "text-amber-500";
-  if (error || (status && !status.ready)) return "text-rose-500";
-  if (status?.ready) return "text-emerald-500";
-  return "text-muted-foreground/70";
+  if (error) return "连接失败";
+  if (!status) return "正在检查";
+  if (status.ready) return "已连接";
+  if (!status.appRunning) return "客户端未启动";
+  if (!status.cdpRunning) return "需要重新连接";
+  return "暂时无法连接";
 }
 
 function baiduDownloadStateText(state: BaiduNetdiskDownloadRecord["state"]) {
@@ -102,7 +90,9 @@ function baiduDownloadProgressText(record: BaiduNetdiskDownloadRecord) {
 }
 
 function baiduDownloadDetailText(record: BaiduNetdiskDownloadRecord) {
-  return record.error || baiduDownloadProgressText(record) || record.localPath || record.downloadDir;
+  return (
+    record.error || baiduDownloadProgressText(record) || record.localPath || record.downloadDir
+  );
 }
 
 function formatDateTime(value: string | undefined) {
@@ -165,18 +155,9 @@ async function loadPlatformDownloadTarget(
   }
 }
 
-function platformFromQuery(search: string) {
-  const platformId = new URLSearchParams(search).get("platform");
-  return (
-    platformNavigation.find((platform) => platform.id === platformId) ??
-    platformNavigation.find((platform) => platform.id === "wechat-drama") ??
-    platformNavigation[0]
-  );
-}
-
-export function BaiduNetdiskWindowPage() {
-  const location = useLocation();
-  const activePlatform = useMemo(() => platformFromQuery(location.search), [location.search]);
+export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWindowPlatformId }) {
+  const activePlatform =
+    platformNavigation.find((platform) => platform.id === platformId) ?? platformNavigation[0];
   const [status, setStatus] = useState<BaiduNetdiskCdpStatus | null>(null);
   const [statusError, setStatusError] = useState<string | null>(null);
   const [statusRefreshing, setStatusRefreshing] = useState(false);
@@ -203,21 +184,29 @@ export function BaiduNetdiskWindowPage() {
     const result = await getBaiduNetdiskDownloadRecords();
     setDownloadRecords(result.records);
   };
-  const handleTaskAction = async (record: BaiduNetdiskDownloadRecord, action: "pause" | "resume" | "delete") => {
+  const handleTaskAction = async (
+    record: BaiduNetdiskDownloadRecord,
+    action: "pause" | "resume" | "delete",
+  ) => {
     setTaskActionId(record.id);
-    try { await controlBaiduNetdiskDownloadTask(record.resourceName, action); await refreshDownloadRecords(); }
-    catch (error) { setDownloadMessage(errorMessage(error)); }
-    finally { setTaskActionId(null); }
+    try {
+      await controlBaiduNetdiskDownloadTask(record.resourceName, action);
+      await refreshDownloadRecords();
+    } catch (error) {
+      setDownloadMessage(errorMessage(error));
+    } finally {
+      setTaskActionId(null);
+    }
   };
 
   const summary = baiduNetdiskSummary(status, statusError);
-  const iconClass = baiduNetdiskIconClass(status, statusError, actionPending);
   const shouldRestart = Boolean(status?.appRunning);
   const parsedShare = parseBaiduNetdiskShareText(shareText);
   const parsedEpisodeCount = Number.parseInt(episodeCount, 10);
   const hasValidEpisodeCount = Number.isInteger(parsedEpisodeCount) && parsedEpisodeCount > 0;
   const normalizedInstallPath = installPath.trim();
   const installPathDirty = normalizedInstallPath !== savedInstallPath;
+  const showClientSetup = Boolean(statusError || (status && !status.ready));
   const downloadDisabled =
     !status?.ready ||
     !parsedShare ||
@@ -225,10 +214,6 @@ export function BaiduNetdiskWindowPage() {
     !platformDownloadTarget?.rootPath.trim() ||
     !hasValidEpisodeCount ||
     downloadState === "downloading";
-
-  useEffect(() => {
-    document.title = "百度网盘下载";
-  }, []);
 
   const refreshStatus = async () => {
     setStatusRefreshing(true);
@@ -368,7 +353,7 @@ export function BaiduNetdiskWindowPage() {
 
     void (async () => {
       setDownloadState("downloading");
-      setDownloadMessage(`正在下载到${platformDownloadTarget.rootLabel}，并等待文件完整。`);
+      setDownloadMessage("正在下载并整理文件，请稍候…");
 
       try {
         const result = await ensureBaiduNetdiskShareDownloaded({
@@ -378,15 +363,13 @@ export function BaiduNetdiskWindowPage() {
           episodeCount: parsedEpisodeCount,
           mergeOwnershipMaterials,
           ...(platformDownloadTarget.platformId === "wechat-drama"
-            ? { requiredOwnership: { juchuang: 2, jianying: 1 } }
+            ? { requiredOwnership: { minimumImages: 1 } }
             : {}),
         });
         const target = result.localPath ?? result.downloadDir;
         setDownloadState("success");
         setDownloadMessage(
-          result.skippedExisting
-            ? `检测到目标目录已有完整视频：${target}`
-            : `下载完成并已放入目标目录：${target}`,
+          result.skippedExisting ? `文件已存在，无需重复下载：${target}` : `下载完成：${target}`,
         );
       } catch (error) {
         setDownloadState("error");
@@ -413,201 +396,58 @@ export function BaiduNetdiskWindowPage() {
   };
 
   return (
-    <main className="flex min-h-svh flex-col bg-background">
-      <div className="mx-auto grid w-full max-w-6xl flex-1 gap-4 p-5 lg:grid-cols-[minmax(0,1fr)_340px]">
-        <section className="grid min-w-0 content-start gap-4">
-          <section className="grid gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-sm font-medium">分享与剧集信息</h2>
-              <span className="text-xs text-muted-foreground">
-                {parsedShare ? "已识别分享链接" : "等待分享文本"}
+    <div className="flex flex-col bg-background">
+      <div className="mx-auto grid w-full max-w-3xl flex-1 gap-5 p-4">
+        <section className="grid gap-2">
+          <div className="flex items-center gap-3 rounded-md border px-3 py-2">
+            <div className="flex min-w-0 flex-1 items-center gap-2 text-xs">
+              <span
+                className={`size-2 shrink-0 rounded-full ${
+                  status?.ready
+                    ? "bg-emerald-500"
+                    : statusError || status
+                      ? "bg-rose-500"
+                      : "bg-muted-foreground/40"
+                }`}
+                aria-hidden="true"
+              />
+              <span className="shrink-0 font-medium">百度网盘：{summary}</span>
+              <span
+                className="truncate text-muted-foreground"
+                title={platformDownloadTarget?.rootPath}
+              >
+                保存到 {platformDownloadTarget?.rootPath || "尚未设置下载目录"}
               </span>
             </div>
+            <Button
+              type="button"
+              size="xs"
+              variant="ghost"
+              disabled={statusRefreshing || actionPending !== null}
+              onClick={() => void refreshStatus()}
+            >
+              {statusRefreshing ? "检查中" : "检查"}
+            </Button>
+            {status && !status.ready ? (
+              <Button
+                type="button"
+                size="xs"
+                disabled={actionPending !== null || status.isWindows === false}
+                onClick={() => handleStart(shouldRestart)}
+              >
+                {actionPending ? "连接中…" : shouldRestart ? "重新连接" : "启动并连接"}
+              </Button>
+            ) : null}
+          </div>
 
-            <div className="grid gap-3">
-              <div className="grid gap-1.5">
-                <label htmlFor="baidu-netdisk-share-text" className="text-xs font-medium">
-                  分享文本
-                </label>
-                <Textarea
-                  id="baidu-netdisk-share-text"
-                  value={shareText}
-                  onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
-                    setShareText(event.target.value);
-                    resetDownloadMessage();
-                  }}
-                  placeholder="粘贴百度网盘分享文本，需包含链接和提取码"
-                  className="min-h-32 resize-y text-xs leading-5"
-                />
-              </div>
-
-              <div className="grid gap-3 sm:grid-cols-2">
-                <div className="grid gap-1.5">
-                  <label htmlFor="baidu-netdisk-resource-name" className="text-xs font-medium">
-                    短剧名称
-                  </label>
-                  <Input
-                    id="baidu-netdisk-resource-name"
-                    value={resourceName}
-                    onChange={(event) => {
-                      setResourceName(event.target.value);
-                      setResourceNameEdited(true);
-                      resetDownloadMessage();
-                    }}
-                    placeholder="与平台任务原始剧名一致"
-                    className="text-xs"
-                  />
-                </div>
-
-                <div className="grid gap-1.5">
-                  <label htmlFor="baidu-netdisk-episode-count" className="text-xs font-medium">
-                    集数
-                  </label>
-                  <Input
-                    id="baidu-netdisk-episode-count"
-                    min={1}
-                    step={1}
-                    type="number"
-                    value={episodeCount}
-                    onChange={(event) => {
-                      setEpisodeCount(event.target.value);
-                      resetDownloadMessage();
-                    }}
-                    placeholder="例如 24"
-                    className="text-xs"
-                  />
-                </div>
-              </div>
-
-              {platformDownloadTarget?.platformId === "wechat-drama" ? (
-                <div className="flex items-center justify-between gap-3 rounded-md border border-border/80 bg-muted/35 px-3 py-2">
-                  <div>
-                    <div className="text-xs font-medium">合并权属工程图片</div>
-                    <div className="text-[11px] text-muted-foreground">将2张剧创和1张剪映拼接为一张图片</div>
-                  </div>
-                  <Switch checked={mergeOwnershipMaterials} onCheckedChange={setMergeOwnershipMaterials} />
-                </div>
-              ) : null}
-
-              <div className="grid gap-1.5 rounded-md border border-border/80 bg-muted/35 p-3 text-xs">
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">匹配结果</span>
-                  <span className="max-w-96 truncate font-medium">
-                    {parsedShare ? parsedShare.name : "未匹配"}
-                  </span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">提取码</span>
-                  <span className="font-medium tabular-nums">{parsedShare?.pwd ?? "--"}</span>
-                </div>
-                <div className="flex items-center justify-between gap-3">
-                  <span className="text-muted-foreground">目标目录</span>
-                  <span className="max-w-96 truncate font-medium">
-                    {platformDownloadTarget?.rootPath || "未配置"}
-                  </span>
-                </div>
-              </div>
-
-              {downloadMessage ? (
-                <div
-                  className={
-                    downloadState === "error"
-                      ? "rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive"
-                      : "rounded-md border border-border/80 bg-muted/35 px-3 py-2 text-xs leading-5 text-muted-foreground"
-                  }
-                >
-                  {downloadMessage}
-                </div>
-              ) : null}
-
-              <div className="flex items-center justify-end">
-                <Button type="button" disabled={downloadDisabled} onClick={handleDownload}>
-                  {downloadState === "downloading" ? "下载中" : "下载并等待完成"}
-                </Button>
-              </div>
+          {platformConfigError || !platformDownloadTarget?.rootPath.trim() ? (
+            <div className="rounded-md bg-destructive/10 px-3 py-2 text-xs text-destructive">
+              请先到{activePlatform.title}设置中填写下载目录。
             </div>
-          </section>
-        </section>
+          ) : null}
 
-        <aside className="grid content-start gap-4">
-          <section className="grid gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-sm font-medium">连接状态</h2>
-              <CloudDownload className={`size-4 ${iconClass}`} aria-hidden="true" />
-            </div>
-            <div className="rounded-md border bg-background p-3 text-xs">
-              <div className="flex items-start justify-between gap-3">
-                <div className="min-w-0">
-                  <div className="flex items-center gap-2">
-                    <span
-                      className={`size-2 rounded-full ${
-                        status?.ready
-                          ? "bg-emerald-500"
-                          : statusError || status
-                            ? "bg-rose-500"
-                            : "bg-muted-foreground/40"
-                      }`}
-                      aria-hidden="true"
-                    />
-                    <span className="font-medium">{summary}</span>
-                    <span className="text-muted-foreground">
-                      {status ? `· CDP 端口 ${status.port}` : "· 尚未读取客户端状态"}
-                    </span>
-                  </div>
-                </div>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={statusRefreshing || actionPending !== null}
-                  onClick={() => void refreshStatus()}
-                >
-                  {statusRefreshing ? "刷新中" : "刷新"}
-                </Button>
-              </div>
-
-              {!status?.ready ? (
-                <div className="mt-3">
-                  <Button
-                    type="button"
-                    size="xs"
-                    className="w-full"
-                    disabled={actionPending !== null || status?.isWindows === false}
-                    onClick={() => handleStart(shouldRestart)}
-                  >
-                    {actionPending === "restart"
-                      ? "重启中"
-                      : actionPending === "start"
-                        ? "启动中"
-                        : shouldRestart
-                          ? "重启 CDP"
-                          : "启动 CDP"}
-                  </Button>
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="grid gap-3">
-            <h2 className="text-sm font-medium">目标目录</h2>
-            <div className="grid gap-2 text-xs">
-              <div className="grid gap-1 rounded-md border bg-muted/35 p-3">
-                <span className="text-muted-foreground">目标目录</span>
-                <span className="break-all font-medium">
-                  {platformDownloadTarget?.rootPath || "未配置"}
-                </span>
-              </div>
-              {platformConfigError || !platformDownloadTarget?.rootPath.trim() ? (
-                <div className="rounded-md border border-destructive/20 bg-destructive/10 px-3 py-2 leading-5 text-destructive">
-                  {platformConfigError ?? `请先配置${activePlatform.title}的资源目录。`}
-                </div>
-              ) : null}
-            </div>
-          </section>
-
-          <section className="grid gap-3">
-            <h2 className="text-sm font-medium">安装目录</h2>
-            <div className="grid gap-3">
+          {showClientSetup ? (
+            <div className="grid grid-cols-[minmax(0,1fr)_88px] gap-2 rounded-md bg-muted/50 p-2">
               <Input
                 id="baidu-netdisk-install-path"
                 value={installPath}
@@ -616,111 +456,231 @@ export function BaiduNetdiskWindowPage() {
                   setInstallPathMessage(null);
                   setInstallPathError(null);
                 }}
-                placeholder="留空自动默认查找"
+                placeholder="找不到客户端时，填写百度网盘安装目录"
                 className="text-xs"
               />
-              <p className="text-xs leading-5 text-muted-foreground">
-                可填写安装目录或完整 exe 路径；留空时使用默认位置自动查找。
-              </p>
-              {installPathError ? (
-                <p className="text-xs leading-5 text-destructive">{installPathError}</p>
-              ) : installPathMessage ? (
-                <p className="text-xs leading-5 text-muted-foreground">{installPathMessage}</p>
-              ) : null}
               <Button
                 type="button"
+                size="sm"
                 variant="outline"
                 disabled={installPathSaving || !installPathDirty}
                 onClick={handleSaveInstallPath}
               >
-                {installPathSaving ? "保存中" : "保存安装目录"}
+                {installPathSaving ? "保存中" : "保存目录"}
               </Button>
-            </div>
-          </section>
-        </aside>
-
-        <section className="min-w-0 lg:col-span-2">
-          <section className="grid gap-3">
-            <div className="flex items-center justify-between gap-3">
-              <h2 className="text-sm font-medium">下载记录</h2>
-              <div className="flex items-center gap-2">
-                <span className="text-xs text-muted-foreground">{downloadRecords.length} 条</span>
-                <Button
-                  type="button"
-                  size="xs"
-                  variant="ghost"
-                  disabled={downloadRecordsClearing || downloadRecords.length === 0}
-                  onClick={handleClearDownloadRecords}
+              {installPathError || installPathMessage ? (
+                <p
+                  className={`col-span-2 px-1 text-xs ${installPathError ? "text-destructive" : "text-muted-foreground"}`}
                 >
-                  {downloadRecordsClearing ? "清空中" : "清空"}
-                </Button>
+                  {installPathError || installPathMessage}
+                </p>
+              ) : null}
+            </div>
+          ) : null}
+        </section>
+
+        <section className="grid min-w-0 content-start gap-3">
+          <div className="flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium">下载资源</h2>
+            <span className="text-xs text-muted-foreground">
+              {parsedShare ? "链接已识别" : "请粘贴分享内容"}
+            </span>
+          </div>
+
+          <div className="grid gap-3">
+            <div className="grid gap-1.5">
+              <label htmlFor="baidu-netdisk-share-text" className="text-xs font-medium">
+                百度网盘分享内容
+              </label>
+              <Textarea
+                id="baidu-netdisk-share-text"
+                value={shareText}
+                onChange={(event: ChangeEvent<HTMLTextAreaElement>) => {
+                  setShareText(event.target.value);
+                  resetDownloadMessage();
+                }}
+                placeholder="粘贴分享链接和提取码"
+                className="min-h-24 resize-y text-xs leading-5"
+              />
+            </div>
+
+            <div className="grid grid-cols-[minmax(0,1fr)_96px] gap-3">
+              <div className="grid gap-1.5">
+                <label htmlFor="baidu-netdisk-resource-name" className="text-xs font-medium">
+                  剧名
+                </label>
+                <Input
+                  id="baidu-netdisk-resource-name"
+                  value={resourceName}
+                  onChange={(event) => {
+                    setResourceName(event.target.value);
+                    setResourceNameEdited(true);
+                    resetDownloadMessage();
+                  }}
+                  placeholder="自动读取，可修改"
+                  className="text-xs"
+                />
+              </div>
+
+              <div className="grid gap-1.5">
+                <label htmlFor="baidu-netdisk-episode-count" className="text-xs font-medium">
+                  总集数
+                </label>
+                <Input
+                  id="baidu-netdisk-episode-count"
+                  min={1}
+                  step={1}
+                  type="number"
+                  value={episodeCount}
+                  onChange={(event) => {
+                    setEpisodeCount(event.target.value);
+                    resetDownloadMessage();
+                  }}
+                  placeholder="例如 24"
+                  className="text-xs"
+                />
               </div>
             </div>
 
-            <div>
-              {downloadRecords.length > 0 ? (
-                <div className="max-h-72 overflow-auto rounded-md border bg-background">
-                  <Table>
-                    <TableHeader className="sticky top-0 z-10 bg-background">
-                      <TableRow>
-                        <TableHead className="w-[24%]">资源</TableHead>
-                        <TableHead className="w-20">状态</TableHead>
-                        <TableHead>详情</TableHead>
-                        <TableHead className="w-[22%]">目录</TableHead>
-                        <TableHead className="w-28 text-right">更新时间</TableHead>
-                        <TableHead className="w-32 text-right">操作</TableHead>
-                      </TableRow>
-                    </TableHeader>
-                    <TableBody>
-                      {downloadRecords.map((record) => {
-                        const detail = baiduDownloadDetailText(record);
+            {platformDownloadTarget?.platformId === "wechat-drama" ? (
+              <div className="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2">
+                <div className="min-w-0">
+                  <div className="text-xs font-medium">合并权属图片</div>
+                  <div className="truncate text-[11px] text-muted-foreground">
+                    将权属目录内的图片平均合并为 2 张
+                  </div>
+                </div>
+                <Switch
+                  checked={mergeOwnershipMaterials}
+                  onCheckedChange={setMergeOwnershipMaterials}
+                />
+              </div>
+            ) : null}
 
-                        return (
-                          <TableRow key={record.id}>
-                            <TableCell className="max-w-0">
-                              <div className="truncate font-medium" title={record.resourceName}>
-                                {record.resourceName}
-                              </div>
-                            </TableCell>
-                            <TableCell>
-                              <span className={`text-xs ${baiduDownloadStateClass(record.state)}`}>
-                                {baiduDownloadStateText(record.state)}
-                              </span>
-                            </TableCell>
-                            <TableCell className="max-w-0">
-                              <div className="truncate text-xs text-muted-foreground" title={detail}>
-                                {detail || "-"}
-                              </div>
-                            </TableCell>
-                            <TableCell className="max-w-0">
-                              <div className="truncate text-xs text-muted-foreground" title={record.downloadDir}>
-                                {record.downloadDir}
-                              </div>
-                            </TableCell>
-                            <TableCell className="text-right text-xs text-muted-foreground">
-                              {formatDateTime(record.updatedAt)}
-                            </TableCell>
-                            <TableCell className="w-32 text-right">
-                              <div className="flex justify-end gap-1">
-                                <Button type="button" size="xs" variant="outline" disabled={taskActionId === record.id || record.state !== "downloading"} onClick={() => void handleTaskAction(record, "pause")}>暂停</Button>
-                                <Button type="button" size="xs" variant="ghost" className="text-destructive" disabled={taskActionId === record.id} onClick={() => void handleTaskAction(record, "delete")}>删除</Button>
-                              </div>
-                            </TableCell>
-                          </TableRow>
-                        );
-                      })}
-                    </TableBody>
-                  </Table>
-                </div>
-              ) : (
-                <div className="rounded-md border border-dashed px-3 py-8 text-center text-sm text-muted-foreground">
-                  暂无下载记录
-                </div>
-              )}
+            {parsedShare ? (
+              <div className="flex items-center gap-3 rounded-md bg-muted/50 px-3 py-2 text-xs">
+                <span className="min-w-0 flex-1 truncate font-medium" title={parsedShare.name}>
+                  {parsedShare.name}
+                </span>
+                <span className="shrink-0 text-muted-foreground">
+                  提取码{" "}
+                  <span className="font-medium tabular-nums text-foreground">
+                    {parsedShare.pwd}
+                  </span>
+                </span>
+              </div>
+            ) : null}
+
+            {downloadMessage ? (
+              <div
+                className={
+                  downloadState === "error"
+                    ? "rounded-md bg-destructive/10 px-3 py-2 text-xs leading-5 text-destructive"
+                    : "rounded-md bg-muted/50 px-3 py-2 text-xs leading-5 text-muted-foreground"
+                }
+              >
+                {downloadMessage}
+              </div>
+            ) : null}
+
+            <Button
+              type="button"
+              className="w-full"
+              disabled={downloadDisabled}
+              onClick={handleDownload}
+            >
+              {downloadState === "downloading" ? "正在下载…" : "开始下载"}
+            </Button>
+          </div>
+        </section>
+
+        <section className="min-w-0 border-t pt-4">
+          <div className="mb-2 flex items-center justify-between gap-3">
+            <h2 className="text-sm font-medium">下载任务</h2>
+            <div className="flex items-center gap-2">
+              <span className="text-xs text-muted-foreground">{downloadRecords.length} 个</span>
+              <Button
+                type="button"
+                size="xs"
+                variant="ghost"
+                disabled={downloadRecordsClearing || downloadRecords.length === 0}
+                onClick={handleClearDownloadRecords}
+              >
+                {downloadRecordsClearing ? "正在清空" : "清空记录"}
+              </Button>
             </div>
-          </section>
+          </div>
+
+          {downloadRecords.length > 0 ? (
+            <Table className="table-fixed">
+              <TableHeader>
+                <TableRow className="hover:bg-background">
+                  <TableHead className="h-8">资源</TableHead>
+                  <TableHead className="h-8 w-20">状态</TableHead>
+                  <TableHead className="h-8 w-24 text-right">更新时间</TableHead>
+                  <TableHead className="h-8 w-28 text-right">操作</TableHead>
+                </TableRow>
+              </TableHeader>
+              <TableBody>
+                {downloadRecords.map((record) => {
+                  const detail = baiduDownloadDetailText(record);
+
+                  return (
+                    <TableRow key={record.id}>
+                      <TableCell className="max-w-0 py-2">
+                        <div className="truncate text-xs font-medium" title={record.resourceName}>
+                          {record.resourceName}
+                        </div>
+                        <div className="truncate text-[11px] text-muted-foreground" title={detail}>
+                          {detail || record.downloadDir}
+                        </div>
+                      </TableCell>
+                      <TableCell className="py-2">
+                        <span className={`text-xs ${baiduDownloadStateClass(record.state)}`}>
+                          {baiduDownloadStateText(record.state)}
+                        </span>
+                      </TableCell>
+                      <TableCell className="py-2 text-right text-[11px] text-muted-foreground">
+                        {formatDateTime(record.updatedAt)}
+                      </TableCell>
+                      <TableCell className="py-2 text-right">
+                        <div className="flex justify-end gap-1">
+                          {record.state === "downloading" ? (
+                            <Button
+                              type="button"
+                              size="xs"
+                              variant="outline"
+                              disabled={taskActionId === record.id}
+                              onClick={() => void handleTaskAction(record, "pause")}
+                            >
+                              暂停
+                            </Button>
+                          ) : null}
+                          <Button
+                            type="button"
+                            size="xs"
+                            variant="ghost"
+                            className="text-destructive"
+                            disabled={taskActionId === record.id}
+                            onClick={() => void handleTaskAction(record, "delete")}
+                          >
+                            删除
+                          </Button>
+                        </div>
+                      </TableCell>
+                    </TableRow>
+                  );
+                })}
+              </TableBody>
+            </Table>
+          ) : (
+            <div className="rounded-md border border-dashed px-3 py-6 text-center">
+              <div className="text-sm text-muted-foreground">还没有下载任务</div>
+              <div className="mt-1 text-xs text-muted-foreground">粘贴分享内容后即可开始下载</div>
+            </div>
+          )}
         </section>
       </div>
-    </main>
+    </div>
   );
 }

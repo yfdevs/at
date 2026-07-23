@@ -1,5 +1,5 @@
-import { findLocalEpisodeVideos as findSharedLocalEpisodeVideos } from "@drama/drama-video-assets";
-import { validateLocalEpisodeVideos as validateSharedLocalEpisodeVideos } from "@drama/drama-video-assets";
+import { findLocalEpisodeVideos as findSharedLocalEpisodeVideos } from "@drama/drama-media-assets";
+import { validateLocalEpisodeVideos as validateSharedLocalEpisodeVideos } from "@drama/drama-media-assets";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
 import type { Config } from "./types.js";
 

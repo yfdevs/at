@@ -10,7 +10,6 @@ export type PlatformId =
   | "pinduoduo-drama";
 
 export type AppRoute =
-  | "baidu-netdisk/window"
   | "wechat-drama/publish"
   | "wechat-drama/config"
   | "wechat-drama/accounts"
@@ -31,7 +30,6 @@ export type AppRoute =
   | "pinduoduo-drama/config";
 
 const appRoutes = [
-  "baidu-netdisk/window",
   "wechat-drama/publish",
   "wechat-drama/config",
   "wechat-drama/accounts",

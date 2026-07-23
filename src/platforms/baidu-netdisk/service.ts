@@ -58,6 +58,8 @@ export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  expectedOwnershipImages?: number;
+  expectedPosterImages?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
@@ -95,9 +97,9 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   localEpisodeVideoRoot: string;
   episodeCount: number;
   requiredOwnership?: {
-    juchuang?: number;
-    jianying?: number;
+    minimumImages?: number;
   };
+  requiredPosterImages?: number;
   mergeOwnershipMaterials?: boolean;
 };
 
@@ -179,13 +181,6 @@ export async function controlBaiduNetdiskCdp(restart: boolean) {
   return requireIpcRenderer("百度网盘 CDP 控制").invoke(
     restart ? "baidu-netdisk:service:restart-cdp" : "baidu-netdisk:service:start-cdp",
   ) as Promise<BaiduNetdiskLaunchResult>;
-}
-
-export async function openBaiduNetdiskWindow(platformId: BaiduNetdiskWindowPlatformId) {
-  return requireIpcRenderer("百度网盘窗口").invoke(
-    "baidu-netdisk:window:open",
-    platformId,
-  ) as Promise<boolean>;
 }
 
 export async function downloadBaiduNetdiskShare(shareText: string) {

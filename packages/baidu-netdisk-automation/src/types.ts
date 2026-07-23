@@ -33,15 +33,14 @@ export type BaiduNetdiskShareDownloadOptions = {
   resourceName?: string;
   expectedEpisodeCount?: number;
   expectedOwnershipCounts?: {
-    juchuang?: number;
-    jianying?: number;
+    minimumImages?: number;
   };
+  expectedPosterImages?: number;
   port?: number;
   downloadDir?: string;
 };
 
 export type BaiduNetdiskRemoteOwnershipFile = {
-  kind: "juchuang" | "jianying" | "contract";
   index?: number;
   name: string;
   path: string;
@@ -92,11 +91,15 @@ export type BaiduNetdiskRemoteVideoListing = {
 };
 
 export type BaiduNetdiskRemoteOwnershipListing = {
-  juchuang: BaiduNetdiskRemoteOwnershipFile[];
-  jianying: BaiduNetdiskRemoteOwnershipFile[];
-  contract: BaiduNetdiskRemoteOwnershipFile[];
+  files: BaiduNetdiskRemoteOwnershipFile[];
+  roots: Array<{ path: string; fsId?: number | string }>;
   rootPath?: string;
   rootFsId?: number | string;
+};
+
+export type BaiduNetdiskRemotePosterListing = {
+  files: BaiduNetdiskRemoteOwnershipFile[];
+  roots: Array<{ path: string; fsId?: number | string }>;
 };
 
 export type BaiduNetdiskShareDownloadResult = {
@@ -105,6 +108,9 @@ export type BaiduNetdiskShareDownloadResult = {
   localPath?: string;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   remoteOwnership?: BaiduNetdiskRemoteOwnershipListing;
+  remotePosters?: BaiduNetdiskRemotePosterListing;
+  expectedOwnershipImages?: number;
+  expectedPosterImages?: number;
   completed: boolean;
   skippedExisting: boolean;
 };

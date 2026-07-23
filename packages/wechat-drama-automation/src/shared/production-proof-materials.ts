@@ -1,11 +1,10 @@
 import path from "node:path";
 import { rm, stat } from "node:fs/promises";
 import {
-  composeOwnershipMaterials,
+  composeOwnershipMaterialsIntoTwo,
   listLocalOwnershipMaterials,
   safeEpisodeFileBaseName,
-  selectRequiredOwnershipMaterials,
-} from "@drama/drama-video-assets";
+} from "@drama/drama-media-assets";
 import { prepareUploadFiles } from "../automation/upload/upload-helpers.js";
 import { resolveFromRoot, resolveRunDataPath } from "./config.js";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
@@ -13,8 +12,7 @@ import { booleanSetting } from "./settings-value.js";
 import type { Config } from "./types.js";
 
 export const wechatOwnershipRequirements = {
-  juchuang: 2,
-  jianying: 1,
+  minimumImages: 1,
 } as const;
 
 const contractImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp"]);
@@ -33,7 +31,7 @@ async function resolveContractFiles(config: Config) {
 
   const errors: string[] = [];
   const resolved: string[] = [];
-  for (const candidate of candidates.slice(0, 3)) {
+  for (const candidate of candidates.slice(0, 2)) {
     try {
       const files = await prepareUploadFiles([candidate], resolveFromRoot, `${config.playlet.name}-contract`);
       if (files[0] && await isValidContractImage(files[0])) {
@@ -59,12 +57,7 @@ export async function prepareWechatProductionProofMaterials(config: Config) {
     resourceName: config.originalTitle,
   });
   const missing: string[] = [];
-  if (ownership.juchuang.length < wechatOwnershipRequirements.juchuang) {
-    missing.push(`剧创要求${wechatOwnershipRequirements.juchuang}张，实际${ownership.juchuang.length}张`);
-  }
-  if (ownership.jianying.length < wechatOwnershipRequirements.jianying) {
-    missing.push(`剪映要求${wechatOwnershipRequirements.jianying}张，实际${ownership.jianying.length}张`);
-  }
+  if (ownership.length < 1) missing.push("未找到工程或权属目录下的图片");
   if (missing.length > 0) {
     throw new Error(
       `[production-proof-invalid] 微信视频号权属材料不足：${missing.join("；")}；` +
@@ -73,24 +66,19 @@ export async function prepareWechatProductionProofMaterials(config: Config) {
   }
 
   const contractFiles = await resolveContractFiles(config);
-  const selected = selectRequiredOwnershipMaterials(ownership, wechatOwnershipRequirements);
-  const ownershipFiles = [
-    ...selected.juchuang,
-    ...selected.jianying,
-  ];
-  const uploadOwnershipFile = booleanSetting(
+  const ownershipFiles = ownership;
+  const uploadOwnershipFiles = booleanSetting(
     getWechatVideoRuntimeSettings().mergeOwnershipMaterials,
   )
-    ? await composeOwnershipMaterials({
+    ? await composeOwnershipMaterialsIntoTwo({
       files: ownershipFiles,
       outputDir: resolveRunDataPath("production-proof-composites"),
       resourceName: config.playlet.name,
-      onLog: (message) => console.log(message),
     })
-    : undefined;
+    : [];
   config.playlet.copyright.productionProofFiles = [
-    ...contractFiles.slice(0, 3),
-    ...(uploadOwnershipFile ? [uploadOwnershipFile] : ownershipFiles.slice(0, 1).map((file) => file.file)),
+    ...contractFiles.slice(0, 2),
+    ...(uploadOwnershipFiles.length ? uploadOwnershipFiles : ownershipFiles.slice(0, 2).map((file) => file.file)),
   ];
 
   return config.playlet.copyright.productionProofFiles;
@@ -101,7 +89,7 @@ export async function cleanupWechatProductionProofMaterials(config: Config) {
   const baseName = `${safeEpisodeFileBaseName(config.playlet.name)}-权属工程文件合成`;
   const dir = resolveRunDataPath("production-proof-composites");
   await Promise.all([
-    rm(path.join(dir, `${baseName}.png`), { force: true }),
-    rm(path.join(dir, `${baseName}.jpg`), { force: true }),
+    rm(path.join(dir, `${baseName}1.jpg`), { force: true }),
+    rm(path.join(dir, `${baseName}2.jpg`), { force: true }),
   ]);
 }

@@ -42,7 +42,9 @@
 | `playlet.otherMaterials` | 其他材料 | `[]` | 可上传多个文件。 |
 剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频`、`根目录/originalTitle/正片` 下的 `.mp4` 文件。源文件名支持 `originalTitle-第N集.mp4`、`originalTitle - 第N集.mp4`、`originalTitle 第N集.mp4`、`originalTitleNN.mp4`、`originalTitle NN.mp4`、`originalTitle-NN.mp4`、`originalTitle - NN.mp4` 和 `N.mp4`；`-` 前后空格可有可无，不再支持下划线分隔。上传前会在运行数据目录创建硬链接，并把上传文件名设为 `payloadJson.name-第N集.mp4`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
 
-微信还会递归扫描 `根目录/originalTitle` 下的权属图片。文件名模糊包含“剧创”或“剪映”且扩展名为 `png/jpg/jpeg` 即可识别；剧名、目录名、“工程文件”和编号都不是硬性条件。微信要求至少 2 张不同编号的剧创图片和 1 张剪映图片。若本地视频或权属材料不足且任务包含百度网盘链接，程序会先检查远程资源并下载包含视频目录与权属目录的资源根目录；下载完成后复检并整理到本地标准目录。最终“剧目制作证明材料”固定上传第一张可用合同图、2 张剧创图和 1 张剪映图。
+微信会递归扫描 `根目录/originalTitle` 下名称包含“权属”或“工程”的目录，收集目录及其子目录中的全部 `png/jpg/jpeg/bmp/webp` 图片；图片文件名、剧名、工程类型和编号均不作要求。任务包含百度网盘链接时，程序会将视频目录和完整权属目录分别下载，等待权属目录下载完成后再整理到本地标准目录。默认把全部权属图片按数量平均分为两组并纵向合成为最多两张图片（例如 10 张拆为 5+5），与合同图片共同上传。
+
+微信的剧目海报和推广海报不使用后端返回的 `playlet.posters` 文件地址，且只匹配一张图片。程序会递归扫描本地剧目目录或百度网盘资源：首先在整个资源中匹配文件名包含“封面”或“海报”的 `png/jpg/jpeg/bmp/webp` 图片；完全没有文件名匹配时，才查找名称包含“封面”或“海报”的目录，并取首个匹配目录中按文件名排序后的第一张图片。网盘素材会随所在目录下载，完成后只复制一张到 `根目录/originalTitle/海报封面`，命名为 `originalTitle - 海报.扩展名`。剧目海报和推广海报固定复用该图片。
 | `publish.submit` | 是否确认提审 | `false` | 保留字段；当前流程进入第三步后会自动确认提审。 |
 
 ## 多视频号配置

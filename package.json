@@ -1,6 +1,6 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.26",
+  "version": "0.0.28",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -23,7 +23,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@drama/baidu-netdisk-automation": "workspace:*",
-    "@drama/drama-video-assets": "workspace:*",
+    "@drama/drama-media-assets": "workspace:*",
     "@drama/kuaishou-drama-automation": "workspace:*",
     "@drama/meituan-drama-automation": "workspace:*",
     "@drama/pinduoduo-drama-automation": "workspace:*",

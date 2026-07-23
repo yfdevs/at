@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
-import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-video-assets/baidu-netdisk";
+import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import {
@@ -83,6 +83,8 @@ type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  expectedOwnershipImages?: number;
+  expectedPosterImages?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
@@ -101,27 +103,15 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   localEpisodeVideoRoot: string;
   episodeCount: number;
   requiredOwnership?: {
-    juchuang?: number;
-    jianying?: number;
+    minimumImages?: number;
   };
+  requiredPosterImages?: number;
   mergeOwnershipMaterials?: boolean;
 };
 
 export type BaiduNetdiskDownloadRecordResult = {
   records: BaiduNetdiskDownloadRecord[];
   path: string;
-};
-
-type PlatformId =
-  | "wechat-drama"
-  | "meituan-drama"
-  | "kuaishou-drama"
-  | "qq-drama"
-  | "tiktok-drama"
-  | "pinduoduo-drama";
-
-type RegisterBaiduNetdiskPlatformHandlersOptions = {
-  openWindow?: (platformId: PlatformId) => void;
 };
 
 const defaultBaiduNetdiskConfig: BaiduNetdiskConfig = {
@@ -274,6 +264,7 @@ function normalizeEnsureDownloadRequest(
     localEpisodeVideoRoot,
     episodeCount,
     requiredOwnership: request.requiredOwnership,
+    requiredPosterImages: request.requiredPosterImages,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
   };
 }
@@ -307,9 +298,9 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       resourceName?: string;
       expectedEpisodeCount?: number;
       expectedOwnershipCounts?: {
-        juchuang?: number;
-        jianying?: number;
+        minimumImages?: number;
       };
+      expectedPosterImages?: number;
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -521,6 +512,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
       episodeCount: request.episodeCount,
       requiredOwnership: request.requiredOwnership,
+      requiredPosterImages: request.requiredPosterImages,
       mergeOwnershipMaterials: request.mergeOwnershipMaterials,
       downloadDir: uniqueDownloadDir,
       sourceLocalPath: existingRecord?.localPath,
@@ -531,6 +523,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           resourceName: downloadRequest.resourceName,
           expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
           expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
+          expectedPosterImages: downloadRequest.expectedPosterImages,
           port,
           downloadDir: downloadRequest.downloadDir,
         }),
@@ -643,9 +636,7 @@ function broadcastDownloadRecordsChanged() {
   }
 }
 
-export function registerBaiduNetdiskPlatformHandlers(
-  options: RegisterBaiduNetdiskPlatformHandlersOptions = {},
-) {
+export function registerBaiduNetdiskPlatformHandlers() {
   ipcMain.handle(
     "baidu-netdisk:config:get",
     (): BaiduNetdiskConfigResult => ({
@@ -682,8 +673,4 @@ export function registerBaiduNetdiskPlatformHandlers(
   ipcMain.handle("baidu-netdisk:share:ensure-downloaded", (_event, request) =>
     ensureBaiduNetdiskShareDownloaded(request as BaiduNetdiskEnsureDownloadedRequest),
   );
-  ipcMain.handle("baidu-netdisk:window:open", (_event, platformId: PlatformId) => {
-    options.openWindow?.(platformId);
-    return true;
-  });
 }

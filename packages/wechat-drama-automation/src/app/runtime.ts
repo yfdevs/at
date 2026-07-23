@@ -18,9 +18,9 @@ export type EnsureBaiduNetdiskResourceRequest = {
   localEpisodeVideoRoot: string;
   episodeCount: number;
   requiredOwnership?: {
-    juchuang?: number;
-    jianying?: number;
+    minimumImages?: number;
   };
+  requiredPosterImages?: number;
   mergeOwnershipMaterials?: boolean;
 };
 

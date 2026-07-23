@@ -241,7 +241,7 @@ const sections: Array<{
         kind: "switch",
         key: "mergeOwnershipMaterials",
         label: "合并权属工程图片",
-        description: "将剧创、剪映工程图片拼接为一张临时图片后上传，默认开启。",
+        description: "将权属目录中的全部图片平均分为两组，纵向合并为最多两张临时图片后上传，默认开启。",
         activeLabel: "合并上传",
         inactiveLabel: "分别上传",
       },

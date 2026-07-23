@@ -1,7 +1,7 @@
 import path from "node:path";
 import {
   collectEpisodeDirectorySummaries,
-  composeOwnershipMaterials,
+  composeOwnershipMaterialsIntoTwo,
   episodeFileSummary,
   fileSetSignature,
   hasRequiredOwnershipMaterials,
@@ -9,11 +9,14 @@ import {
   listDirectLocalEpisodeFiles,
   listLocalEpisodeFiles,
   listLocalOwnershipMaterials,
+  listLocalPosterImages,
   playletDir,
   standardizeEpisodeFilesToRoot,
   standardizeOwnershipMaterialsToRoot,
+  standardizePosterImagesToRoot,
   type LocalEpisodeFile,
   type LocalOwnershipMaterialSet,
+  type LocalPosterImageFile,
   type OwnershipMaterialRequirements,
 } from "./index.js";
 
@@ -27,6 +30,8 @@ export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
   localPath?: string;
+  expectedOwnershipImages?: number;
+  expectedPosterImages?: number;
   completed: boolean;
   skippedExisting: boolean;
 };
@@ -61,6 +66,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   localEpisodeVideoRoot: string;
   episodeCount: number;
   requiredOwnership?: OwnershipMaterialRequirements;
+  requiredPosterImages?: number;
   mergeOwnershipMaterials?: boolean;
   downloadDir?: string;
   downloadTaskName?: string;
@@ -73,6 +79,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
     resourceName: string;
     expectedEpisodeCount?: number;
     expectedOwnershipCounts?: OwnershipMaterialRequirements;
+    expectedPosterImages?: number;
     downloadDir: string;
   }) => Promise<BaiduNetdiskShareDownloadResult>;
   getDownloadTaskStatus?: (request: {
@@ -204,11 +211,10 @@ async function listCurrentOwnershipMaterials(
   targetRoot: string,
   resourceName: string,
 ): Promise<LocalOwnershipMaterialSet> {
-  const combined: LocalOwnershipMaterialSet = { juchuang: [], jianying: [] };
-  const paths = [...localPaths, playletDir(targetRoot, resourceName)];
+  const downloaded: LocalOwnershipMaterialSet = [];
   const seen = new Set<string>();
 
-  for (const localPath of paths) {
+  for (const localPath of localPaths) {
     const key = path.resolve(localPath).toLowerCase();
     if (seen.has(key)) continue;
     seen.add(key);
@@ -217,34 +223,70 @@ async function listCurrentOwnershipMaterials(
       resourceName,
       rootIsResourceDir: true,
     });
-    combined.juchuang.push(...materials.juchuang);
-    combined.jianying.push(...materials.jianying);
+    downloaded.push(...materials);
   }
 
-  for (const kind of ["juchuang", "jianying"] as const) {
-    const uniquePaths = [...new Map(
-      combined[kind].map((file) => [path.resolve(file.file).toLowerCase(), file]),
-    ).values()];
-    const seenIndexes = new Set<number>();
-    combined[kind] = uniquePaths.filter((file) => {
-      if (file.index === undefined) return true;
-      if (seenIndexes.has(file.index)) return false;
-      seenIndexes.add(file.index);
-      return true;
-    });
+  // Once a downloaded ownership directory is present, treat that complete directory as
+  // authoritative. Mixing previously standardized copies back in would duplicate images.
+  const standardOwnershipDir = path.join(playletDir(targetRoot, resourceName), "权属文件");
+  const externalDownloaded = downloaded.filter((file) => {
+    const relative = path.relative(standardOwnershipDir, file.file);
+    return relative.startsWith("..") || path.isAbsolute(relative);
+  });
+  const combined = externalDownloaded.length > 0
+    ? externalDownloaded
+    : downloaded.length > 0
+      ? downloaded
+    : await listLocalOwnershipMaterials({ root: targetRoot, resourceName });
+  return [...new Map(
+    combined.map((file) => [path.resolve(file.file).toLowerCase(), file]),
+  ).values()];
+}
+
+async function listCurrentPosterImages(
+  localPaths: string[],
+  targetRoot: string,
+  resourceName: string,
+): Promise<LocalPosterImageFile[]> {
+  const downloaded: LocalPosterImageFile[] = [];
+  const seen = new Set<string>();
+  for (const localPath of localPaths) {
+    const key = path.resolve(localPath).toLowerCase();
+    if (seen.has(key)) continue;
+    seen.add(key);
+    downloaded.push(...await listLocalPosterImages({
+      root: localPath,
+      resourceName,
+      rootIsResourceDir: true,
+    }));
   }
-  return combined;
+
+  const standardPosterDir = path.join(playletDir(targetRoot, resourceName), "海报封面");
+  const externalDownloaded = downloaded.filter((file) => {
+    const relative = path.relative(standardPosterDir, file.file);
+    return relative.startsWith("..") || path.isAbsolute(relative);
+  });
+  return externalDownloaded.length > 0
+    ? externalDownloaded
+    : downloaded.length > 0
+      ? downloaded
+      : listLocalPosterImages({ root: targetRoot, resourceName });
 }
 
 function ownershipSignature(materials: LocalOwnershipMaterialSet) {
-  return (["juchuang", "jianying"] as const)
-    .flatMap((kind) => materials[kind].map((file) => `${kind}:${file.file}:${file.size}`))
+  return materials
+    .map((file) => `${file.file}:${file.size}`)
     .join("|");
+}
+
+function posterSignature(files: LocalPosterImageFile[]) {
+  return files.map((file) => `${file.file}:${file.size}`).join("|");
 }
 
 async function standardizeCompleteResources(options: {
   files: LocalEpisodeFile[];
   ownership: LocalOwnershipMaterialSet;
+  posters: LocalPosterImageFile[];
   ownershipRequirements: OwnershipMaterialRequirements;
   targetRoot: string;
   resourceName: string;
@@ -253,6 +295,12 @@ async function standardizeCompleteResources(options: {
   await standardizeOwnershipMaterialsToRoot({
     materials: options.ownership,
     requirements: options.ownershipRequirements,
+    targetRoot: options.targetRoot,
+    resourceName: options.resourceName,
+    onLog: options.onLog,
+  });
+  await standardizePosterImagesToRoot({
+    files: options.posters,
     targetRoot: options.targetRoot,
     resourceName: options.resourceName,
     onLog: options.onLog,
@@ -271,12 +319,9 @@ async function composeStandardizedOwnershipMaterials(options: {
   requirements: OwnershipMaterialRequirements;
 }) {
   const materials = await listLocalOwnershipMaterials({ root: options.targetRoot, resourceName: options.resourceName });
-  const selected = [
-    ...materials.juchuang.slice(0, options.requirements.juchuang ?? 0),
-    ...materials.jianying.slice(0, options.requirements.jianying ?? 0),
-  ];
+  const selected = materials;
   if (selected.length === 0) return undefined;
-  const output = await composeOwnershipMaterials({
+  const output = await composeOwnershipMaterialsIntoTwo({
     files: selected,
     outputDir: path.join(playletDir(options.targetRoot, options.resourceName), "权属文件"),
     resourceName: options.resourceName,
@@ -327,9 +372,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   resourceName: string;
   episodeCount: number;
   ownershipRequirements: OwnershipMaterialRequirements;
+  requiredPosterImages: number;
   mergeOwnershipMaterials?: boolean;
   sourceLocalPath?: string;
   downloadTaskName?: string;
+  expectedOwnershipImages?: number;
+  expectedPosterImages?: number;
   timeoutMs: number;
   pollIntervalMs: number;
   stableCompletePolls: number;
@@ -359,21 +407,34 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.resourceName,
     );
     let ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
-    let signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}`;
+    let posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
+    let postersComplete = posters.length >= options.requiredPosterImages;
+    let signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${posterSignature(posters)}`;
     let stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
     let stable = stableSignatures.get(stableKey);
     let nextStable = {
       signature,
-      count: complete && ownershipComplete && stable?.signature === signature
+      count: complete && ownershipComplete && postersComplete && stable?.signature === signature
         ? stable.count + 1
-        : complete && ownershipComplete ? 1 : 0,
+        : complete && ownershipComplete && postersComplete ? 1 : 0,
     };
     stableSignatures.set(stableKey, nextStable);
 
-    if (complete && ownershipComplete && nextStable.count >= options.stableCompletePolls) {
+    const expectedOwnershipImages = Math.max(
+      options.ownershipRequirements.minimumImages ?? 0,
+      options.expectedOwnershipImages ?? 0,
+    );
+    const expectedPosterImages = Math.max(
+      options.requiredPosterImages,
+      options.expectedPosterImages ?? 0,
+    );
+    const ownershipDirectoryComplete = ownership.length >= expectedOwnershipImages;
+    const posterDownloadComplete = posters.length >= expectedPosterImages;
+    if (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && nextStable.count >= options.stableCompletePolls) {
       const completedPath = await standardizeCompleteResources({
         files,
         ownership,
+        posters,
         ownershipRequirements: options.ownershipRequirements,
         targetRoot: options.targetRoot,
         resourceName: options.resourceName,
@@ -409,14 +470,16 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.resourceName,
         );
         ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
-        signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}`;
+        posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
+        postersComplete = posters.length >= options.requiredPosterImages;
+        signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${posterSignature(posters)}`;
         stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
         stable = stableSignatures.get(stableKey);
         nextStable = {
           signature,
-          count: complete && ownershipComplete && stable?.signature === signature
+          count: complete && ownershipComplete && postersComplete && stable?.signature === signature
             ? stable.count + 1
-            : complete && ownershipComplete ? 1 : 0,
+            : complete && ownershipComplete && postersComplete ? 1 : 0,
         };
         stableSignatures.set(stableKey, nextStable);
 
@@ -438,21 +501,24 @@ async function waitForCompleteLocalEpisodeVideos(options: {
                     ? `(${bestLocalSummary.min}-${bestLocalSummary.max})`
                     : "")
                 : "") +
-              ` 权属=剧创${ownership.juchuang.length}/${options.ownershipRequirements.juchuang ?? 0}` +
-              `,剪映${ownership.jianying.length}/${options.ownershipRequirements.jianying ?? 0}` +
+              ` 权属图片=${ownership.length}/${options.ownershipRequirements.minimumImages ?? 0}` +
+              ` 海报封面=${posters.length}/${options.requiredPosterImages}` +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
               (taskStatus.status ? ` status=${taskStatus.status}` : ""),
           );
           lastProgressLogAt = Date.now();
         }
 
+        const ownershipDirectoryComplete = ownership.length >= expectedOwnershipImages;
+        const posterDownloadComplete = posters.length >= expectedPosterImages;
         if (
-          (complete && ownershipComplete && nextStable.count >= options.stableCompletePolls)
-          || (taskStatus.completed && complete && ownershipComplete)
+          (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && nextStable.count >= options.stableCompletePolls)
+          || (taskStatus.completed && complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete)
         ) {
           const completedPath = await standardizeCompleteResources({
             files,
             ownership,
+            posters,
             ownershipRequirements: options.ownershipRequirements,
             targetRoot: options.targetRoot,
             resourceName: options.resourceName,
@@ -495,6 +561,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   const stableCompletePolls = options.stableCompletePolls ?? 2;
   const targetLocalPath = playletDir(options.localEpisodeVideoRoot, options.resourceName);
   const ownershipRequirements = options.requiredOwnership ?? {};
+  const requiredPosterImages = Math.max(0, options.requiredPosterImages ?? 0);
   const existingEpisodes = await listLocalEpisodeFiles({
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
@@ -503,10 +570,15 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
   });
+  const existingPosters = await listLocalPosterImages({
+    root: options.localEpisodeVideoRoot,
+    resourceName: options.resourceName,
+  });
 
   if (
     isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount)
     && hasRequiredOwnershipMaterials(existingOwnership, ownershipRequirements)
+    && existingPosters.length >= requiredPosterImages
   ) {
     if (options.mergeOwnershipMaterials) {
       await composeStandardizedOwnershipMaterials({ targetRoot: options.localEpisodeVideoRoot, resourceName: options.resourceName, requirements: ownershipRequirements });
@@ -540,15 +612,12 @@ export async function ensureBaiduNetdiskEpisodeVideos(
       ? undefined
       : options.episodeCount,
     expectedOwnershipCounts: {
-      juchuang: Math.max(
+      minimumImages: Math.max(
         0,
-        (ownershipRequirements.juchuang ?? 0) - existingOwnership.juchuang.length,
-      ),
-      jianying: Math.max(
-        0,
-        (ownershipRequirements.jianying ?? 0) - existingOwnership.jianying.length,
+        (ownershipRequirements.minimumImages ?? 0) - existingOwnership.length,
       ),
     },
+    expectedPosterImages: Math.max(0, requiredPosterImages - existingPosters.length),
     downloadDir,
   });
 
@@ -563,11 +632,16 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     targetRoot: options.localEpisodeVideoRoot,
     // The ownership directory is downloaded alongside the selected video directory;
     // scan the download root as well so both materials are standardized together.
-    sourceLocalPath: result.downloadRoot ?? result.localPath ?? options.sourceLocalPath,
+    sourceLocalPath: result.localPath
+      ? path.dirname(result.localPath)
+      : result.downloadRoot ?? options.sourceLocalPath,
     resourceName: options.resourceName,
     downloadTaskName: result.share.name || options.downloadTaskName || options.resourceName,
+    expectedOwnershipImages: result.expectedOwnershipImages,
+    expectedPosterImages: result.expectedPosterImages,
     episodeCount: options.episodeCount,
     ownershipRequirements,
+    requiredPosterImages,
     mergeOwnershipMaterials: options.mergeOwnershipMaterials,
     timeoutMs,
     pollIntervalMs,

@@ -17,6 +17,7 @@ import {
   prepareWechatProductionProofMaterials,
   wechatOwnershipRequirements,
 } from "../shared/production-proof-materials.js";
+import { prepareWechatPosterMaterials } from "../shared/poster-materials.js";
 
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
@@ -27,6 +28,7 @@ const nonRetryableBaiduNetdiskErrorPatterns = [
   "重新登录",
   "重新登陆",
   "百度网盘权属材料数量不足",
+  "百度网盘海报封面数量不足",
 ];
 
 function sleep(ms: number): Promise<void> {
@@ -182,6 +184,7 @@ export class TaskWorkerPool {
             const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
             await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
+            await prepareWechatPosterMaterials(playletConfig);
             await prepareWechatProductionProofMaterials(playletConfig);
 
             const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
@@ -299,6 +302,7 @@ export class TaskWorkerPool {
           localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
           episodeCount: playletConfig.playlet.episodeCount,
           requiredOwnership: wechatOwnershipRequirements,
+          requiredPosterImages: 1,
           mergeOwnershipMaterials: !["false", "0", "no", "off"].includes(
             String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
           ),

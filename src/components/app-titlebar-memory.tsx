@@ -18,10 +18,10 @@ import {
 } from "@/config/navigation";
 import {
   getBaiduNetdiskStatus,
-  openBaiduNetdiskWindow,
   type BaiduNetdiskWindowPlatformId,
   type BaiduNetdiskCdpStatus,
 } from "@/platforms/baidu-netdisk/service";
+import { openBaiduNetdiskDrawer } from "@/platforms/baidu-netdisk/drawer";
 
 type AppRuntimeStatus = {
   browserInstanceCount: number;
@@ -419,13 +419,13 @@ export function AppTitlebarMemory() {
       <div className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
       <Tooltip>
         <TooltipTrigger
-          aria-label={`打开百度网盘下载窗口：${baiduSummary}`}
+          aria-label={`打开百度网盘下载抽屉：${baiduSummary}`}
           render={
             <button
               type="button"
               className={titlebarIconButtonClass}
               onClick={() => {
-                void openBaiduNetdiskWindow(baiduNetdiskPlatformId(activePlatform.id));
+                openBaiduNetdiskDrawer(baiduNetdiskPlatformId(activePlatform.id));
               }}
             />
           }
