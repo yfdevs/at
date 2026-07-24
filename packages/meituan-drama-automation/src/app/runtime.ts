@@ -16,6 +16,7 @@ import type {
 } from "../shared/types.js";
 import { loginStateFromUrl, log, saveCredentialState } from "../automation/browser-session.js";
 import { runPublishTask } from "../automation/publish-runner.js";
+import { runMeituanAccountTaskWorker } from "./task-worker.js";
 
 type AccountBrowser = {
   account: MeituanCreationAccount;
@@ -24,6 +25,7 @@ type AccountBrowser = {
   options: MeituanCreationRuntimeOptions;
   userDataDir: string;
   launched: boolean;
+  workerPromise?: Promise<void>;
 };
 
 function accountPathSegment(accountId: string) {
@@ -159,14 +161,25 @@ export async function startMeituanCreationRuntime(
         }
       });
 
-      void runPublishTask(context, page, browserOptions, null).catch((error) => {
+      const workerPromise = (
+        options.taskPollingEnabled === false
+          ? runPublishTask(context, page, browserOptions, null)
+          : runMeituanAccountTaskWorker({
+            account,
+            context,
+            page,
+            runtimeOptions: browserOptions,
+            isRunning: () => running && browser.launched,
+          })
+      ).catch((error) => {
         log(
           browserOptions,
-          `[meituan-drama] account login preparation failed: ${
+          `[meituan-drama] account worker stopped with error: ${
             error instanceof Error ? error.message : String(error)
           }`,
         );
       });
+      browser.workerPromise = workerPromise;
     }
   } catch (error) {
     running = false;
@@ -205,6 +218,11 @@ export async function startMeituanCreationRuntime(
           await browser.context.close();
           browser.launched = false;
         }),
+      );
+      await Promise.allSettled(
+        accountBrowsers.flatMap((browser) => (
+          browser.workerPromise ? [browser.workerPromise] : []
+        )),
       );
       log(options, "[meituan-drama] all account browsers stopped");
     },

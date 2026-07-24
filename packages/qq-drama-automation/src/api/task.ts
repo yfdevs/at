@@ -86,8 +86,9 @@ const fakeClaimedTask = claimedQqDramaTaskSchema.parse({
     productionYear: 2026,
     costAllocationReportFile:
       "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260716/account-task-595-0f639f4afdee4095b37906b580d77f70.png",
-    copyrightProofFile:
+    licenseProofFiles: [
       "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260716/account-task-595-a9c40ddd187b41e880699c1cba233cfd.png",
+    ],
     contractName: "【明星说漫剧】QQ漫剧协议（665599744810680320）",
   },
 });

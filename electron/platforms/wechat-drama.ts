@@ -77,7 +77,7 @@ type WechatVideoStore = {
 
 const defaultWechatVideoConfig: WechatVideoConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
-  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU',
+  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU,YOUDIANNIU',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-drama',
@@ -106,6 +106,7 @@ const contractSubjectOptions = [
   { label: '微淘', value: 'WEITAO' },
   { label: '幻走', value: 'HUANZOU' },
   { label: '小石榴', value: 'XIAOSHILIU' },
+  { label: '有点牛', value: 'YOUDIANNIU' },
 ]
 
 const contractSubjectAliases: Record<string, string> = {
@@ -114,7 +115,16 @@ const contractSubjectAliases: Record<string, string> = {
   微淘: 'WEITAO',
   幻走: 'HUANZOU',
   小石榴: 'XIAOSHILIU',
+  有点牛: 'YOUDIANNIU',
 }
+
+const legacyDefaultContractSubjects = new Set([
+  'MINGXINGSHUO',
+  'MISU',
+  'WEITAO',
+  'HUANZOU',
+  'XIAOSHILIU',
+])
 
 const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
@@ -229,6 +239,12 @@ function normalizeConfig(
       .map((subject) => subject.trim())
       .filter(Boolean),
   )
+  const usesLegacyDefaultContractSubjects =
+    selectedContractSubjects.size === legacyDefaultContractSubjects.size
+    && [...legacyDefaultContractSubjects].every((subject) => selectedContractSubjects.has(subject))
+  if (usesLegacyDefaultContractSubjects) {
+    selectedContractSubjects.add('YOUDIANNIU')
+  }
 
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatVideoConfig.apiBaseUrl,

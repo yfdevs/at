@@ -1,108 +1,54 @@
-import { access } from "node:fs/promises";
-import path from "node:path";
-import { glob } from "glob";
-import type { MeituanCreationTaskConfig } from "./types.js";
+import {
+  findLocalEpisodeVideos as findSharedLocalEpisodeVideos,
+  validateLocalEpisodeVideos as validateSharedLocalEpisodeVideos,
+  type LocalEpisodeVideo,
+} from "@drama/drama-media-assets";
+import type {
+  ClaimedMeituanDramaTask,
+  MeituanCreationRuntimeOptions,
+} from "./types.js";
 
-export interface MeituanCreationLocalEpisodeVideo {
-  index: number;
-  file: string;
-}
+export type MeituanCreationLocalEpisodeVideo = LocalEpisodeVideo;
 
-function escapeRegExp(value: string): string {
-  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
-}
-
-function resolveFromCwd(filePath: string): string {
-  return path.isAbsolute(filePath) ? filePath : path.resolve(process.cwd(), filePath);
-}
-
-async function pathExists(filePath: string): Promise<boolean> {
-  return access(filePath).then(() => true, () => false);
-}
-
-async function resolveEpisodeSearchDir(
-  localEpisodeVideoRoot: string | undefined,
-  taskConfig: MeituanCreationTaskConfig,
-): Promise<string> {
-  const root = localEpisodeVideoRoot?.trim();
-  if (!root) {
-    throw new Error("MEITUAN_LOCAL_VIDEO_ROOT_REQUIRED");
+export function getMeituanOriginalTitle(task: ClaimedMeituanDramaTask) {
+  const originalTitle = task.originalTitle.trim();
+  if (!originalTitle) {
+    throw new Error("originalTitle is required for local episode videos.");
   }
-
-  const resolvedRoot = resolveFromCwd(root);
-  const titledDir = path.join(resolvedRoot, taskConfig.collectionTitle);
-  if (await pathExists(titledDir)) {
-    return titledDir;
-  }
-
-  if (await pathExists(resolvedRoot)) {
-    return resolvedRoot;
-  }
-
-  throw new Error(`MEITUAN_LOCAL_VIDEO_ROOT_NOT_FOUND: root=${resolvedRoot}`);
+  return originalTitle;
 }
 
-export async function findLocalEpisodeVideos(
-  taskConfig: MeituanCreationTaskConfig,
-  localEpisodeVideoRoot: string | undefined,
-): Promise<MeituanCreationLocalEpisodeVideo[]> {
-  const searchDir = await resolveEpisodeSearchDir(localEpisodeVideoRoot, taskConfig);
-  const fileNamePattern = new RegExp(
-    `^${escapeRegExp(taskConfig.collectionTitle)}\\s*[-_—–]?\\s*第(\\d+)集\\.mp4$`,
-    "i",
-  );
-  const fileNames = await glob("*.mp4", {
-    cwd: searchDir,
-    nodir: true,
-    maxDepth: 1,
-  });
-
-  return fileNames
-    .flatMap((fileName): MeituanCreationLocalEpisodeVideo[] => {
-      const match = fileNamePattern.exec(path.basename(fileName));
-      if (!match) return [];
-
-      return [{
-        index: Number(match[1]),
-        file: path.join(searchDir, fileName),
-      }];
-    })
-    .sort((left, right) => left.index - right.index);
+export function getMeituanLocalEpisodeVideoRoot(
+  options: MeituanCreationRuntimeOptions,
+) {
+  const localEpisodeVideoRoot = options.config?.localEpisodeVideoRoot?.trim();
+  if (!localEpisodeVideoRoot) {
+    throw new Error("请先配置美团短剧本地剧集视频目录。");
+  }
+  return localEpisodeVideoRoot;
 }
 
 export async function findRequiredLocalEpisodeVideos(
-  taskConfig: MeituanCreationTaskConfig,
-  localEpisodeVideoRoot: string | undefined,
+  task: ClaimedMeituanDramaTask,
+  options: MeituanCreationRuntimeOptions,
 ): Promise<MeituanCreationLocalEpisodeVideo[]> {
-  const episodes = await findLocalEpisodeVideos(taskConfig, localEpisodeVideoRoot);
+  const episodes = await findSharedLocalEpisodeVideos({
+    localEpisodeVideoRoot: getMeituanLocalEpisodeVideoRoot(options),
+    resourceName: getMeituanOriginalTitle(task),
+  });
+
   return episodes.filter((episode) => (
-    episode.index >= 1 && episode.index <= taskConfig.totalEpisodes
+    episode.index >= 1 && episode.index <= task.playlet.totalEpisodes
   ));
 }
 
 export async function validateLocalEpisodeVideos(
-  taskConfig: MeituanCreationTaskConfig,
-  localEpisodeVideoRoot: string | undefined,
+  task: ClaimedMeituanDramaTask,
+  options: MeituanCreationRuntimeOptions,
 ): Promise<void> {
-  const episodes = await findRequiredLocalEpisodeVideos(taskConfig, localEpisodeVideoRoot);
-  const duplicateIndexes = episodes
-    .filter((episode, index) => index > 0 && episode.index === episodes[index - 1].index)
-    .map((episode) => episode.index);
-
-  if (duplicateIndexes.length > 0) {
-    throw new Error(
-      `MEITUAN_LOCAL_VIDEO_DUPLICATE_EPISODES: indexes=${[...new Set(duplicateIndexes)].join(",")}`,
-    );
-  }
-
-  const expectedIndexes = Array.from({ length: taskConfig.totalEpisodes }, (_, index) => index + 1);
-  const actualIndexes = episodes.map((episode) => episode.index);
-  if (
-    expectedIndexes.some((value, index) => actualIndexes[index] !== value)
-  ) {
-    throw new Error(
-      `MEITUAN_LOCAL_VIDEO_EPISODE_MISMATCH: collectionTitle=${taskConfig.collectionTitle} ` +
-      `expected=1-${taskConfig.totalEpisodes} actual=[${actualIndexes.join(",")}]`,
-    );
-  }
+  await validateSharedLocalEpisodeVideos({
+    localEpisodeVideoRoot: getMeituanLocalEpisodeVideoRoot(options),
+    resourceName: getMeituanOriginalTitle(task),
+    episodeCount: task.playlet.totalEpisodes,
+  });
 }

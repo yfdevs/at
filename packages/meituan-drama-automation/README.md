@@ -16,32 +16,35 @@ https://czz.meituan.com/new/publishVideo
 
 ## 后端任务 Schema
 
-服务启动时可以只打开发布页并等待/保存登录态。后续执行表单自动化时，后端任务 JSON 需要按 schema 提供作者、受众、合集类型和合集标题。只要传入了任一任务字段，就会完整校验；字段缺失或不合法时运行时会直接报错，不做默认值兜底：
+服务启动时可以只打开发布页并等待/保存登录态。后续执行表单自动化时，后端任务使用 `ClaimedMeituanDramaTask` 包装层；外层保存任务和资源标识，`playlet` 保存发布配置。字段缺失或不合法时运行时会直接报错：
 
 ```json
 {
-  "authorNicknameText": "本人 明星说漫剧",
-  "audience": "男频",
-  "collectionType": "真人短剧（含AI）",
-  "collectionSubType": "真人短剧",
-  "collectionTitle": "示例剧名",
-  "collectionCoverUrl": "https://example.com/poster.jpg",
-  "copyrightProofUrl": "https://example.com/copyright-proof.png",
-  "premiereProofUrl": "https://example.com/premiere-proof.png",
-  "backgroundText": "现代",
-  "plotSettingTexts": ["打脸虐渣", "重生"],
-  "storyThemeText": "脑洞",
-  "totalEpisodes": 12,
-  "checkpointEpisodes": [8, 6, 5],
-  "productionCompanyText": "明星说漫剧",
-  "directorNames": ["张三"],
-  "producerNames": ["李四"],
-  "screenwriterNames": ["王五"],
-  "actorNames": ["赵六", "钱七"],
-  "averageEpisodeDurationMinutes": 2,
-  "plotSynopsisText": "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
-  "premiereStatus": "美团联合首发",
-  "expectedPremiereTimeText": "2026-06-25 12:30:00"
+  "accountTaskId": 15173,
+  "originalTitle": "示例剧名",
+  "playlet": {
+    "baiduPanResourceLink": "https://pan.baidu.com/s/xxxx?pwd=1234",
+    "authorNicknameText": "本人 明星说漫剧",
+    "audience": "男频",
+    "collectionType": "真人短剧（含AI）",
+    "collectionSubType": "真人短剧",
+    "collectionTitle": "示例剧名",
+    "copyrightProofUrl": "https://example.com/copyright-proof.png",
+    "premiereProofUrl": "https://example.com/premiere-proof.png",
+    "backgroundText": "现代",
+    "plotSettingTexts": ["打脸虐渣", "重生"],
+    "storyThemeText": "脑洞",
+    "totalEpisodes": 12,
+    "checkpointEpisodes": [8, 6, 5],
+    "productionCompanyText": "明星说漫剧",
+    "directorNames": ["张三"],
+    "producerNames": ["李四"],
+    "screenwriterNames": ["王五"],
+    "actorNames": ["赵六", "钱七"],
+    "averageEpisodeDurationMinutes": 2,
+    "plotSynopsisText": "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
+    "premiereStatus": "美团联合首发"
+  }
 }
 ```
 
@@ -50,10 +53,13 @@ https://czz.meituan.com/new/publishVideo
 - `真人短剧（含AI）` -> `真人短剧`、`AI真人短剧`
 - `动漫短剧` -> `动态漫`、`沙雕漫`、`PPT漫`
 
-`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`collectionCoverUrl`、`copyrightProofUrl`、`premiereProofUrl`、`backgroundText`、`plotSettingTexts`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes`、`productionCompanyText`、`directorNames`、`producerNames`、`screenwriterNames`、`actorNames`、`averageEpisodeDurationMinutes`、`plotSynopsisText`、`expectedPremiereTimeText` 都是必填字段。
+`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`copyrightProofUrl`、`premiereProofUrl`、`backgroundText`、`plotSettingTexts`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes`、`productionCompanyText`、`directorNames`、`producerNames`、`screenwriterNames`、`actorNames`、`averageEpisodeDurationMinutes`、`plotSynopsisText` 都是必填字段。
 `audience` 支持 `男频`、`女频`。
 `collectionTitle` 是合集标题，也就是剧名称。
-`collectionCoverUrl` 是合集封面图片 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
+`collectionCoverUrl` 是可选的兼容字段。领取任务后，运行时会优先要求百度网盘同时下载
+正片和至少 1 张封面，并在 `{localEpisodeVideoRoot}/{originalTitle}` 下递归匹配
+文件名或目录名包含“封面/海报”的图片。匹配结果写入运行时
+`collectionCoverFile`，校验通过后才通过文件控件上传。
 `copyrightProofUrl` 是版权证明文件 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
 `premiereProofUrl` 是首发证明材料 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
 `backgroundText` 是时代背景，支持 `现代`、`都市`、`古代`、`乡村`、`年代`、`架空`、`职场`、`民国`、`宫廷`、`校园`、`荒岛`、`古装`、`末世`。
@@ -64,4 +70,29 @@ https://czz.meituan.com/new/publishVideo
 `averageEpisodeDurationMinutes` 是单集平均时长，单位分钟。
 `plotSynopsisText` 是剧情简介。
 `premiereStatus` 是全网首发情况，支持 `美团独家`、`美团联合首发`、`非美团首发`，不传时默认 `美团联合首发`。
-`expectedPremiereTimeText` 是预计首发时间，格式示例 `2026-06-25 12:30:00`。
+`expectedPremiereTimeText` 是可选的预计首发时间，格式示例 `2026-06-25 12:30:00`。不传时，程序会在填写页面前自动生成当前时间加 1 分钟；传入时间过早时也会自动调整。
+
+`baiduPanResourceLink` 是可选的百度网盘分享文本。存在时，运行时先把资源下载并标准化到
+`{localEpisodeVideoRoot}/{originalTitle}`，再用 `originalTitle + totalEpisodes`
+严格校验第 1 集到第 N 集；校验通过后才开始页面填写和上传。
+
+## 任务轮询
+
+每个启用账号使用自己的 `accountId` 独立执行：
+
+```text
+POST /dramaAiRpa/meituan/accountTask/page（status=READY）
+  → POST /dramaAiRpa/meituan/rpa/claim
+  → 发布任务
+  → POST /dramaAiRpa/meituan/rpa/report
+```
+
+单次 READY 查询数量固定为 100。
+连续空查前 9 次每 5 秒重试，第 10 次起每 30 秒重试；查到任务后恢复快速轮询。
+分页或领取接口异常时等待 10 秒。
+
+领取接口的 `payloadJson` 使用后端通用短剧结构。运行时会合并其中的
+`meituanExtraInfo`，并从 `name`、`summary`、`episodeCount`、`producerName`、
+`posters`、`copyright`、`meituanImages` 和 `baiduPanResourceLink`
+补齐美团发布配置，再通过 `ClaimedMeituanDramaTask` schema 校验。领取后的配置、
+资源下载或页面发布失败都会通过 `/rpa/report` 回写失败阶段和错误信息。

@@ -27,13 +27,17 @@ const expectedPremiereTimeInputFormats = [
   "YYYY-MM-DDTHH:mm",
 ];
 
-function normalizeExpectedPremiereTimeText(value: string) {
+function normalizeExpectedPremiereTimeText(value?: string) {
+  const minimum = dayjs().add(1, "minute");
+  if (!value?.trim()) {
+    return minimum.format(expectedPremiereTimeFormat);
+  }
+
   const parsed = dayjs(value.trim(), expectedPremiereTimeInputFormats, true);
   if (!parsed.isValid()) {
     throw new Error(`MEITUAN_EXPECTED_PREMIERE_TIME_INVALID: ${value}`);
   }
 
-  const minimum = dayjs().add(1, "minute");
   if (parsed.isBefore(minimum)) {
     return minimum.format(expectedPremiereTimeFormat);
   }
@@ -46,12 +50,20 @@ async function uploadCollectionCover(
   taskConfig: MeituanCreationTaskConfig,
   options: MeituanCreationRuntimeOptions,
 ) {
-  const coverPath = await downloadRemoteAsset(
-    taskConfig.collectionCoverUrl,
-    options,
-    "remote-cover",
-    "cover",
-  );
+  const coverPath = taskConfig.collectionCoverFile
+    ?? (
+      taskConfig.collectionCoverUrl
+        ? await downloadRemoteAsset(
+          taskConfig.collectionCoverUrl,
+          options,
+          "remote-cover",
+          "cover",
+        )
+        : undefined
+    );
+  if (!coverPath) {
+    throw new Error("MEITUAN_COLLECTION_COVER_REQUIRED");
+  }
   const uploadArea = page.getByRole("button", { name: "上传封面" }).locator("..");
   const coverInput = uploadArea.locator('input[type="file"]');
 
@@ -283,7 +295,12 @@ async function fillStoryAndRights(
   const expectedPremiereTimeText = normalizeExpectedPremiereTimeText(
     taskConfig.expectedPremiereTimeText,
   );
-  if (expectedPremiereTimeText !== taskConfig.expectedPremiereTimeText) {
+  if (!taskConfig.expectedPremiereTimeText) {
+    log(
+      options,
+      `[meituan-drama] expected premiere time generated: ${expectedPremiereTimeText}`,
+    );
+  } else if (expectedPremiereTimeText !== taskConfig.expectedPremiereTimeText) {
     log(options, `[meituan-drama] expected premiere time adjusted: ${expectedPremiereTimeText}`);
   }
 

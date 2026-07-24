@@ -15,9 +15,12 @@ const responseSchema = z.object({
   code: z.number(),
   msg: z.string().nullish(),
   data: z.object({
+    total: z.coerce.number().int().nonnegative().optional(),
     data: z.array(accountConfigSchema),
   }).nullish(),
 });
+
+const accountConfigPageSize = 100;
 
 function accountConfigPageUrl(apiBaseUrl: string) {
   const baseUrl = apiBaseUrl.trim().replace(/\/+$/, "");
@@ -31,37 +34,52 @@ export async function fetchMeituanCreationAccounts(
   apiBaseUrl: string,
   fetcher: typeof fetch = fetch,
 ): Promise<MeituanCreationAccount[]> {
-  const response = await fetcher(accountConfigPageUrl(apiBaseUrl), {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/plain, */*",
-      "content-type": "application/json;charset=UTF-8",
-    },
-    body: JSON.stringify({
-      page: 1,
-      pageSize: 1000,
-      accountId: null,
-      accountName: null,
-      status: "ON",
-    }),
-  });
+  const fetchedAccounts: z.infer<typeof accountConfigSchema>[] = [];
+  let page = 1;
 
-  if (!response.ok) {
-    throw new Error(`MEITUAN_ACCOUNT_CONFIG_REQUEST_FAILED: status=${response.status}`);
+  while (true) {
+    const response = await fetcher(accountConfigPageUrl(apiBaseUrl), {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "content-type": "application/json;charset=UTF-8",
+      },
+      body: JSON.stringify({
+        page,
+        pageSize: accountConfigPageSize,
+        accountId: null,
+        accountName: null,
+        status: "ON",
+      }),
+    });
+
+    if (!response.ok) {
+      throw new Error(`MEITUAN_ACCOUNT_CONFIG_REQUEST_FAILED: status=${response.status}`);
+    }
+
+    const payload = responseSchema.parse(await response.json());
+    if (payload.code !== 0) {
+      throw new Error(
+        `MEITUAN_ACCOUNT_CONFIG_REQUEST_FAILED: code=${payload.code} message=${payload.msg || "-"}`,
+      );
+    }
+
+    if (!payload.data) {
+      throw new Error("MEITUAN_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED");
+    }
+
+    const pageAccounts = payload.data.data;
+    fetchedAccounts.push(...pageAccounts);
+    if (
+      pageAccounts.length < accountConfigPageSize
+      || (payload.data.total !== undefined && fetchedAccounts.length >= payload.data.total)
+    ) {
+      break;
+    }
+    page += 1;
   }
 
-  const payload = responseSchema.parse(await response.json());
-  if (payload.code !== 0) {
-    throw new Error(
-      `MEITUAN_ACCOUNT_CONFIG_REQUEST_FAILED: code=${payload.code} message=${payload.msg || "-"}`,
-    );
-  }
-
-  if (!payload.data) {
-    throw new Error("MEITUAN_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED");
-  }
-
-  const enabledAccounts = payload.data.data
+  const enabledAccounts = fetchedAccounts
     .filter((account) => account.status === "ON")
     .sort((left, right) => (left.sortNo ?? 0) - (right.sortNo ?? 0));
   const uniqueAccounts = new Map<string, MeituanCreationAccount>();

@@ -4,8 +4,8 @@ import {
   validateLocalEpisodeVideos,
 } from "../../shared/local-episode-videos.js";
 import type {
+  ClaimedMeituanDramaTask,
   MeituanCreationRuntimeOptions,
-  MeituanCreationTaskConfig,
 } from "../../shared/types.js";
 import { log } from "../browser-session.js";
 import { scrollLocatorIntoView } from "../form-controls.js";
@@ -183,15 +183,12 @@ async function waitForVideoUploadProgress(
 
 export async function uploadEpisodeVideosStep(
   page: Page,
-  taskConfig: MeituanCreationTaskConfig,
+  task: ClaimedMeituanDramaTask,
   options: MeituanCreationRuntimeOptions,
 ) {
   log(options, "[meituan-drama] preparing local episode videos");
-  await validateLocalEpisodeVideos(taskConfig, options.config?.localEpisodeVideoRoot);
-  const episodes = await findRequiredLocalEpisodeVideos(
-    taskConfig,
-    options.config?.localEpisodeVideoRoot,
-  );
+  await validateLocalEpisodeVideos(task, options);
+  const episodes = await findRequiredLocalEpisodeVideos(task, options);
   const videoFiles = episodes.map((episode) => episode.file);
 
   log(options, `[meituan-drama] uploading ${videoFiles.length} episode video(s)`);

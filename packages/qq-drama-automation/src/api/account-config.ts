@@ -14,9 +14,12 @@ const qqAccountConfigPageResponseSchema = z.object({
   code: z.number(),
   msg: z.string().nullish(),
   data: z.object({
+    total: z.coerce.number().int().nonnegative().optional(),
     data: z.array(qqAccountConfigSchema),
   }).nullish(),
 });
+
+const accountConfigPageSize = 100;
 
 export type QqDramaAccount = {
   id: number;
@@ -36,37 +39,52 @@ export async function fetchQqDramaAccounts(
   apiBaseUrl: string,
   fetcher: typeof fetch = fetch,
 ): Promise<QqDramaAccount[]> {
-  const response = await fetcher(accountConfigPageUrl(apiBaseUrl), {
-    method: "POST",
-    headers: {
-      accept: "application/json, text/plain, */*",
-      "content-type": "application/json;charset=UTF-8",
-    },
-    body: JSON.stringify({
-      page: 1,
-      pageSize: 1000,
-      accountId: null,
-      accountName: null,
-      status: "ON",
-    }),
-  });
+  const fetchedAccounts: z.infer<typeof qqAccountConfigSchema>[] = [];
+  let page = 1;
 
-  if (!response.ok) {
-    throw new Error(`QQ_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED: status=${response.status}`);
-  }
+  while (true) {
+    const response = await fetcher(accountConfigPageUrl(apiBaseUrl), {
+      method: "POST",
+      headers: {
+        accept: "application/json, text/plain, */*",
+        "content-type": "application/json;charset=UTF-8",
+      },
+      body: JSON.stringify({
+        page,
+        pageSize: accountConfigPageSize,
+        accountId: null,
+        accountName: null,
+        status: "ON",
+      }),
+    });
 
-  const payload = qqAccountConfigPageResponseSchema.parse(await response.json());
-  if (payload.code !== 0) {
-    throw new Error(
-      `QQ_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED: code=${payload.code} message=${payload.msg || "-"}`,
-    );
-  }
-  if (!payload.data) {
-    throw new Error("QQ_DRAMA_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED");
+    if (!response.ok) {
+      throw new Error(`QQ_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED: status=${response.status}`);
+    }
+
+    const payload = qqAccountConfigPageResponseSchema.parse(await response.json());
+    if (payload.code !== 0) {
+      throw new Error(
+        `QQ_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED: code=${payload.code} message=${payload.msg || "-"}`,
+      );
+    }
+    if (!payload.data) {
+      throw new Error("QQ_DRAMA_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED");
+    }
+
+    const pageAccounts = payload.data.data;
+    fetchedAccounts.push(...pageAccounts);
+    if (
+      pageAccounts.length < accountConfigPageSize
+      || (payload.data.total !== undefined && fetchedAccounts.length >= payload.data.total)
+    ) {
+      break;
+    }
+    page += 1;
   }
 
   const uniqueAccounts = new Map<string, QqDramaAccount>();
-  for (const account of payload.data.data
+  for (const account of fetchedAccounts
     .filter((item) => item.status === "ON")
     .sort((left, right) => (left.sortNo ?? 0) - (right.sortNo ?? 0))) {
     uniqueAccounts.set(account.accountId, {

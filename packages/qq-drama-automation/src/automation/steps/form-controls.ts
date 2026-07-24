@@ -243,6 +243,35 @@ export async function uploadTaskFile(page: Page, file: QqDramaTaskFile, options:
   }).catch(() => undefined);
 }
 
+export async function uploadTaskFiles(
+  page: Page,
+  files: QqDramaTaskFile[],
+  options: QqDramaRuntimeOptions,
+) {
+  if (files.length === 0) return;
+
+  const localFilePaths = await Promise.all(
+    files.map((file) => resolveTaskFilePath(file, options)),
+  );
+  const target = files[0];
+  if (target.selector) {
+    await page.locator(target.selector).first().setInputFiles(localFilePaths, {
+      timeout: 60_000,
+    });
+    return;
+  }
+  if (!target.label) {
+    throw new Error("QQ_DRAMA_FILE_LABEL_OR_SELECTOR_REQUIRED");
+  }
+
+  await markFileInputByLabel(page, target.label);
+  const input = page.locator("input[data-qq-drama-upload-target='true']").first();
+  await input.setInputFiles(localFilePaths, { timeout: 60_000 });
+  await input.evaluate((element) => {
+    element.removeAttribute("data-qq-drama-upload-target");
+  }).catch(() => undefined);
+}
+
 export async function uploadLocalFilesByTarget(page: Page, options: {
   label?: string;
   selector?: string;

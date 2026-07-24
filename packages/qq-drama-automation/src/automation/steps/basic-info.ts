@@ -6,7 +6,12 @@ import type {
   QqDramaTaskField,
   QqDramaTaskFile,
 } from "../../shared/types.js";
-import { clickNextStep, fillTaskField, uploadTaskFile } from "./form-controls.js";
+import {
+  clickNextStep,
+  fillTaskField,
+  uploadTaskFile,
+  uploadTaskFiles,
+} from "./form-controls.js";
 import { taskTitle } from "./payload.js";
 
 type OptionalTaskField = Omit<QqDramaTaskField, "index" | "value"> & {
@@ -53,6 +58,21 @@ async function uploadFileIfPresent(
 
   log(options, `[qq-drama] uploading file: ${file.selector ?? file.label ?? "unknown"}`);
   await uploadTaskFile(page, file, options);
+  return true;
+}
+
+async function uploadFilesIfPresent(
+  page: Page,
+  options: QqDramaRuntimeOptions,
+  files: QqDramaTaskFile[],
+) {
+  if (files.length === 0) return false;
+
+  log(
+    options,
+    `[qq-drama] uploading ${files.length} file(s): ${files[0].selector ?? files[0].label ?? "unknown"}`,
+  );
+  await uploadTaskFiles(page, files, options);
   return true;
 }
 
@@ -233,10 +253,13 @@ export async function fillBasicInfoStep(
   );
 
   // 版权信息
-  await uploadFileIfPresent(
+  await uploadFilesIfPresent(
     page,
     options,
-    fileFromRef("权属文件", payload.copyrightProofFile, "copyright-proof"),
+    payload.licenseProofFiles.flatMap((fileRef, index) => {
+      const file = fileFromRef("权属文件", fileRef, `license-proof-${index + 1}`);
+      return file ? [file] : [];
+    }),
   );
 
   // 合同
@@ -246,8 +269,6 @@ export async function fillBasicInfoStep(
     kind: "select",
     placeholder: "请选择合同",
   });
-  // oxlint-disable-next-line no-debugger
-  debugger;
   if (payload.episodeCount || payload.submit) {
     await clickNextStep(page, options);
   }

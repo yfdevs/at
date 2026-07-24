@@ -16,8 +16,8 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@drama/drama-media-assets": "workspace:*",
     "dayjs": "^1.11.21",
-    "glob": "^10.5.0",
     "playwright": "latest",
     "zod": "3.22.4"
   },

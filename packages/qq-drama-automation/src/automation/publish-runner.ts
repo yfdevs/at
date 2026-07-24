@@ -53,9 +53,6 @@ export async function runQqDramaPublishTask(
   log(options, `[qq-drama] start episode upload step: accountTaskId=${task.accountTaskId}`);
   await uploadEpisodeVideosStep(page, task, options);
 
-  // oxlint-disable-next-line no-debugger
-  debugger;
-
   log(options, `[qq-drama] start confirm step: accountTaskId=${task.accountTaskId}`);
   await confirmAndMaybeSubmitStep(page, task, options);
 

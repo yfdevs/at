@@ -1,25 +1,92 @@
 import type { BrowserContext, Page } from "playwright";
 import { MEITUAN_CREATION_PUBLISH_VIDEO_URL } from "../shared/constants.js";
 import type {
+  ClaimedMeituanDramaTask,
   MeituanCreationRuntimeOptions,
-  MeituanCreationTaskConfig,
 } from "../shared/types.js";
 import {
   log,
   saveCredentialState,
   waitForLogin,
 } from "./browser-session.js";
-import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
+import {
+  getMeituanLocalEpisodeVideoRoot,
+  getMeituanOriginalTitle,
+  validateLocalEpisodeVideos,
+} from "../shared/local-episode-videos.js";
+import { prepareMeituanPosterMaterial } from "../shared/poster-materials.js";
 import { clickWhenReady } from "./form-controls.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
 import { selectPublishTargetStep } from "./steps/select-author.js";
 import { submitPublishStep } from "./steps/submit.js";
 
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function ensureBaiduNetdiskResourceReady(
+  task: ClaimedMeituanDramaTask,
+  options: MeituanCreationRuntimeOptions,
+) {
+  const baiduPanResourceLink = task.playlet.baiduPanResourceLink?.trim();
+  if (!baiduPanResourceLink) return;
+
+  if (!options.ensureBaiduNetdiskResource) {
+    throw new Error("任务包含百度网盘资源链接，但当前美团运行时未接入百度网盘下载能力。");
+  }
+
+  const localEpisodeVideoRoot = getMeituanLocalEpisodeVideoRoot(options);
+  const resourceName = getMeituanOriginalTitle(task);
+  const episodeCount = task.playlet.totalEpisodes;
+  const retryAttempts = Math.max(0, options.baiduNetdiskDownloadRetryAttempts ?? 3);
+  const maxAttempts = retryAttempts + 1;
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      log(
+        options,
+        `[meituan-drama] ensuring baidu netdisk resource: accountTaskId=${task.accountTaskId} ` +
+        `resourceName=${resourceName} episodeCount=${episodeCount} attempt=${attempt}/${maxAttempts}`,
+      );
+      await options.ensureBaiduNetdiskResource({
+        shareText: baiduPanResourceLink,
+        resourceName,
+        localEpisodeVideoRoot,
+        episodeCount,
+        requiredPosterImages: 1,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      const message = errorMessage(error);
+      const nonRetryable = [
+        "分享文本中没有找到百度网盘链接",
+        "百度网盘账号登录已过期",
+        "百度网盘海报封面数量不足",
+        "剧集视频目录不存在",
+        "存在重复集数",
+        "剧集文件应按文件名匹配",
+      ].some((pattern) => message.includes(pattern));
+      if (nonRetryable || attempt >= maxAttempts) break;
+
+      log(
+        options,
+        `[meituan-drama] baidu netdisk resource failed, retrying: ` +
+        `accountTaskId=${task.accountTaskId} nextAttempt=${attempt + 1}/${maxAttempts} error=${message}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
 export async function runPublishTask(
   context: BrowserContext,
   page: Page,
   options: MeituanCreationRuntimeOptions,
-  taskConfig: MeituanCreationTaskConfig | null,
+  task: ClaimedMeituanDramaTask | null,
 ) {
   log(options, "[meituan-drama] opening publish page");
   await page.goto(MEITUAN_CREATION_PUBLISH_VIDEO_URL, {
@@ -39,17 +106,26 @@ export async function runPublishTask(
   await page.getByText("发布至合集").waitFor({ state: "visible", timeout: 60_000 });
   await saveCredentialState(context, options);
 
-  if (!taskConfig) {
-    log(options, "[meituan-drama] task config not provided, browser is ready");
+  if (!task) {
+    log(options, "[meituan-drama] claimed task not provided, browser is ready");
     return;
   }
 
-  log(options, "[meituan-drama] validating local episode videos after login");
-  await validateLocalEpisodeVideos(taskConfig, options.config?.localEpisodeVideoRoot);
+  const taskConfig = task.playlet;
+  log(
+    options,
+    `[meituan-drama] starting claimed task: accountTaskId=${task.accountTaskId} originalTitle=${task.originalTitle}`,
+  );
+  await ensureBaiduNetdiskResourceReady(task, options);
+  log(options, "[meituan-drama] validating local episode videos before publishing");
+  await validateLocalEpisodeVideos(task, options);
+  log(options, "[meituan-drama] matching local collection cover before publishing");
+  const poster = await prepareMeituanPosterMaterial(task, options);
+  log(options, `[meituan-drama] local collection cover ready: ${poster.file}`);
 
   await clickWhenReady(page, page.getByText("发布至合集"));
   await selectPublishTargetStep(page, taskConfig, options);
-  await uploadEpisodeVideosStep(page, taskConfig, options);
+  await uploadEpisodeVideosStep(page, task, options);
   await submitPublishStep(page, options);
   log(options, "[meituan-drama] publish task completed");
 }

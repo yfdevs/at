@@ -341,12 +341,12 @@ importers:
 
   packages/meituan-drama-automation:
     dependencies:
+      '@drama/drama-media-assets':
+        specifier: workspace:*
+        version: link:../drama-media-assets
       dayjs:
         specifier: ^1.11.21
         version: 1.11.21
-      glob:
-        specifier: ^10.5.0
-        version: 10.5.0
       playwright:
         specifier: latest
         version: 1.61.1

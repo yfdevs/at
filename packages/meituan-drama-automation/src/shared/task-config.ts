@@ -13,6 +13,7 @@ function hasTaskConfig(config: MeituanCreationConfig | undefined) {
     config?.collectionSubType ||
     config?.collectionTitle ||
     config?.collectionCoverUrl ||
+    config?.collectionCoverFile ||
     config?.copyrightProofUrl ||
     config?.premiereProofUrl ||
     config?.backgroundText ||

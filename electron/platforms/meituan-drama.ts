@@ -11,6 +11,7 @@ import {
   RuntimeController,
   selectDirectory,
 } from "./shared";
+import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 
 type MeituanCreationRuntimeStatus = {
   platform: "meituan-drama";
@@ -126,7 +127,6 @@ function normalizeConfig(
     config.operationDelaySeconds ??
     (Number.isFinite(legacySlowMo) ? String(legacySlowMo / 1000) : undefined) ??
     defaultMeituanCreationConfig.operationDelaySeconds;
-
   return {
     apiBaseUrl: config.apiBaseUrl?.trim() || defaultMeituanCreationConfig.apiBaseUrl,
     headless: config.headless ?? defaultMeituanCreationConfig.headless,
@@ -212,8 +212,10 @@ async function startRuntime() {
   );
   return startMeituanCreationRuntime({
     accounts,
+    apiBaseUrl: config.apiBaseUrl,
     authRoot: meituanCreationAuthRoot(),
     assetDownloadRoot: meituanCreationAssetDownloadRoot(),
+    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
     onLog: (message: string) => {
       console.log(message);
     },

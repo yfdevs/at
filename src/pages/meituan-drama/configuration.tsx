@@ -39,7 +39,7 @@ const sections: ConfigSectionDefinition<MeituanCreationConfig>[] = [
       {
         key: "localEpisodeVideoRoot",
         label: "剧集视频目录",
-        description: "按合集标题匹配 xxx-第1集.mp4 这类本地视频。",
+        description: "按领取结果的 originalTitle 匹配对应资源目录和第 1～N 集视频。",
         directory: true,
       },
       {

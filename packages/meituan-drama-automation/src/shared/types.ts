@@ -66,52 +66,42 @@ const plotSettingSchema = z.union([
   z.literal("方言")
 ]);
 const storyThemeSchema = z.union([
+  z.literal("现言"),
+  z.literal("成长"),
   z.literal("脑洞"),
-  z.literal("打脸虐渣"),
-  z.literal("大男主"),
-  z.literal("大女主"),
-  z.literal("马甲"),
-  z.literal("重生"),
-  z.literal("穿越"),
-  z.literal("系统"),
-  z.literal("先婚后爱"),
-  z.literal("家长里短"),
-  z.literal("小人物"),
-  z.literal("神豪"),
-  z.literal("金手指"),
-  z.literal("猛兽"),
-  z.literal("豪门"),
-  z.literal("破镜重圆"),
-  z.literal("强者回归"),
-  z.literal("传承觉醒"),
-  z.literal("异能"),
-  z.literal("强强联合"),
-  z.literal("逆袭"),
-  z.literal("医生"),
-  z.literal("甜宠"),
-  z.literal("娱乐圈"),
-  z.literal("青梅竹马"),
-  z.literal("神医"),
-  z.literal("追妻火葬场"),
-  z.literal("姐弟恋"),
-  z.literal("玄学"),
-  z.literal("业界精英"),
-  z.literal("萌娃"),
-  z.literal("一见钟情"),
-  z.literal("反派主角"),
-  z.literal("萌宠"),
-  z.literal("捞偏门"),
-  z.literal("白月光"),
-  z.literal("双向救赎"),
-  z.literal("灵魂互换"),
-  z.literal("病娇"),
-  z.literal("反转"),
-  z.literal("暴富"),
-  z.literal("黑道"),
-  z.literal("丧尸"),
-  z.literal("特种兵"),
-  z.literal("霸总"),
-  z.literal("方言")
+  z.literal("奇幻"),
+  z.literal("玄幻"),
+  z.literal("古言"),
+  z.literal("战神"),
+  z.literal("宫斗"),
+  z.literal("仙侠"),
+  z.literal("权谋"),
+  z.literal("爱情"),
+  z.literal("种田"),
+  z.literal("悬疑"),
+  z.literal("喜剧"),
+  z.literal("志怪"),
+  z.literal("青春"),
+  z.literal("灵异"),
+  z.literal("法律"),
+  z.literal("家国情怀"),
+  z.literal("刑侦"),
+  z.literal("抗战"),
+  z.literal("传奇"),
+  z.literal("武侠"),
+  z.literal("求生"),
+  z.literal("科幻"),
+  z.literal("动作"),
+  z.literal("惊悚"),
+  z.literal("商战"),
+  z.literal("家庭"),
+  z.literal("亲情"),
+  z.literal("励志"),
+  z.literal("复仇"),
+  z.literal("婚姻"),
+  z.literal("虐恋"),
+  z.literal("爽文"),
+  z.literal("灾难")
 ]);
 const premiereStatusSchema = z.union([
   z.literal("美团独家"),
@@ -119,10 +109,12 @@ const premiereStatusSchema = z.union([
   z.literal("非美团首发")
 ]);
 const commonTaskSchema = {
+  baiduPanResourceLink: z.string().trim().optional(),
   authorNicknameText: requiredText,
   audience: audienceSchema,
   collectionTitle: requiredText,
-  collectionCoverUrl: requiredUrl,
+  collectionCoverUrl: requiredUrl.optional(),
+  collectionCoverFile: requiredText.optional(),
   copyrightProofUrl: requiredUrl,
   premiereProofUrl: requiredUrl,
   backgroundText: backgroundSchema,
@@ -138,7 +130,7 @@ const commonTaskSchema = {
   averageEpisodeDurationMinutes: z.coerce.number().positive(),
   plotSynopsisText: requiredText,
   premiereStatus: premiereStatusSchema.default("美团联合首发"),
-  expectedPremiereTimeText: requiredText
+  expectedPremiereTimeText: requiredText.optional()
 };
 
 export const meituanCreationTaskSchema = z.discriminatedUnion("collectionType", [
@@ -164,6 +156,15 @@ export const meituanCreationTaskSchema = z.discriminatedUnion("collectionType", 
   }
 });
 
+export const claimedMeituanDramaTaskSchema = z.object({
+  accountTaskId: z.coerce.number().int().positive(),
+  dramaId: z.coerce.number().int().positive().optional(),
+  originalTitle: requiredText.describe("原始剧名，用于匹配业务任务和本地剧集资源。"),
+  meituanAccountId: z.string().trim().optional(),
+  meituanAccountName: z.string().trim().optional(),
+  playlet: meituanCreationTaskSchema,
+});
+
 export type MeituanCreationAudience = z.infer<typeof meituanCreationTaskSchema>["audience"];
 export type MeituanCreationCollectionType = z.infer<typeof meituanCreationTaskSchema>["collectionType"];
 export type MeituanCreationCollectionSubType = z.infer<typeof meituanCreationTaskSchema>["collectionSubType"];
@@ -172,6 +173,7 @@ export type MeituanCreationPlotSetting = z.infer<typeof meituanCreationTaskSchem
 export type MeituanCreationStoryTheme = z.infer<typeof meituanCreationTaskSchema>["storyThemeText"];
 export type MeituanCreationPremiereStatus = z.infer<typeof meituanCreationTaskSchema>["premiereStatus"];
 export type MeituanCreationTaskConfig = z.infer<typeof meituanCreationTaskSchema>;
+export type ClaimedMeituanDramaTask = z.infer<typeof claimedMeituanDramaTaskSchema>;
 
 export interface MeituanCreationBrowserOptions {
   userDataDir?: string;
@@ -198,6 +200,7 @@ export interface MeituanCreationConfig {
   collectionSubType?: MeituanCreationCollectionSubType;
   collectionTitle?: string;
   collectionCoverUrl?: string;
+  collectionCoverFile?: string;
   copyrightProofUrl?: string;
   premiereProofUrl?: string;
   backgroundText?: MeituanCreationBackground;
@@ -221,6 +224,13 @@ export interface MeituanCreationConfig {
 }
 
 export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown";
+export type MeituanCreationTaskFailStage =
+  | "LOGIN"
+  | "CLAIM_TASK"
+  | "OPEN_FORM"
+  | "FILL_FORM"
+  | "UPLOAD_FILE"
+  | "SUBMIT";
 
 export type MeituanCreationAccount = {
   id: number;
@@ -251,11 +261,21 @@ export type MeituanCreationRuntimeStatus = {
 export type MeituanCreationRuntimeOptions = {
   config?: MeituanCreationConfig;
   accounts?: MeituanCreationAccount[];
+  apiBaseUrl?: string;
+  taskPollingEnabled?: boolean;
   authRoot?: string;
   assetDownloadRoot?: string;
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;
+  baiduNetdiskDownloadRetryAttempts?: number;
+  ensureBaiduNetdiskResource?: (request: {
+    shareText: string;
+    resourceName: string;
+    localEpisodeVideoRoot: string;
+    episodeCount: number;
+    requiredPosterImages?: number;
+  }) => Promise<unknown>;
   onLog?: (message: string) => void;
 };
 

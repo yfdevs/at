@@ -108,8 +108,6 @@ async function uploadEpisodeVideosIfPresent(
   // 没有集数说明这个任务不需要上传正片视频，直接跳过剧集上传步骤。
   const episodeCount = task.playlet.episodeCount;
   if (!episodeCount) return null;
-  // oxlint-disable-next-line no-debugger
-  debugger;
 
   // 剧集上传依赖本地视频根目录和临时上传目录，缺任意一个都无法准备文件。
   const localEpisodeVideoRoot = getQqDramaLocalEpisodeVideoRoot(options);
