@@ -8,7 +8,7 @@ import {
 } from "../api/task.js";
 import type { VideoAccount } from "../api/video-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
-import { playletUrl } from "../automation/constants.js";
+import { nativeDramaListUrl, playletUrl } from "../automation/constants.js";
 import {
   mingxingshuoContractSubject,
   normalizeContractSubject,
@@ -18,13 +18,12 @@ import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { TaskService } from "./task-service.js";
 
 const logger = createLogger("audit-status-polling");
-const nativeDramaListUrl = "https://channels.weixin.qq.com/micro/content/cgi-bin/mmfinderassistant-bin/component/get-finder-native-drama-list";
 // 微信枚举中 Init(1) 按业务规则视为审核通过；AuditPass(3) 和 Online(6)
 // 同样已经越过审核门槛。只有明确的失败态才回写 REJECTED。
 const approvedDramaStatuses = new Set([1, 3, 6]);
 const rejectedDramaStatuses = new Set([4, 10, 12]);
 const busyRetryDelayMs = 5000;
-const loginRetryDelayMs = 60_000;
+const loginRetryDelayMs = 1.5 * 60 * 60_000;
 
 interface NativeDramaItem {
   dramaName?: string;

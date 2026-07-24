@@ -6,6 +6,7 @@ import { FeishuNotifier } from "@drama/feishu-notifier";
 import { classifyError, ErrorType } from "../shared/errors.js";
 
 const logger = createLogger("task");
+const loginCheckTimeoutMs = 60000;
 
 export interface ChannelReservation {
   readonly channelId: string;
@@ -81,6 +82,18 @@ export class TaskService {
 
     if (mode === "run" && !dramaAiRpaId) {
       throw new Error("id is required to start a run task.");
+    }
+    if (mode === "run") {
+      const loggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
+        channelId,
+        loginCheckTimeoutMs,
+      );
+      if (!loggedIn) {
+        throw Object.assign(
+          new Error(`微信视频号账号未登录，不能创建上剧任务：${this.browserContexts.getVideoAccountName(channelId)}`),
+          { errorType: ErrorType.Authentication },
+        );
+      }
     }
 
     const task: TaskRecord = {

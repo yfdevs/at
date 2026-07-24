@@ -150,14 +150,6 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   if (videoAccounts.some((account) => !account.id || !account.name)) {
     throw new Error("Video account id and name are required.");
   }
-  if (!videoAccounts.some((account) => (
-    account.contractSubject
-      ? normalizeContractSubject(account.contractSubject) === mingxingshuoContractSubject
-      : false
-  ))) {
-    throw new Error("MINGXINGSHUO_VIDEO_ACCOUNT_REQUIRED");
-  }
-
   return {
     videoAccounts,
     videoAccountContractSubjects: settings.videoAccountContractSubjects,

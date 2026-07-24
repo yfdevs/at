@@ -124,7 +124,7 @@ const sections: Array<{
         kind: "subjects",
         key: "videoAccountContractSubjects",
         label: "主体配置",
-        description: "明星说是其他主体上剧的审核前置，固定启用；后端账号接口也必须配置明星说视频号。",
+        description: "选择本次服务需要加载的视频号主体，可按实际业务范围调整。",
         options: contractSubjectOptions,
       },
     ],
@@ -476,7 +476,6 @@ function ConfigFieldControl({
     );
 
     const toggleSubject = (subject: string, checked: boolean) => {
-      if (subject === "MINGXINGSHUO" && !checked) return;
       const nextSubjects = new Set(selectedSubjects);
 
       if (checked) {
@@ -508,16 +507,10 @@ function ConfigFieldControl({
             >
               <Checkbox
                 checked={selectedSubjects.has(option.value)}
-                disabled={option.value === "MINGXINGSHUO"}
                 onCheckedChange={(checked) => toggleSubject(option.value, checked === true)}
-                aria-label={option.value === "MINGXINGSHUO" ? "明星说（必选）" : option.label}
+                aria-label={option.label}
               />
-              <span className="truncate">
-                {option.label}
-                {option.value === "MINGXINGSHUO" ? (
-                  <span className="ml-1 text-xs text-muted-foreground">必选</span>
-                ) : null}
-              </span>
+              <span className="truncate">{option.label}</span>
             </label>
           ))}
         </div>

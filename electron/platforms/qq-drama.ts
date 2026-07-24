@@ -15,7 +15,15 @@ import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 
 type QqDramaLoginState = "login-required" | "logged-in" | "unknown";
 
-type QqDramaRuntimeStatus = {
+type QqDramaAccount = {
+  id: number;
+  accountId: string;
+  accountName: string;
+  loginAccount?: string | null;
+  rpaProfileKey?: string | null;
+};
+
+type QqDramaAccountRuntimeStatus = {
   platform: "qq-drama";
   running: boolean;
   loginState: QqDramaLoginState;
@@ -35,6 +43,24 @@ type QqDramaRuntimeStatus = {
     errorMessage?: string;
     updatedAt: string;
   };
+};
+
+type QqDramaAccountRuntime = {
+  getStatus: () => QqDramaAccountRuntimeStatus;
+  stop: () => Promise<void>;
+};
+
+type QqDramaRuntimeStatus = {
+  platform: "qq-drama";
+  running: boolean;
+  addUrl: string;
+  loginUrl: string;
+  accounts: Array<QqDramaAccountRuntimeStatus & {
+    accountId: string;
+    accountName: string;
+    loginAccount?: string | null;
+    launched: boolean;
+  }>;
 };
 
 type QqDramaRuntime = {
@@ -95,7 +121,11 @@ const runtimeController = new RuntimeController<QqDramaRuntime>();
 let store: Store<QqDramaStore> | null = null;
 
 export function getQqDramaBrowserInstanceCount() {
-  return runtimeController.current?.getStatus().running ? 1 : 0;
+  return (
+    runtimeController.current
+      ?.getStatus()
+      .accounts.filter((account) => account.launched).length ?? 0
+  );
 }
 
 export function getQqDramaRunningPlatformCount() {
@@ -110,15 +140,16 @@ export function getQqDramaPlatformRuntimeSummary() {
   return {
     platform: "qq-drama" as const,
     running,
-    browserInstanceCount: running ? 1 : 0,
-    browserInstances: running
-      ? [{
-          id: runtimeStatus?.accountProfileName ?? "default",
-          label: runtimeStatus?.accountProfileName ?? "QQ短剧",
-          loginState: runtimeStatus?.loginState ?? "unknown",
-          activeUrl: runtimeStatus?.activeUrl,
-        }]
-      : [],
+    browserInstanceCount:
+      runtimeStatus?.accounts.filter((account) => account.launched).length ?? 0,
+    browserInstances: runtimeStatus?.accounts
+      .filter((account) => account.launched)
+      .map((account) => ({
+        id: account.accountId,
+        label: account.accountName,
+        loginState: account.loginState,
+        activeUrl: account.activeUrl,
+      })) ?? [],
     logDir: paths.logDir,
   };
 }
@@ -205,24 +236,48 @@ function qqDramaRunDataDir(config = readConfig()) {
   return resolveFromAppRoot(config.runDataDir);
 }
 
-function encodedAccountProfileName(config = readConfig()) {
-  return encodeURIComponent(config.accountProfileName.trim() || "default");
+function encodedAccountProfileName(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+) {
+  return encodeURIComponent(accountProfileName.trim() || "default");
 }
 
-function qqDramaAccountDir(config = readConfig()) {
-  return path.join(qqDramaRunDataDir(config), "auth", "accounts", encodedAccountProfileName(config));
+function qqDramaAccountDir(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+) {
+  return path.join(
+    qqDramaRunDataDir(config),
+    "auth",
+    "accounts",
+    encodedAccountProfileName(config, accountProfileName),
+  );
 }
 
-function qqDramaUserDataDir(config = readConfig()) {
-  return path.join(qqDramaAccountDir(config), "chromium-profile");
+function qqDramaUserDataDir(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+) {
+  return path.join(qqDramaAccountDir(config, accountProfileName), "chromium-profile");
 }
 
-function qqDramaCredentialStatePath(config = readConfig()) {
-  return path.join(qqDramaAccountDir(config), "storage-state.json");
+function qqDramaCredentialStatePath(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+) {
+  return path.join(qqDramaAccountDir(config, accountProfileName), "storage-state.json");
 }
 
-function qqDramaAssetDownloadDir(config = readConfig()) {
-  return path.join(qqDramaRunDataDir(config), "assets");
+function qqDramaAssetDownloadDir(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+) {
+  return path.join(
+    qqDramaRunDataDir(config),
+    "assets",
+    encodedAccountProfileName(config, accountProfileName),
+  );
 }
 
 function qqDramaLogDir(config = readConfig()) {
@@ -240,13 +295,16 @@ function qqDramaLogFile(config = readConfig()) {
   return path.join(qqDramaLogDir(config), `app-${formatDateKey()}.jsonl`);
 }
 
-function storagePaths(config = readConfig()): QqDramaStoragePaths {
+function storagePaths(
+  config = readConfig(),
+  accountProfileName = config.accountProfileName,
+): QqDramaStoragePaths {
   return {
     runDataDir: qqDramaRunDataDir(config),
-    accountDir: qqDramaAccountDir(config),
-    userDataDir: qqDramaUserDataDir(config),
-    credentialStatePath: qqDramaCredentialStatePath(config),
-    assetDownloadDir: qqDramaAssetDownloadDir(config),
+    accountDir: qqDramaAccountDir(config, accountProfileName),
+    userDataDir: qqDramaUserDataDir(config, accountProfileName),
+    credentialStatePath: qqDramaCredentialStatePath(config, accountProfileName),
+    assetDownloadDir: qqDramaAssetDownloadDir(config, accountProfileName),
     logDir: qqDramaLogDir(config),
     logFilePath: qqDramaLogFile(config),
   };
@@ -276,25 +334,23 @@ function openPathOrParent(targetPath: string) {
 
 async function importQqDramaRuntimePackage() {
   return import("@drama/qq-drama-automation") as Promise<{
-    startQqDramaRuntime: (options: Record<string, unknown>) => Promise<QqDramaRuntime>;
+    fetchQqDramaAccounts: (
+      apiBaseUrl: string,
+      fetcher?: typeof fetch,
+    ) => Promise<QqDramaAccount[]>;
+    startQqDramaRuntime: (
+      options: Record<string, unknown>,
+    ) => Promise<QqDramaAccountRuntime>;
   }>;
 }
 
 async function defaultStoppedStatus(): Promise<QqDramaServiceStatus> {
-  const config = readConfig();
-  const paths = storagePaths(config);
   return {
     platform: "qq-drama",
     running: false,
-    loginState: "unknown",
     addUrl: "https://aishortdrama.qq.com/cpplatform#/drama/add",
     loginUrl: "https://aishortdrama.qq.com/cpplatform#/login",
-    userDataDir: paths.userDataDir,
-    accountProfileName: config.accountProfileName,
-    accountDir: paths.accountDir,
-    credentialStatePath: paths.credentialStatePath,
-    assetDownloadDir: paths.assetDownloadDir,
-    logFilePath: paths.logFilePath,
+    accounts: [],
     pid: null,
   };
 }
@@ -319,8 +375,6 @@ async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
 
   const config = readConfig();
-  const paths = storagePaths(config);
-  ensureStorageDirectories(paths);
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
   const logRetentionDays = Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3);
   const baiduNetdiskDownloadRetryAttempts = Math.max(
@@ -328,31 +382,92 @@ async function startRuntime() {
     Number.parseInt(config.baiduNetdiskDownloadRetryAttempts, 10) || 0,
   );
   const taskPollIntervalMs = Math.max(1, Number.parseFloat(config.taskPollIntervalSeconds) || 10) * 1000;
-  const { startQqDramaRuntime } = await importQqDramaRuntimePackage();
+  const {
+    fetchQqDramaAccounts,
+    startQqDramaRuntime,
+  } = await importQqDramaRuntimePackage();
+  const accounts = await fetchQqDramaAccounts(config.apiBaseUrl);
+  if (!accounts.length) {
+    throw new Error("QQ_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
+  }
+  console.log(
+    `[qq-drama] fetched ${accounts.length} enabled account(s): ${
+      accounts.map((account) => `${account.accountName}(${account.accountId})`).join(", ")
+    }`,
+  );
 
-  return startQqDramaRuntime({
-    accountProfileName: config.accountProfileName,
-    accountDir: paths.accountDir,
-    userDataDir: paths.userDataDir,
-    credentialStatePath: paths.credentialStatePath,
-    assetDownloadDir: paths.assetDownloadDir,
-    logFilePath: paths.logFilePath,
-    logRetentionDays,
-    localEpisodeVideoRoot: config.localEpisodeVideoRoot,
-    baiduNetdiskDownloadRetryAttempts,
-    taskPollIntervalMs,
-    taskPollingEnabled: false,
-    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
-    apiConfig: {
-      baseUrl: config.apiBaseUrl,
+  const accountRuntimes: Array<{
+    account: QqDramaAccount;
+    runtime: QqDramaAccountRuntime;
+  }> = [];
+  let running = true;
+
+  try {
+    for (const account of accounts) {
+      const paths = storagePaths(config, account.accountId);
+      ensureStorageDirectories(paths);
+      const runtime = await startQqDramaRuntime({
+        accountProfileName: account.accountId,
+        qqAccountId: account.accountId,
+        qqAccountName: account.accountName,
+        accountDir: paths.accountDir,
+        userDataDir: paths.userDataDir,
+        credentialStatePath: paths.credentialStatePath,
+        assetDownloadDir: paths.assetDownloadDir,
+        logFilePath: paths.logFilePath,
+        logRetentionDays,
+        localEpisodeVideoRoot: config.localEpisodeVideoRoot,
+        baiduNetdiskDownloadRetryAttempts,
+        taskPollIntervalMs,
+        taskPollingEnabled: false,
+        ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
+        apiConfig: {
+          baseUrl: config.apiBaseUrl,
+        },
+        config: {
+          browser: {
+            headless: config.headless === "true",
+            slowMo: operationDelayMs,
+          },
+        },
+      });
+      accountRuntimes.push({ account, runtime });
+    }
+  } catch (error) {
+    running = false;
+    await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
+    throw error;
+  }
+
+  return {
+    getStatus(): QqDramaRuntimeStatus {
+      const runtimeAccounts = accountRuntimes.map(({ account, runtime }) => {
+        const accountStatus = runtime.getStatus();
+        return {
+          ...accountStatus,
+          accountId: account.accountId,
+          accountName: account.accountName,
+          loginAccount: account.loginAccount,
+          launched: accountStatus.running,
+        };
+      });
+      if (runtimeAccounts.every((account) => !account.launched)) {
+        running = false;
+      }
+      return {
+        platform: "qq-drama",
+        running,
+        addUrl: "https://aishortdrama.qq.com/cpplatform#/drama/add",
+        loginUrl: "https://aishortdrama.qq.com/cpplatform#/login",
+        accounts: runtimeAccounts,
+      };
     },
-    config: {
-      browser: {
-        headless: config.headless === "true",
-        slowMo: operationDelayMs,
-      },
+    async stop() {
+      running = false;
+      await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
+      console.log("[qq-drama] all account browsers stopped");
     },
-  });
+  };
 }
 
 export function registerQqDramaPlatformHandlers() {

@@ -1,13 +1,20 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, readdir, readFile, rm, writeFile } from "node:fs/promises";
+import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
 const rootDir = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const stagingDir = path.join(rootDir, ".cache", "electron-builder-hoisted-app");
-const packedPackagesDir = path.join(rootDir, ".cache", "electron-builder-workspace-packs");
 const outputDir = path.join(rootDir, "release", "${version}");
 const packageJsonPath = path.join(rootDir, "package.json");
+// Keep this aligned with Electron externals and dependencies loaded through dynamic require.
+const runtimeDependencyNames = [
+  "better-sqlite3",
+  "electron-store",
+  "electron-updater",
+  "playwright",
+  "sharp",
+];
 
 function run(command, args, options = {}) {
   return new Promise((resolve, reject) => {
@@ -31,44 +38,6 @@ function run(command, args, options = {}) {
   });
 }
 
-function runCapture(command, args, options = {}) {
-  return new Promise((resolve, reject) => {
-    const child = spawn(command, args, {
-      cwd: options.cwd ?? rootDir,
-      env: { ...process.env, ...options.env },
-      shell: true,
-      stdio: ["ignore", "pipe", "pipe"],
-      windowsHide: true,
-    });
-
-    let stdout = "";
-    let stderr = "";
-    child.stdout.on("data", (chunk) => {
-      const text = String(chunk);
-      stdout += text;
-      process.stdout.write(text);
-    });
-    child.stderr.on("data", (chunk) => {
-      const text = String(chunk);
-      stderr += text;
-      process.stderr.write(text);
-    });
-    child.on("error", reject);
-    child.on("exit", (code, signal) => {
-      if (code === 0) {
-        resolve(stdout);
-        return;
-      }
-
-      reject(new Error(signal ? `${command} ${args.join(" ")} was terminated by ${signal}` : `${command} ${args.join(" ")} exited with code ${code}\n${stderr}`));
-    });
-  });
-}
-
-function fileDependency(fromDir, targetPath) {
-  return `file:${path.relative(fromDir, targetPath).replaceAll("\\", "/")}`;
-}
-
 function toJsonString(value) {
   return JSON.stringify(value);
 }
@@ -77,22 +46,15 @@ async function readJson(filePath) {
   return JSON.parse(await readFile(filePath, "utf8"));
 }
 
-async function writeHoistedPnpmConfig(packedByName) {
+async function writeHoistedPnpmConfig() {
   await writeFile(path.join(stagingDir, ".npmrc"), [
     "node-linker=hoisted",
     "auto-install-peers=true",
     "",
   ].join("\n"));
 
-  const overrides = Array.from(packedByName, ([name, tgzPath]) => {
-    return `  ${JSON.stringify(name)}: ${JSON.stringify(fileDependency(stagingDir, tgzPath))}`;
-  });
-
   await writeFile(path.join(stagingDir, "pnpm-workspace.yaml"), [
     "packages: []",
-    "",
-    "overrides:",
-    ...overrides,
     "",
     "allowBuilds:",
     "  better-sqlite3: true",
@@ -102,67 +64,17 @@ async function writeHoistedPnpmConfig(packedByName) {
   ].join("\n"));
 }
 
-async function workspacePackages() {
-  const packagesDir = path.join(rootDir, "packages");
-  const entries = await readdir(packagesDir, { withFileTypes: true });
-  const packages = [];
-
-  for (const entry of entries) {
-    if (!entry.isDirectory()) continue;
-
-    const packageDir = path.join(packagesDir, entry.name);
-    const workspacePackageJsonPath = path.join(packageDir, "package.json");
-    let packageJson;
-    try {
-      packageJson = await readJson(workspacePackageJsonPath);
-    } catch (error) {
-      if (error && typeof error === "object" && error.code === "ENOENT") {
-        continue;
-      }
-      throw error;
-    }
-    if (!packageJson.name) {
-      throw new Error(`Workspace package name is required: ${workspacePackageJsonPath}`);
-    }
-    packages.push({ name: packageJson.name, packageDir });
-  }
-
-  return packages;
-}
-
-async function packWorkspacePackages() {
-  await rm(packedPackagesDir, { recursive: true, force: true });
-  await mkdir(packedPackagesDir, { recursive: true });
-
-  const packages = await workspacePackages();
-  const packedByName = new Map();
-
-  for (const workspacePackage of packages) {
-    const stdout = await runCapture("pnpm", ["--filter", workspacePackage.name, "pack", "--pack-destination", packedPackagesDir]);
-    const packedPath = stdout
-      .split(/\r?\n/)
-      .map((line) => line.trim())
-      .findLast((line) => line.endsWith(".tgz"));
-    if (!packedPath) throw new Error(`Failed to pack ${workspacePackage.name}`);
-    packedByName.set(workspacePackage.name, path.resolve(rootDir, packedPath));
-  }
-
-  return packedByName;
-}
-
-async function writePackageJson(packedByName) {
+async function writePackageJson() {
   const packageJson = await readJson(packageJsonPath);
   packageJson.scripts = {};
   packageJson.devDependencies = {
     electron: packageJson.devDependencies?.electron,
   };
-
-  packageJson.dependencies = { ...packageJson.dependencies };
-
-  for (const [name, tgzPath] of packedByName) {
-    const dependency = fileDependency(stagingDir, tgzPath);
-    packageJson.dependencies[name] = dependency;
-  }
+  packageJson.dependencies = Object.fromEntries(runtimeDependencyNames.map((name) => {
+    const version = packageJson.dependencies?.[name];
+    if (!version) throw new Error(`Runtime dependency is missing from package.json: ${name}`);
+    return [name, version];
+  }));
 
   await writeFile(path.join(stagingDir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
 }
@@ -176,10 +88,20 @@ async function electronTarget() {
 
 async function writeBuilderConfig() {
   const source = await readFile(path.join(rootDir, "electron-builder.json5"), "utf8");
-  const config = source.replace(
-    /output:\s*"release\/\$\{version\}"/,
-    `output: ${toJsonString(outputDir)}`,
-  );
+  const target = await electronTarget();
+  const config = source
+    .replace(
+      "{",
+      `{\n  electronVersion: ${toJsonString(target)},`,
+    )
+    .replace(
+      /output:\s*"release\/\$\{version\}"/,
+      `output: ${toJsonString(outputDir)}`,
+    )
+    .replace(
+      /from:\s*"\.cache\/playwright-browsers"/,
+      `from: ${toJsonString(path.join(rootDir, ".cache", "playwright-browsers"))}`,
+    );
   await writeFile(path.join(stagingDir, "electron-builder.json5"), config);
 }
 
@@ -187,22 +109,20 @@ async function copyBuildInputs() {
   await rm(stagingDir, { recursive: true, force: true });
   await mkdir(stagingDir, { recursive: true });
 
-  await cp(path.join(rootDir, "dist"), path.join(stagingDir, "dist"), { recursive: true });
-  await cp(path.join(rootDir, "dist-electron"), path.join(stagingDir, "dist-electron"), { recursive: true });
-  await cp(path.join(rootDir, "build"), path.join(stagingDir, "build"), { recursive: true });
-  await cp(
-    path.join(rootDir, ".cache", "playwright-browsers"),
-    path.join(stagingDir, ".cache", "playwright-browsers"),
-    { recursive: true },
-  );
+  await Promise.all([
+    cp(path.join(rootDir, "dist"), path.join(stagingDir, "dist"), { recursive: true }),
+    cp(path.join(rootDir, "dist-electron"), path.join(stagingDir, "dist-electron"), { recursive: true }),
+    cp(path.join(rootDir, "build"), path.join(stagingDir, "build"), { recursive: true }),
+  ]);
 }
 
 async function main() {
   await copyBuildInputs();
-  const packedByName = await packWorkspacePackages();
-  await writePackageJson(packedByName);
-  await writeBuilderConfig();
-  await writeHoistedPnpmConfig(packedByName);
+  await Promise.all([
+    writePackageJson(),
+    writeBuilderConfig(),
+    writeHoistedPnpmConfig(),
+  ]);
 
   const target = await electronTarget();
   await run("pnpm", [

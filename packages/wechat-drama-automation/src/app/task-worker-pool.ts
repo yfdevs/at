@@ -28,6 +28,7 @@ import { prepareWechatPosterMaterials } from "../shared/poster-materials.js";
 
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
+const loginRequiredDelayMs = 30 * 60_000;
 const baiduNetdiskDownloadRetryDelayMs = 5000;
 const nonRetryableBaiduNetdiskErrorPatterns = [
   "百度网盘账号登录已过期",
@@ -138,35 +139,12 @@ export class TaskWorkerPool {
     }, async () => {
     const videoAccountId = worker.videoAccount.id;
     let consecutiveEmptyClaims = 0;
+    let nextLoginCheckAt = 0;
     logger.info("worker started", { videoAccountId });
-
-    while (!this.stopped && !worker.stopped) {
-      const loginReservation = this.taskService.tryReserveChannel(videoAccountId, "worker-login");
-      if (!loginReservation) {
-        await sleep(1000);
-        continue;
-      }
-      try {
-        logger.info("ensure login before claim", { videoAccountId });
-        await this.browserContexts.ensureLoggedIn(videoAccountId);
-        break;
-      } catch (error) {
-        const errorInfo = classifyError(error, ErrorType.Authentication);
-        logger.error("login error, retry", {
-          videoAccountId,
-          errorType: errorInfo.type,
-          errorMessage: errorInfo.message,
-        });
-        await sleep(claimErrorDelayMs);
-      } finally {
-        loginReservation.release();
-      }
-    }
 
     while (!this.stopped && !worker.stopped) {
       const videoAccount = worker.videoAccount;
       try {
-        await this.browserContexts.waitForLoginPageIfOpen(videoAccountId);
         const reservation = this.taskService.tryReserveChannel(videoAccountId, "worker-claim");
         if (!reservation) {
           logger.info("skip claim, channel busy", {
@@ -175,6 +153,24 @@ export class TaskWorkerPool {
           });
           await sleep(1000);
           continue;
+        }
+
+        if (Date.now() >= nextLoginCheckAt) {
+          const loggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
+            videoAccountId,
+            this.serviceConfig.idlePageRefresh.timeoutMs,
+          );
+          if (!loggedIn) {
+            logger.info("skip claim, login required", {
+              videoAccountId,
+              videoAccountName: videoAccount.name,
+              retryDelayMs: loginRequiredDelayMs,
+            });
+            reservation.release();
+            await sleep(loginRequiredDelayMs);
+            continue;
+          }
+          nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
         }
 
         logger.info("claiming task", {
@@ -204,6 +200,24 @@ export class TaskWorkerPool {
           try {
             const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
             await this.assertMingxingshuoAuditApproved(videoAccount, playletConfig.playlet.name);
+            logger.info("audit gate passed; verify login before task execution", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              videoAccountId,
+            });
+            const stillLoggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
+              videoAccountId,
+              this.serviceConfig.idlePageRefresh.timeoutMs,
+            );
+            if (!stillLoggedIn) {
+              nextLoginCheckAt = 0;
+              throw Object.assign(
+                new Error(`微信视频号账号未登录，停止执行任务：${videoAccount.name}`),
+                {
+                  errorType: ErrorType.Authentication,
+                  failStage: "LOGIN" as const,
+                },
+              );
+            }
             await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
             await prepareWechatPosterMaterials(playletConfig);
@@ -241,15 +255,6 @@ export class TaskWorkerPool {
           } catch (error) {
             const errorInfo = classifyError(error, ErrorType.TaskExecution);
             const taskErrorMessage = errorInfo.message;
-            await this.notifier.notifyTaskFailed({
-              accountTaskId: claimedAccountTask.accountTaskId,
-              dramaId: claimedAccountTask.dramaId,
-              originalTitle: claimedAccountTask.originalTitle,
-              videoAccountId,
-              videoAccountName: videoAccount.name,
-              errorMessage: taskErrorMessage,
-              errorType: errorInfo.type,
-            });
             await reportClaimedTaskErrorApi({
               accountTaskId: claimedAccountTask.accountTaskId,
               dramaId: claimedAccountTask.dramaId,
@@ -259,6 +264,24 @@ export class TaskWorkerPool {
               },
               videoAccountId,
               errorMessage: taskErrorMessage,
+            });
+            await this.notifier.notifyTaskFailed({
+              accountTaskId: claimedAccountTask.accountTaskId,
+              dramaId: claimedAccountTask.dramaId,
+              originalTitle: claimedAccountTask.originalTitle,
+              videoAccountId,
+              videoAccountName: videoAccount.name,
+              errorMessage: taskErrorMessage,
+              errorType: errorInfo.type,
+            }).catch((notificationError) => {
+              logger.error("task failure notification failed after backend callback", {
+                accountTaskId: claimedAccountTask.accountTaskId,
+                videoAccountId,
+                errorMessage:
+                  notificationError instanceof Error
+                    ? notificationError.message
+                    : String(notificationError),
+              });
             });
             logger.error("task failed, continue claim loop", {
               accountTaskId: claimedAccountTask.accountTaskId,
@@ -389,9 +412,11 @@ export class TaskWorkerPool {
     });
     const mingxingshuoTask = await fetchMingxingshuoAuditTaskBySelectedTitleApi(normalizedTitle);
     if (!mingxingshuoTask) {
-      throw mingxingshuoAuditGateError(
-        `明星说主体未找到同名剧《${normalizedTitle}》，其他主体暂不可上剧。`,
-      );
+      logger.info("mingxingshuo audit gate passed because no matching task was found", {
+        selectedTitle: normalizedTitle,
+        contractSubject: videoAccount.contractSubject,
+      });
+      return;
     }
     if (mingxingshuoTask.rpaStatus !== "SUCCESS") {
       throw mingxingshuoAuditGateError(

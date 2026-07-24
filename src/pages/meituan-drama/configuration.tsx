@@ -12,6 +12,7 @@ import {
 } from "@/platforms/meituan-drama/service"
 
 const emptyConfig: MeituanCreationConfig = {
+  apiBaseUrl: "http://180.184.76.232:19090",
   headless: "false",
   operationDelaySeconds: "0.02",
   localEpisodeVideoRoot: "",
@@ -19,6 +20,18 @@ const emptyConfig: MeituanCreationConfig = {
 }
 
 const sections: ConfigSectionDefinition<MeituanCreationConfig>[] = [
+  {
+    title: "账号连接",
+    description: "服务启动时从后台读取已启用账号，并为每个账号创建独立浏览器。",
+    fields: [
+      {
+        key: "apiBaseUrl",
+        label: "后台接口地址",
+        type: "url",
+        description: "用于获取美团账号配置，默认连接 180.184.76.232:19090。",
+      },
+    ],
+  },
   {
     title: "文件与浏览器",
     description: "视频目录、登录态和临时文件由美团平台配置独立管理。",
@@ -32,7 +45,7 @@ const sections: ConfigSectionDefinition<MeituanCreationConfig>[] = [
       {
         key: "runDataDir",
         label: "运行数据目录",
-        description: "默认保存到 .drama-runs/meituan-drama，浏览器登录态位于该目录的 auth 子目录。",
+        description: "每个账号的独立浏览器登录态保存在 auth/accounts/<accountId> 子目录。",
         directory: true,
       },
       {

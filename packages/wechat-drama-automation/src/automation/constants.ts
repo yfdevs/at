@@ -8,6 +8,8 @@ import type {
 
 export const playletUrl = "https://channels.weixin.qq.com/platform/playlet";
 export const postUrl = "https://channels.weixin.qq.com/platform/native-drama-post";
+export const nativeDramaListUrl = "https://channels.weixin.qq.com/micro/content/cgi-bin/mmfinderassistant-bin/component/get-finder-native-drama-list";
+export const loginQrCodeSelector = ".js_qrcode_img.web_qrcode_img";
 export const rootSelector = "wujie-app";
 export const auditFormSelector = `${rootSelector} form.audit-form`;
 

@@ -1,12 +1,12 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.31",
+  "version": "0.0.34",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vp dev",
-    "build:app": "vp run app:build",
+    "build:app": "node scripts/clean-build-output.mjs && vp run app:build",
     "build": "pnpm build:app && node scripts/package-electron-hoisted.mjs",
     "lint": "vp lint",
     "preview": "vp preview",

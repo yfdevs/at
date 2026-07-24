@@ -26,7 +26,7 @@ const emptyConfig: QqDramaConfig = {
 const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
   {
     title: "任务接口",
-    description: "登录完成后，服务会按间隔从接口领取 QQ 短剧上剧任务。",
+    description: "服务启动时读取 ON 账号，并为每个账号创建独立浏览器。",
     fields: [
       {
         key: "apiBaseUrl",
@@ -65,7 +65,7 @@ const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
       {
         key: "runDataDir",
         label: "运行数据目录",
-        description: "保存账号登录态、日志、素材缓存和调试快照。",
+        description: "每个账号的浏览器登录态保存在 auth/accounts/<accountId> 子目录。",
         directory: true,
       },
       {

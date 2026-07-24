@@ -34,23 +34,28 @@ export type QqDramaConfigResult = {
 export type QqDramaServiceStatus = {
   platform: "qq-drama"
   running: boolean
-  loginState: QqDramaLoginState
-  activeUrl?: string
   addUrl: string
   loginUrl: string
-  userDataDir: string
-  accountProfileName?: string
-  accountDir?: string
-  credentialStatePath?: string
-  assetDownloadDir?: string
-  logFilePath?: string
-  lastTask?: {
-    accountTaskId: number
-    originalTitle?: string
-    status: "running" | "succeeded" | "failed"
-    errorMessage?: string
-    updatedAt: string
-  }
+  accounts: Array<{
+    accountId: string
+    accountName: string
+    loginAccount?: string | null
+    launched: boolean
+    loginState: QqDramaLoginState
+    activeUrl?: string
+    userDataDir: string
+    accountDir?: string
+    credentialStatePath?: string
+    assetDownloadDir?: string
+    logFilePath?: string
+    lastTask?: {
+      accountTaskId: number
+      originalTitle?: string
+      status: "running" | "succeeded" | "failed"
+      errorMessage?: string
+      updatedAt: string
+    }
+  }>
   pid: number | null
 }
 
@@ -59,8 +64,34 @@ async function invokeQqDrama<T>(channel: string, ...args: unknown[]): Promise<T>
     throw new Error("QQ 短剧服务控制仅在 Electron 应用内可用。")
   }
 
-  const result = await window.ipcRenderer.invoke(channel, ...args)
-  return result as T
+  try {
+    const result = await window.ipcRenderer.invoke(channel, ...args)
+    return result as T
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error)
+    const readableError = new Error(readableQqDramaError(message)) as Error & {
+      cause?: unknown
+    }
+    readableError.cause = error
+    throw readableError
+  }
+}
+
+function readableQqDramaError(message: string) {
+  if (message.includes("QQ_DRAMA_ENABLED_ACCOUNT_NOT_FOUND")) {
+    return "没有获取到已启用的 QQ 账号，请先在后台开启账号。"
+  }
+  if (message.includes("QQ_DRAMA_API_BASE_URL_REQUIRED")) {
+    return "请先配置 QQ 后台接口地址。"
+  }
+  if (message.includes("QQ_DRAMA_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED")) {
+    return "QQ 账号列表响应缺少 data，请检查登录状态和接口地址。"
+  }
+  const requestFailed = message.match(/QQ_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED: (.*)/)
+  if (requestFailed) {
+    return `QQ 账号列表获取失败：${requestFailed[1]}`
+  }
+  return message
 }
 
 export const qqDramaService = {

@@ -229,7 +229,6 @@ function normalizeConfig(
       .map((subject) => subject.trim())
       .filter(Boolean),
   )
-  selectedContractSubjects.add('MINGXINGSHUO')
 
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatVideoConfig.apiBaseUrl,

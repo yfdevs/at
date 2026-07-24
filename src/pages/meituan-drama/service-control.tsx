@@ -12,13 +12,15 @@ const initialStatus: MeituanCreationServiceStatus = {
   loginUrl: "https://czz.meituan.com/new/login",
   publishVideoUrl: "https://czz.meituan.com/new/publishVideo",
   running: false,
-  loginState: "unknown",
-  userDataDir: "",
+  accounts: [],
   pid: null,
 }
 
 function successMessage(status: MeituanCreationServiceStatus) {
-  return status.running ? "美团创作平台已启动" : "美团创作平台已停止"
+  const browserCount = status.accounts.filter((account) => account.launched).length
+  return status.running
+    ? `美团创作平台已启动 ${browserCount} 个账号浏览器`
+    : "美团创作平台已停止"
 }
 
 export function MeituanCreationServiceControlPage() {

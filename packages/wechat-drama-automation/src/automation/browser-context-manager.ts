@@ -5,7 +5,7 @@ import { resolveFromRoot, type ServiceConfig } from "../shared/config.js";
 import type { UpdateCredentialsRequest } from "../shared/types.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
 import type { VideoAccount } from "../api/video-accounts.js";
-import { playletUrl } from "./constants.js";
+import { loginQrCodeSelector, nativeDramaListUrl, playletUrl } from "./constants.js";
 import { waitForLoginIfNeeded } from "./browser-session.js";
 import { runWithLogContext } from "../shared/logger.js";
 
@@ -259,25 +259,22 @@ export class BrowserContextManager {
 
   async refreshLoginStateInTemporaryPage(channelId: string, timeoutMs: number): Promise<boolean> {
     const context = await this.getOrLaunch(channelId);
-    const page = await context.newPage();
+    const existingPages = context.pages().filter((candidate) => !candidate.isClosed());
+    const reusableBlankPage = existingPages.find((candidate) => candidate.url() === "about:blank");
+    const page = reusableBlankPage ?? await context.newPage();
+    const shouldClosePage = !reusableBlankPage && existingPages.length > 0;
     const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
-    const loginCheckTimeoutMs = Math.min(10000, Math.max(1000, timeoutMs));
 
     try {
-      console.log(`[idle-refresh] open temporary page ${accountLabel}`);
+      console.log(
+        shouldClosePage
+          ? `[idle-refresh] open temporary page ${accountLabel}`
+          : `[idle-refresh] reuse browser page ${accountLabel}`,
+      );
       await page.goto(playletUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
 
-      const loginState = await Promise.race([
-        page.waitForURL((url) => url.href.includes("/login") || url.href.includes("login"), {
-          timeout: loginCheckTimeoutMs,
-        }).then(() => "login" as const),
-        page.locator("wujie-app").first().waitFor({
-          state: "attached",
-          timeout: loginCheckTimeoutMs,
-        }).then(() => "logged-in" as const),
-      ]).catch(() => (page.url().includes("login") ? "login" as const : "unknown" as const));
-
-      if (loginState === "login") {
+      const loggedIn = await this.hasAuthenticatedPlatformSession(page, timeoutMs);
+      if (!loggedIn) {
         await this.setPageTitle(page, this.getPageTitle(channelId));
         this.notifyLoginRequired(channelId);
         console.warn(`[idle-refresh] login required ${accountLabel}`);
@@ -286,11 +283,53 @@ export class BrowserContextManager {
 
       this.loginRequiredNotifiedChannelIds.delete(channelId);
       await this.save(channelId);
-      console.log(`[idle-refresh] persisted ${accountLabel} state=${loginState}`);
+      console.log(`[idle-refresh] persisted ${accountLabel} state=logged-in`);
       return true;
     } finally {
-      await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      if (shouldClosePage) {
+        await page.close({ runBeforeUnload: false }).catch(() => undefined);
+      }
     }
+  }
+
+  private async hasAuthenticatedPlatformSession(page: Page, timeoutMs: number): Promise<boolean> {
+    if (page.url().includes("login")) return false;
+    if (await page.locator(loginQrCodeSelector).first().isVisible().catch(() => false)) return false;
+
+    const probeTimeoutMs = Math.min(10000, Math.max(1000, timeoutMs));
+    return page.evaluate(async ({ url, requestTimeoutMs }) => {
+      const controller = new AbortController();
+      const timer = window.setTimeout(() => controller.abort(), requestTimeoutMs);
+      try {
+        const response = await fetch(url, {
+          method: "POST",
+          headers: { "content-type": "application/json" },
+          referrer: "https://channels.weixin.qq.com/micro/content/playlet/",
+          body: JSON.stringify({
+            pageSize: 1,
+            currentPage: 1,
+            queryString: "",
+            _log_finder_uin: "",
+            rawKeyBuff: "",
+            pluginSessionId: null,
+            scene: 7,
+            reqScene: 7,
+          }),
+          credentials: "include",
+          signal: controller.signal,
+        });
+        if (!response.ok) return false;
+        const payload = await response.json() as { errCode?: number };
+        return payload.errCode === 0;
+      } catch {
+        return false;
+      } finally {
+        window.clearTimeout(timer);
+      }
+    }, {
+      url: nativeDramaListUrl,
+      requestTimeoutMs: probeTimeoutMs,
+    }).catch(() => false);
   }
 
   async close(): Promise<void> {

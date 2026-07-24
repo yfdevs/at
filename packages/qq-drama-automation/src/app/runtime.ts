@@ -44,6 +44,66 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+async function setFixedPageTitle(page: Page, title: string) {
+  await page.evaluate((value) => {
+    const windowState = window as unknown as { __qqDramaAccountFixedTitle?: string };
+    windowState.__qqDramaAccountFixedTitle = value;
+    document.title = value;
+  }, title).catch(() => undefined);
+}
+
+async function installFixedPageTitle(context: BrowserContext, title: string) {
+  await context.addInitScript((fixedTitle) => {
+    const windowState = window as unknown as {
+      __qqDramaAccountFixedTitle?: string;
+      __qqDramaAccountFixedTitleInstalled?: boolean;
+    };
+    windowState.__qqDramaAccountFixedTitle = fixedTitle;
+    const applyTitle = () => {
+      const title = windowState.__qqDramaAccountFixedTitle ?? fixedTitle;
+      if (document.title !== title) document.title = title;
+    };
+    const watchTitle = () => {
+      applyTitle();
+      const titleElement =
+        document.querySelector("title") ??
+        document.head?.appendChild(document.createElement("title"));
+      if (!titleElement || titleElement.dataset.fixedQqDramaAccountTitle === "true") return;
+
+      titleElement.dataset.fixedQqDramaAccountTitle = "true";
+      new MutationObserver(applyTitle).observe(titleElement, {
+        characterData: true,
+        childList: true,
+        subtree: true,
+      });
+    };
+
+    if (windowState.__qqDramaAccountFixedTitleInstalled) {
+      applyTitle();
+      return;
+    }
+    windowState.__qqDramaAccountFixedTitleInstalled = true;
+    watchTitle();
+    window.addEventListener("DOMContentLoaded", watchTitle);
+    window.addEventListener("load", watchTitle);
+    window.setInterval(applyTitle, 1_000);
+  }, title);
+
+  const keepPageTitle = (page: Page) => {
+    const applyTitle = () => {
+      void setFixedPageTitle(page, title);
+    };
+    page.on("domcontentloaded", applyTitle);
+    page.on("load", applyTitle);
+    page.on("framenavigated", (frame) => {
+      if (frame === page.mainFrame()) applyTitle();
+    });
+    applyTitle();
+  };
+  context.on("page", keepPageTitle);
+  for (const page of context.pages()) keepPageTitle(page);
+}
+
 function classifyFailStage(error: unknown, fallback: QqDramaTaskFailStage): QqDramaTaskFailStage {
   const message = errorMessage(error);
   if (message.includes("LOGIN")) return "LOGIN";
@@ -259,18 +319,27 @@ export async function startQqDramaRuntime(
   // QQ 有反爬要求，这里启动的是本机正式版 Chrome，并复用 userDataDir 保存登录态。
   log(options, `[qq-drama] starting browser: userDataDir=${userDataDir}`);
   context = await launchQqDramaBrowserContext(userDataDir, options);
+  await installFixedPageTitle(
+    context,
+    options.qqAccountName?.trim() || options.qqAccountId?.trim() || "QQ短剧",
+  );
   context.on("close", () => {
     running = false;
     stopTaskLoopWait();
   });
 
   page = context.pages()[0] ?? (await context.newPage());
-  // 服务启动后先打开上剧页；如果登录态失效，openQqDramaAddPage 会跳到登录并等待人工登录。
-  await openQqDramaAddPage(page, context, options).catch((error) => {
-    errorLog(options, `[qq-drama] failed to open add page: ${errorMessage(error)}`);
-  });
-
-  taskLoopPromise = runTaskLoop(page, context);
+  // 账号浏览器全部创建完成后，各自后台等待登录；未启用任务轮询时只保持登录页/上剧页常驻。
+  taskLoopPromise = (async () => {
+    await openQqDramaAddPage(page!, context!, options).catch((error) => {
+      errorLog(options, `[qq-drama] failed to open add page: ${errorMessage(error)}`);
+    });
+    if (options.taskPollingEnabled === false || !running || page!.isClosed()) {
+      log(options, "[qq-drama] account browser ready; task polling is disabled");
+      return;
+    }
+    await runTaskLoop(page!, context!);
+  })();
 
   return {
     getStatus(): QqDramaRuntimeStatus {

@@ -2,15 +2,15 @@ import { mkdir } from "node:fs/promises";
 import { dirname } from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import type {
+  MeituanCreationLoginState,
   MeituanCreationRuntimeOptions,
-  MeituanCreationRuntimeStatus,
 } from "../shared/types.js";
 
 export function log(options: MeituanCreationRuntimeOptions, message: string) {
   options.onLog?.(message);
 }
 
-export function loginStateFromUrl(url: string): MeituanCreationRuntimeStatus["loginState"] {
+export function loginStateFromUrl(url: string): MeituanCreationLoginState {
   if (!url) return "unknown";
   return url.includes("/new/login") ? "login-required" : "logged-in";
 }

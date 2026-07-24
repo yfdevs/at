@@ -10,15 +10,17 @@ import {
 const initialStatus: QqDramaServiceStatus = {
   platform: "qq-drama",
   running: false,
-  loginState: "unknown",
   addUrl: "https://aishortdrama.qq.com/cpplatform#/drama/add",
   loginUrl: "https://aishortdrama.qq.com/cpplatform#/login",
-  userDataDir: "",
+  accounts: [],
   pid: null,
 }
 
 function successMessage(status: QqDramaServiceStatus) {
-  return status.running ? "QQ 短剧服务已启动" : "QQ 短剧服务已停止"
+  const browserCount = status.accounts.filter((account) => account.launched).length
+  return status.running
+    ? `QQ 短剧服务已启动 ${browserCount} 个账号浏览器`
+    : "QQ 短剧服务已停止"
 }
 
 export function QqDramaServiceControlPage() {

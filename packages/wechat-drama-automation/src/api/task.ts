@@ -83,7 +83,8 @@ export async function fetchPendingAuditAccountTasksApi(
     videoAccountId: videoAccount.id,
     videoAccountName: null,
     status: null,
-    rpaStatus: null,
+    rpaStatus: "SUCCESS",
+    auditStatus: "UNDER_REVIEW",
   };
   const payload = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
   if (payload.code !== 0) {
@@ -93,8 +94,6 @@ export async function fetchPendingAuditAccountTasksApi(
   const items = payload.data?.data ?? [];
   const pendingItems = items.filter((item) => (
     item.videoAccountId === videoAccount.id
-    && item.rpaStatus === "SUCCESS"
-    && (item.auditStatus === "NONE" || item.auditStatus === "UNDER_REVIEW")
     && Boolean(item.selectedTitle?.trim() || item.originalTitle?.trim())
   ));
   logger.info("pending audit account tasks fetched", {

@@ -220,18 +220,39 @@ export interface MeituanCreationConfig {
   video?: MeituanCreationVideoDraft;
 }
 
+export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown";
+
+export type MeituanCreationAccount = {
+  id: number;
+  accountId: string;
+  accountName: string;
+  loginAccount?: string | null;
+  rpaProfileKey?: string | null;
+};
+
+export type MeituanCreationAccountRuntimeStatus = {
+  accountId: string;
+  accountName: string;
+  loginAccount?: string | null;
+  launched: boolean;
+  loginState: MeituanCreationLoginState;
+  activeUrl?: string;
+  userDataDir: string;
+};
+
 export type MeituanCreationRuntimeStatus = {
   platform: "meituan-drama";
   loginUrl: string;
   publishVideoUrl: string;
   running: boolean;
-  loginState: "login-required" | "logged-in" | "unknown";
-  activeUrl?: string;
-  userDataDir: string;
+  accounts: MeituanCreationAccountRuntimeStatus[];
 };
 
 export type MeituanCreationRuntimeOptions = {
   config?: MeituanCreationConfig;
+  accounts?: MeituanCreationAccount[];
+  authRoot?: string;
+  assetDownloadRoot?: string;
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;

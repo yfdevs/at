@@ -111,8 +111,7 @@ export const runConfig = {
     "app:build": {
       command: "vp build",
       dependsOn: ["packages:build", "playwright:browsers", "app:typecheck"],
-      input: [{ auto: true }, "!dist/**", "!dist-electron/**"],
-      output: ["dist/**", "dist-electron/**"],
+      cache: false,
     },
   },
 } satisfies UserConfig["run"];

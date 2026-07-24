@@ -9,6 +9,7 @@ import {
   saveCredentialState,
   waitForLogin,
 } from "./browser-session.js";
+import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
 import { clickWhenReady } from "./form-controls.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
 import { selectPublishTargetStep } from "./steps/select-author.js";
@@ -42,6 +43,9 @@ export async function runPublishTask(
     log(options, "[meituan-drama] task config not provided, browser is ready");
     return;
   }
+
+  log(options, "[meituan-drama] validating local episode videos after login");
+  await validateLocalEpisodeVideos(taskConfig, options.config?.localEpisodeVideoRoot);
 
   await clickWhenReady(page, page.getByText("发布至合集"));
   await selectPublishTargetStep(page, taskConfig, options);

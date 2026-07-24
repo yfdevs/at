@@ -90,10 +90,6 @@ function readableWechatVideoError(message: string) {
     return "请先在微信视频号配置中选择剧集视频根目录。"
   }
 
-  if (message.includes("MINGXINGSHUO_VIDEO_ACCOUNT_REQUIRED")) {
-    return "微信视频号服务必须启用明星说主体，且后端需配置至少一个 ON 状态的明星说视频号账号。"
-  }
-
   if (message.includes("localEpisodeVideoRoot is required for local episode videos")) {
     return "请先在微信视频号配置中选择剧集视频根目录。"
   }

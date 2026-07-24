@@ -1,6 +1,7 @@
 export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown"
 
 export type MeituanCreationConfig = {
+  apiBaseUrl: string
   headless: string
   operationDelaySeconds: string
   localEpisodeVideoRoot: string
@@ -18,9 +19,15 @@ export type MeituanCreationServiceStatus = {
   loginUrl: string
   publishVideoUrl: string
   running: boolean
-  loginState: MeituanCreationLoginState
-  activeUrl?: string
-  userDataDir: string
+  accounts: Array<{
+    accountId: string
+    accountName: string
+    loginAccount?: string | null
+    launched: boolean
+    loginState: MeituanCreationLoginState
+    activeUrl?: string
+    userDataDir: string
+  }>
   pid: number | null
 }
 
@@ -34,11 +41,34 @@ async function invokeMeituanCreation<T>(channel: string, ...args: unknown[]): Pr
     return result as T
   } catch (error) {
     const message = error instanceof Error ? error.message : String(error)
-    throw new Error(readableMeituanCreationError(message))
+    const readableError = new Error(readableMeituanCreationError(message)) as Error & {
+      cause?: unknown
+    }
+    readableError.cause = error
+    throw readableError
   }
 }
 
 function readableMeituanCreationError(message: string) {
+  if (message.includes("MEITUAN_API_BASE_URL_REQUIRED")) {
+    return "请先配置美团账号接口地址。"
+  }
+
+  if (message.includes("MEITUAN_ENABLED_ACCOUNT_NOT_FOUND")) {
+    return "没有获取到已启用的美团账号，请先在后台开启账号。"
+  }
+
+  if (message.includes("MEITUAN_ACCOUNT_CONFIG_RESPONSE_DATA_REQUIRED")) {
+    return "美团账号列表响应缺少 data，请检查登录状态和接口地址。"
+  }
+
+  const accountRequestFailed = message.match(
+    /MEITUAN_ACCOUNT_CONFIG_REQUEST_FAILED: (.*)/
+  )
+  if (accountRequestFailed) {
+    return `美团账号列表获取失败：${accountRequestFailed[1]}`
+  }
+
   if (message.includes("MEITUAN_LOCAL_VIDEO_ROOT_REQUIRED")) {
     return "请先在美团创作平台配置中选择剧集视频目录。"
   }
@@ -91,14 +121,7 @@ export const meituanCreationService = {
       "meituan-drama:service:status"
     )
   },
-  async start() {
-    const { config } = await invokeMeituanCreation<MeituanCreationConfigResult>(
-      "meituan-drama:config:get"
-    )
-    if (!config.localEpisodeVideoRoot.trim()) {
-      throw new Error("请先在美团创作平台配置中选择剧集视频目录。")
-    }
-
+  start() {
     return invokeMeituanCreation<MeituanCreationServiceStatus>(
       "meituan-drama:service:start"
     )

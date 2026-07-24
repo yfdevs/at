@@ -11,16 +11,21 @@ import {
   RuntimeController,
   selectDirectory,
 } from "./shared";
-import type { MeituanCreationTaskConfig } from "@drama/meituan-drama-automation";
 
 type MeituanCreationRuntimeStatus = {
   platform: "meituan-drama";
   loginUrl: string;
   publishVideoUrl: string;
   running: boolean;
-  loginState: "login-required" | "logged-in" | "unknown";
-  activeUrl?: string;
-  userDataDir: string;
+  accounts: Array<{
+    accountId: string;
+    accountName: string;
+    loginAccount?: string | null;
+    launched: boolean;
+    loginState: "login-required" | "logged-in" | "unknown";
+    activeUrl?: string;
+    userDataDir: string;
+  }>;
 };
 
 type MeituanCreationRuntime = {
@@ -29,6 +34,7 @@ type MeituanCreationRuntime = {
 };
 
 export type MeituanCreationConfig = {
+  apiBaseUrl: string;
   headless: string;
   operationDelaySeconds: string;
   localEpisodeVideoRoot: string;
@@ -49,37 +55,8 @@ type MeituanCreationStore = {
   config: Partial<MeituanCreationConfig> & Record<string, string | undefined>;
 };
 
-function loadMeituanCreationTaskPayload(): MeituanCreationTaskConfig {
-  return {
-    authorNicknameText: "本人 明星说漫剧",
-    audience: "男频",
-    collectionType: "真人短剧（含AI）",
-    collectionSubType: "真人短剧",
-    collectionTitle: "公司破产当天，底层审核员成了华尔街之神",
-    collectionCoverUrl:
-      "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/posters/20260624/account-task-467-cdb0070978d442f7843b0af6ecd4ba7d.jpg",
-    copyrightProofUrl:
-      "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260625/account-task-399-77a496762b62472981521c1e7c6eb488.png",
-    premiereProofUrl:
-      "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260625/account-task-399-77a496762b62472981521c1e7c6eb488.png",
-    backgroundText: "现代",
-    plotSettingTexts: ["打脸虐渣", "重生"],
-    storyThemeText: "脑洞",
-    totalEpisodes: 12,
-    checkpointEpisodes: [6, 5],
-    productionCompanyText: "明星说漫剧",
-    directorNames: ["张三"],
-    producerNames: ["李四"],
-    screenwriterNames: ["王五"],
-    actorNames: ["赵六", "钱七"],
-    averageEpisodeDurationMinutes: 2,
-    plotSynopsisText: "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
-    premiereStatus: "美团联合首发",
-    expectedPremiereTimeText: "2026-06-25 12:30:00",
-  };
-}
-
 const defaultMeituanCreationConfig: MeituanCreationConfig = {
+  apiBaseUrl: "http://180.184.76.232:19090",
   headless: "false",
   operationDelaySeconds: "0.02",
   localEpisodeVideoRoot: "",
@@ -90,7 +67,11 @@ const runtimeController = new RuntimeController<MeituanCreationRuntime>();
 let store: Store<MeituanCreationStore> | null = null;
 
 export function getMeituanCreationBrowserInstanceCount() {
-  return runtimeController.current?.getStatus().running ? 1 : 0;
+  return (
+    runtimeController.current
+      ?.getStatus()
+      .accounts.filter((account) => account.launched).length ?? 0
+  );
 }
 
 export function getMeituanCreationRunningPlatformCount() {
@@ -104,15 +85,16 @@ export function getMeituanCreationPlatformRuntimeSummary() {
   return {
     platform: "meituan-drama" as const,
     running,
-    browserInstanceCount: running ? 1 : 0,
-    browserInstances: running
-      ? [{
-          id: "default",
-          label: "美团创作平台",
-          loginState: runtimeStatus?.loginState ?? "unknown",
-          activeUrl: runtimeStatus?.activeUrl,
-        }]
-      : [],
+    browserInstanceCount:
+      runtimeStatus?.accounts.filter((account) => account.launched).length ?? 0,
+    browserInstances: runtimeStatus?.accounts
+      .filter((account) => account.launched)
+      .map((account) => ({
+        id: account.accountId,
+        label: account.accountName,
+        loginState: account.loginState,
+        activeUrl: account.activeUrl,
+      })) ?? [],
     logDir: meituanCreationLogDir(),
   };
 }
@@ -146,6 +128,7 @@ function normalizeConfig(
     defaultMeituanCreationConfig.operationDelaySeconds;
 
   return {
+    apiBaseUrl: config.apiBaseUrl?.trim() || defaultMeituanCreationConfig.apiBaseUrl,
     headless: config.headless ?? defaultMeituanCreationConfig.headless,
     operationDelaySeconds,
     localEpisodeVideoRoot:
@@ -170,15 +153,12 @@ function configPath() {
 }
 
 async function defaultStoppedStatus(): Promise<MeituanCreationServiceStatus> {
-  const userDataDir = meituanCreationUserDataDir();
-
   return {
     platform: "meituan-drama",
     loginUrl: "https://czz.meituan.com/new/login",
     publishVideoUrl: "https://czz.meituan.com/new/publishVideo",
     running: false,
-    loginState: "unknown",
-    userDataDir,
+    accounts: [],
     pid: null,
   };
 }
@@ -207,34 +187,37 @@ function meituanCreationLogDir(config = readConfig()) {
   return path.join(meituanCreationRunDataDir(config), "logs");
 }
 
-function meituanCreationUserDataDir() {
-  return path.join(meituanCreationRunDataDir(), "auth", "chromium-profile");
+function meituanCreationAuthRoot() {
+  return path.join(meituanCreationRunDataDir(), "auth");
 }
 
-function meituanCreationCredentialStatePath() {
-  return path.join(meituanCreationRunDataDir(), "auth", "storage-state.json");
-}
-
-function meituanCreationAssetDownloadDir() {
-  return path.join(meituanCreationRunDataDir(), "remote-upload-assets", "covers");
+function meituanCreationAssetDownloadRoot() {
+  return path.join(meituanCreationRunDataDir(), "remote-upload-assets");
 }
 
 async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
 
   const config = readConfig();
-  const taskPayload = loadMeituanCreationTaskPayload();
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
-  const { startMeituanCreationRuntime } = await import("@drama/meituan-drama-automation");
+  const {
+    fetchMeituanCreationAccounts,
+    startMeituanCreationRuntime,
+  } = await import("@drama/meituan-drama-automation");
+  const accounts = await fetchMeituanCreationAccounts(config.apiBaseUrl);
+  console.log(
+    `[meituan-drama] fetched ${accounts.length} enabled account(s): ${
+      accounts.map((account) => `${account.accountName}(${account.accountId})`).join(", ") || "-"
+    }`,
+  );
   return startMeituanCreationRuntime({
-    userDataDir: meituanCreationUserDataDir(),
-    credentialStatePath: meituanCreationCredentialStatePath(),
-    assetDownloadDir: meituanCreationAssetDownloadDir(),
+    accounts,
+    authRoot: meituanCreationAuthRoot(),
+    assetDownloadRoot: meituanCreationAssetDownloadRoot(),
     onLog: (message: string) => {
       console.log(message);
     },
     config: {
-      ...taskPayload,
       localEpisodeVideoRoot: config.localEpisodeVideoRoot,
       browser: {
         headless: config.headless === "true",
