@@ -2,20 +2,20 @@
 
 本文档梳理 QQ 短剧和美团短剧自动化当前使用的任务字段、页面控件类型、固定选项、文件约束，以及任务领取链路的实现状态。
 
-> 更新时间：2026-07-24
+> 更新时间：2026-07-25
 
 ## 当前实现状态
 
 | 平台 | 账号列表 | 任务领取 | 任务轮询 | 成功/失败回调 | 页面填写 |
 | --- | --- | --- | --- | --- | --- |
-| QQ | 已接真实接口 | 当前为内置假任务 | 已有轮询框架，但领取结果是假数据 | 当前为假日志 | 已实现主要字段 |
+| QQ | 已接真实接口 | 已接 READY 列表与 `/dramaAiRpa/qq/rpa/claim` | 每个账号独立轮询 READY 列表 | 已接统一 `/dramaAiRpa/qq/rpa/report` | 已实现主要字段 |
 | 美团 | 已接真实接口 | 已接 `/dramaAiRpa/meituan/rpa/claim` | 每个账号独立轮询 READY 列表 | 已接统一 `/dramaAiRpa/meituan/rpa/report` | 已实现发布配置填写 |
 
 ## QQ 任务 Schema
 
 ### 领取结果结构
 
-QQ 自动化期望领取结果符合以下结构：
+QQ 领取接口返回 `payloadJson.qqPlaylet`，自动化会将它和通用字段归一化为以下内部结构：
 
 ```ts
 type ClaimedQqDramaTask = {
@@ -65,8 +65,8 @@ type ClaimedQqDramaTask = {
 | `productionCostRange` | 是 | 枚举 | 单选 | `< 30 万`、`30 ~ 80 万`、`≥ 80 万` |
 | `productionCostWan` | 是 | 数字 | 数字文本框 | 大于等于 0，单位万元 |
 | `productionYear` | 是 | 整数 | 数字文本框 | 1900～2100 |
-| `costAllocationReportFile` | 是 | 字符串 | 文件上传 | JPG、PNG、PDF，最大 10 MB |
-| `licenseProofFiles` | 是 | 字符串数组 | 权属文件批量上传 | 与微信 `playlet.copyright.licenseProofFiles` 同名；至少 1 个，单个支持 PDF、JPG、JPEG、PNG，最大 10 MB |
+| `costAllocationReportFile` | 否 | 字符串 | 文件上传 | 优先取 `qqPlaylet.costAllocationReportFile`，否则取 `productionCost.proofFiles[0]` |
+| `licenseProofFiles` | 否 | 字符串数组 | 权属文件批量上传 | 合并 `qqPlaylet.licenseProofFiles` 与 `copyright.licenseProofFiles`；单个支持 PDF、JPG、JPEG、PNG，最大 10 MB |
 | `contractName` | 是 | 字符串 | 合同下拉 | 动态选项，取决于当前账号 |
 | `submit` | 否 | 布尔值 | 是否提交审核 | 默认 `false` |
 
@@ -183,11 +183,14 @@ UPLOAD_FILE
 SUBMIT
 ```
 
-### 当前接口缺口
+### 接口链路
 
-QQ 当前尚未调用真实任务领取接口：
+QQ 运行时按账号执行以下链路：
 
-- `claimNextQqDramaTaskApi()` 返回代码内置假任务。
+1. `/dramaAiRpa/qq/accountTask/page` 查询 `READY` 任务。
+2. `/dramaAiRpa/qq/rpa/claim` 按 `accountTaskId` 领取。
+3. 解析 `payloadJson.qqPlaylet` 并执行表单填写、剧集上传及可选提交。
+4. `/dramaAiRpa/qq/rpa/report` 统一回写成功或失败。
 - 指定任务 ID 领取仅复制假任务并替换 `accountTaskId`。
 - 成功回调只记录假日志。
 - 失败回调只记录假日志。

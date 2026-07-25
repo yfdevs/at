@@ -10,6 +10,7 @@ import {
 import { fillBasicInfoStep } from "./steps/basic-info.js";
 import { confirmAndMaybeSubmitStep } from "./steps/confirm.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
+import { qqPageMessageErrorLocator } from "./steps/form-controls.js";
 
 export async function openQqDramaAddPage(
   page: Page,
@@ -47,14 +48,34 @@ export async function runQqDramaPublishTask(
   log(options, `[qq-drama] opening add page for accountTaskId=${task.accountTaskId}`);
   await openQqDramaAddPage(page, context, options);
 
-  log(options, `[qq-drama] start basic info step: accountTaskId=${task.accountTaskId}`);
-  await fillBasicInfoStep(page, task, options);
+  const messageErrors = qqPageMessageErrorLocator(page);
+  await page.addLocatorHandler(
+    messageErrors,
+    async (messages) => {
+      const texts = [
+        ...new Set(
+          (await messages.allInnerTexts())
+            .map((text) => text.replace(/\s+/g, " ").trim())
+            .filter(Boolean),
+        ),
+      ];
+      throw new Error(`QQ_DRAMA_PAGE_MESSAGE: ${texts.join("；") || "QQ 页面出现错误提示"}`);
+    },
+    { noWaitAfter: true },
+  );
 
-  log(options, `[qq-drama] start episode upload step: accountTaskId=${task.accountTaskId}`);
-  await uploadEpisodeVideosStep(page, task, options);
+  try {
+    log(options, `[qq-drama] start basic info step: accountTaskId=${task.accountTaskId}`);
+    await fillBasicInfoStep(page, task, options);
 
-  log(options, `[qq-drama] start confirm step: accountTaskId=${task.accountTaskId}`);
-  await confirmAndMaybeSubmitStep(page, task, options);
+    log(options, `[qq-drama] start episode upload step: accountTaskId=${task.accountTaskId}`);
+    await uploadEpisodeVideosStep(page, task, options);
 
-  await saveCredentialState(context, options).catch(() => undefined);
+    log(options, `[qq-drama] start confirm step: accountTaskId=${task.accountTaskId}`);
+    await confirmAndMaybeSubmitStep(page, task, options);
+
+    await saveCredentialState(context, options).catch(() => undefined);
+  } finally {
+    await page.removeLocatorHandler(messageErrors).catch(() => undefined);
+  }
 }

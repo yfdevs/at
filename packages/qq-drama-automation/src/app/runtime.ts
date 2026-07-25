@@ -35,6 +35,8 @@ import {
 type LastTaskStatus = QqDramaRuntimeStatus["lastTask"];
 
 const defaultTaskPollIntervalMs = 10_000;
+const reportMaxAttempts = 3;
+const reportRetryDelayMs = 5_000;
 
 function pollIntervalMs(options: QqDramaRuntimeOptions) {
   return Math.max(1_000, options.taskPollIntervalMs ?? defaultTaskPollIntervalMs);
@@ -42,6 +44,30 @@ function pollIntervalMs(options: QqDramaRuntimeOptions) {
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+async function reportWithRetry(
+  options: QqDramaRuntimeOptions,
+  accountTaskId: number,
+  callback: () => Promise<void>,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= reportMaxAttempts; attempt += 1) {
+    try {
+      await callback();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt >= reportMaxAttempts) break;
+      log(
+        options,
+        `[qq-drama] task report failed, retrying: accountTaskId=${accountTaskId} ` +
+          `attempt=${attempt}/${reportMaxAttempts} error=${errorMessage(error)}`,
+      );
+      await new Promise((resolve) => setTimeout(resolve, reportRetryDelayMs));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
 async function setFixedPageTitle(page: Page, title: string) {
@@ -180,6 +206,7 @@ async function runTask(
   options: QqDramaRuntimeOptions,
   setLastTask: (status: LastTaskStatus) => void,
 ) {
+  let publishSucceeded = false;
   setLastTask({
     accountTaskId: task.accountTaskId,
     originalTitle: task.originalTitle,
@@ -200,14 +227,19 @@ async function runTask(
         await runQqDramaPublishTask(page, context, task, options);
       },
     );
-    await reportQqDramaTaskSuccessApi({
-      apiConfig: options.apiConfig,
-      runtimeOptions: options,
-      accountTaskId: task.accountTaskId,
-      resultJson: {
-        activeUrl: page.url(),
-      },
-    });
+    publishSucceeded = true;
+    await reportWithRetry(options, task.accountTaskId, () =>
+      reportQqDramaTaskSuccessApi({
+        apiConfig: options.apiConfig,
+        runtimeOptions: options,
+        accountTaskId: task.accountTaskId,
+        resultJson: {
+          activeUrl: page.url(),
+          accountId: task.qqAccountId,
+          accountName: task.qqAccountName,
+        },
+      }),
+    );
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -225,19 +257,31 @@ async function runTask(
       errorMessage: message,
       updatedAt: new Date().toISOString(),
     });
-    await reportQqDramaTaskErrorApi({
-      apiConfig: options.apiConfig,
-      runtimeOptions: options,
-      accountTaskId: task.accountTaskId,
-      dramaId: task.dramaId,
-      failStage,
-      errorMessage: message,
-      resultJson: {
-        activeUrl: page.url(),
-      },
-    }).catch((callbackError) => {
-      errorLog(options, `[qq-drama] fail callback failed: ${errorMessage(callbackError)}`);
-    });
+    if (!publishSucceeded) {
+      await reportWithRetry(options, task.accountTaskId, () =>
+        reportQqDramaTaskErrorApi({
+          apiConfig: options.apiConfig,
+          runtimeOptions: options,
+          accountTaskId: task.accountTaskId,
+          dramaId: task.dramaId,
+          failStage,
+          errorMessage: message,
+          resultJson: {
+            activeUrl: page.url(),
+            accountId: task.qqAccountId,
+            accountName: task.qqAccountName,
+          },
+        }),
+      ).catch((callbackError) => {
+        errorLog(options, `[qq-drama] fail callback failed: ${errorMessage(callbackError)}`);
+      });
+    } else {
+      errorLog(
+        options,
+        `[qq-drama] publish succeeded but success callback failed: ` +
+          `accountTaskId=${task.accountTaskId} error=${message}`,
+      );
+    }
     throw error;
   }
 }

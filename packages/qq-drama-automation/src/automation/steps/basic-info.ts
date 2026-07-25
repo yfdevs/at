@@ -11,6 +11,7 @@ import {
   fillTaskField,
   uploadTaskFile,
   uploadTaskFiles,
+  waitForQqStepReady,
 } from "./form-controls.js";
 import { taskTitle } from "./payload.js";
 
@@ -271,5 +272,10 @@ export async function fillBasicInfoStep(
   });
   if (payload.episodeCount || payload.submit) {
     await clickNextStep(page, options);
+    await waitForQqStepReady(
+      page,
+      ".upload-header-left,input[type='file'][accept*='video']",
+      "剧集上传",
+    );
   }
 }

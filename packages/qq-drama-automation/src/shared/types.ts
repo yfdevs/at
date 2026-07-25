@@ -184,12 +184,12 @@ export const qqDramaTaskPayloadSchema = z
     productionCostRange: z.enum(qqDramaProductionCostRangeValues).describe("制作成本范围"),
     productionCostWan: z.coerce.number().finite().nonnegative().describe("具体成本，单位：万元"),
     productionYear: z.coerce.number().int().min(1900).max(2100).describe("年份，例如 2026"),
-    costAllocationReportFile: fileReference.describe(
+    costAllocationReportFile: fileReference.optional().describe(
       "成本配置比例情况报告，支持 JPG、PNG、PDF，<= 10MB",
     ),
     licenseProofFiles: z
       .array(fileReference)
-      .min(1)
+      .default([])
       .describe("版权采买与播出授权证明文件，支持 PDF、JPG、JPEG、PNG，单个 <= 10MB"),
     contractName: requiredText.describe("与本剧目绑定的合同，绑定后不可更改"),
     submit: z.boolean().default(false),

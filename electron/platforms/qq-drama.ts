@@ -419,7 +419,7 @@ async function startRuntime() {
         localEpisodeVideoRoot: config.localEpisodeVideoRoot,
         baiduNetdiskDownloadRetryAttempts,
         taskPollIntervalMs,
-        taskPollingEnabled: false,
+        taskPollingEnabled: true,
         ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
         apiConfig: {
           baseUrl: config.apiBaseUrl,

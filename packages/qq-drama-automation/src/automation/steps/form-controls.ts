@@ -7,6 +7,73 @@ export function escapeRegExp(value: string) {
   return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
 }
 
+const formErrorSelectors = [
+  ".t-form__status--error",
+  ".t-form__help--error",
+  ".ant-form-item-explain-error",
+  ".el-form-item__error",
+  "[class*='form-item-error']",
+  "[class*='form-error']",
+];
+const visibleFormErrorSelector = formErrorSelectors
+  .map((selector) => `${selector}:visible`)
+  .join(",");
+const visibleMessageErrorSelector = [
+  ".t-message.t-is-error:visible",
+  ".t-message--error:visible",
+  ".ant-message-error:visible",
+  ".el-message--error:visible",
+  "[role='alert'][class*='error']:visible",
+].join(",");
+
+export function qqPageMessageErrorLocator(page: Page) {
+  return page.locator(visibleMessageErrorSelector);
+}
+
+async function visibleFormErrorTexts(page: Page) {
+  return [
+    ...new Set(
+      (await page.locator(visibleFormErrorSelector).allInnerTexts().catch(() => []))
+        .map((text) => text.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+export async function throwIfQqFormInvalid(page: Page) {
+  const messageTexts = [
+    ...new Set(
+      (await page.locator(visibleMessageErrorSelector).allInnerTexts().catch(() => []))
+        .map((text) => text.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  ];
+  if (messageTexts.length > 0) {
+    throw new Error(`QQ_DRAMA_PAGE_MESSAGE: ${messageTexts.join("；")}`);
+  }
+
+  const errorTexts = await visibleFormErrorTexts(page);
+  if (errorTexts.length > 0) {
+    throw new Error(`QQ_DRAMA_FORM_INVALID: ${errorTexts.join("；")}`);
+  }
+}
+
+export async function waitForQqStepReady(
+  page: Page,
+  selector: string,
+  stepName: string,
+  timeoutMs = 30_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    if ((await page.locator(selector).count()) > 0) return;
+    await throwIfQqFormInvalid(page);
+    await page.waitForTimeout(250);
+  }
+  await throwIfQqFormInvalid(page);
+  throw new Error(`QQ_DRAMA_STEP_NOT_READY: ${stepName}`);
+}
+
 function fieldGroup(page: Page, label: string, index = 0) {
   const exactLabel = new RegExp(`^\\s*${escapeRegExp(label)}\\s*(?:\\*)?\\s*$`);
   return page.locator(".field-item,.form-item,.t-form__item,.ant-form-item,.el-form-item,[class*=form-item],[class*=FormItem]")
@@ -198,6 +265,9 @@ async function markFileInputByLabel(page: Page, label: string) {
     const markInput = (root: HTMLElement | null) => {
       const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']");
       if (!inputElement) return false;
+      document
+        .querySelectorAll("[data-qq-drama-upload-target='true']")
+        .forEach((element) => element.removeAttribute("data-qq-drama-upload-target"));
       inputElement.setAttribute("data-qq-drama-upload-target", "true");
       return true;
     };
@@ -308,8 +378,7 @@ export async function uploadLocalFilesByTarget(page: Page, options: {
     const root = labelElement?.closest<HTMLElement>(
       ".field-item,.form-section,.ant-form-item,.el-form-item,.semi-form-field,.form-item,[class*='form']",
     ) ?? labelElement?.parentElement;
-    const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']")
-      ?? document.querySelector<HTMLInputElement>("input[type='file']");
+    const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']");
     if (!inputElement) return false;
     inputElement.setAttribute("data-qq-drama-episode-upload-target", "true");
     return true;
@@ -328,10 +397,10 @@ export async function uploadLocalFilesByTarget(page: Page, options: {
 }
 
 export async function clickNextStep(page: Page, options: QqDramaRuntimeOptions, label = "下一步") {
-  const button = page.getByRole("button", { name: label }).first();
+  const button = page.getByRole("button", { name: label, exact: true }).filter({ visible: true }).first();
   await button.waitFor({ state: "visible", timeout: 20_000 });
   log(options, `[qq-drama] clicking button: ${label}`);
   await button.click({ timeout: 20_000 });
-  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
-  await page.waitForTimeout(1_000);
+  await page.waitForTimeout(300);
+  await throwIfQqFormInvalid(page);
 }
