@@ -20,10 +20,9 @@ function visibleMtdSelectPopper(page: Page) {
 }
 
 async function waitForVisibleLocator(_page: Page, locators: Locator[], timeout = 15_000) {
-  const combined = locators.slice(1).reduce(
-    (locator, nextLocator) => locator.or(nextLocator),
-    locators[0],
-  );
+  const combined = locators
+    .slice(1)
+    .reduce((locator, nextLocator) => locator.or(nextLocator), locators[0]);
   const visible = combined.filter({ visible: true }).last();
   return visible
     .waitFor({ state: "visible", timeout })
@@ -128,11 +127,7 @@ async function closeDropdownIfStillOpen(
   }
 }
 
-async function tagSelectTrigger(
-  page: Page,
-  labelText: string,
-  triggerText: string,
-) {
+async function tagSelectTrigger(page: Page, labelText: string, triggerText: string) {
   const formItem = await formItemByLabel(page, labelText);
   const trigger = formItem
     .getByPlaceholder(triggerText, { exact: true })
@@ -141,11 +136,9 @@ async function tagSelectTrigger(
     .filter({ visible: true })
     .first();
 
-  await trigger
-    .waitFor({ state: "visible", timeout: 15_000 })
-    .catch(() => {
-      throw new Error(`MEITUAN_TAG_SELECT_TRIGGER_NOT_FOUND: ${labelText}=${triggerText}`);
-    });
+  await trigger.waitFor({ state: "visible", timeout: 15_000 }).catch(() => {
+    throw new Error(`MEITUAN_TAG_SELECT_TRIGGER_NOT_FOUND: ${labelText}=${triggerText}`);
+  });
   return trigger;
 }
 
@@ -287,11 +280,7 @@ export async function fillTextbox(
   }
 }
 
-async function openCustomMultiTagSelect(
-  page: Page,
-  formItem: Locator,
-  placeholderText: string,
-) {
+async function openCustomMultiTagSelect(page: Page, formItem: Locator, placeholderText: string) {
   const placeholder = formItem.getByText(placeholderText, { exact: true }).first();
   if (await placeholder.isVisible({ timeout: 1_000 }).catch(() => false)) {
     await scrollLocatorIntoView(page, placeholder);
