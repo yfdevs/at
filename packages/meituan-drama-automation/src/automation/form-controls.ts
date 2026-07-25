@@ -1,128 +1,14 @@
 import type { ElementHandle, Locator, Page } from "playwright";
 
-export async function clickWhenReady(page: Page, locator: ReturnType<Page["getByText"]>) {
+export async function clickWhenReady(_page: Page, locator: ReturnType<Page["getByText"]>) {
   await locator.waitFor({ state: "visible", timeout: 60_000 });
   await locator.click({ timeout: 30_000 });
-  await page.waitForTimeout(300);
 }
 
-async function scrollPageOrDrawerDown(page: Page) {
-  await page.evaluate(() => {
-    const scrollableElements = Array.from(document.querySelectorAll<HTMLElement>("*"))
-      .filter((element) => {
-        const rect = element.getBoundingClientRect();
-        const style = window.getComputedStyle(element);
-        const canScroll =
-          /(auto|scroll)/.test(style.overflowY) && element.scrollHeight > element.clientHeight + 4;
-
-        return (
-          canScroll &&
-          rect.width > 120 &&
-          rect.height > 120 &&
-          rect.bottom > 0 &&
-          rect.top < window.innerHeight &&
-          element.scrollTop < element.scrollHeight - element.clientHeight
-        );
-      })
-      .sort((left, right) => {
-        const leftRect = left.getBoundingClientRect();
-        const rightRect = right.getBoundingClientRect();
-        return rightRect.height * rightRect.width - leftRect.height * leftRect.width;
-      });
-
-    const target = scrollableElements[0] ?? document.scrollingElement;
-    target?.scrollBy({ top: 520, behavior: "instant" });
-  });
-  await page.waitForTimeout(200);
-}
-
-export async function scrollLocatorIntoView(page: Page, locator: Locator) {
-  const deadline = Date.now() + 60_000;
-
-  while (Date.now() < deadline) {
-    const attached = await locator
-      .count()
-      .then((count) => count > 0)
-      .catch(() => false);
-
-    if (attached) {
-      await locator
-        .first()
-        .evaluate((node) => {
-          const element = node as HTMLElement;
-          element.scrollIntoView({ block: "center", inline: "nearest" });
-
-          const scrollableAncestors: HTMLElement[] = [];
-          let parent = element.parentElement;
-          while (parent) {
-            const style = window.getComputedStyle(parent);
-            const canScroll =
-              /(auto|scroll)/.test(style.overflowY) &&
-              parent.scrollHeight > parent.clientHeight + 4;
-
-            if (canScroll) {
-              scrollableAncestors.push(parent);
-            }
-
-            parent = parent.parentElement;
-          }
-
-          for (const ancestor of scrollableAncestors) {
-            const elementRect = element.getBoundingClientRect();
-            const ancestorRect = ancestor.getBoundingClientRect();
-            ancestor.scrollTop +=
-              elementRect.top -
-              ancestorRect.top -
-              ancestor.clientHeight / 2 +
-              elementRect.height / 2;
-          }
-        })
-        .catch(() => undefined);
-      await locator.scrollIntoViewIfNeeded({ timeout: 2_000 }).catch(() => undefined);
-
-      const inViewport = await locator
-        .first()
-        .evaluate((node) => {
-          const element = node as HTMLElement;
-          const rect = element.getBoundingClientRect();
-          const style = window.getComputedStyle(element);
-
-          return (
-            rect.width > 0 &&
-            rect.height > 0 &&
-            rect.right > 0 &&
-            rect.left < window.innerWidth &&
-            rect.bottom > 0 &&
-            rect.top < window.innerHeight &&
-            style.display !== "none" &&
-            style.visibility !== "hidden"
-          );
-        })
-        .catch(() => false);
-
-      if (inViewport) {
-        await locator.waitFor({ state: "visible", timeout: 5_000 });
-        return;
-      }
-    }
-
-    await scrollPageOrDrawerDown(page);
-  }
-
-  throw new Error("MEITUAN_FIELD_NOT_IN_VIEWPORT");
-}
-
-async function locatorCenter(page: Page, locator: Locator) {
-  await scrollLocatorIntoView(page, locator);
-  const box = await locator.boundingBox();
-  if (!box) {
-    throw new Error("MEITUAN_DROPDOWN_TRIGGER_NOT_VISIBLE");
-  }
-
-  return {
-    x: box.x + box.width / 2,
-    y: box.y + box.height / 2,
-  };
+export async function scrollLocatorIntoView(_page: Page, locator: Locator) {
+  const target = locator.filter({ visible: true }).first();
+  await target.waitFor({ state: "visible", timeout: 60_000 });
+  await target.scrollIntoViewIfNeeded({ timeout: 60_000 });
 }
 
 export function exactTextPattern(value: string) {
@@ -133,34 +19,16 @@ function visibleMtdSelectPopper(page: Page) {
   return page.locator(".mtd-select-popper:visible, .mtd-select-dropdown:visible").last();
 }
 
-async function lastVisibleLocator(locators: Locator[]) {
-  for (const locator of locators) {
-    const count = await locator.count().catch(() => 0);
-
-    for (let index = count - 1; index >= 0; index -= 1) {
-      const candidate = locator.nth(index);
-      if (await candidate.isVisible({ timeout: 500 }).catch(() => false)) {
-        return candidate;
-      }
-    }
-  }
-
-  return null;
-}
-
-async function waitForVisibleLocator(page: Page, locators: Locator[], timeout = 15_000) {
-  const deadline = Date.now() + timeout;
-
-  while (Date.now() < deadline) {
-    const locator = await lastVisibleLocator(locators);
-    if (locator) {
-      return locator;
-    }
-
-    await scrollPageOrDrawerDown(page);
-  }
-
-  return null;
+async function waitForVisibleLocator(_page: Page, locators: Locator[], timeout = 15_000) {
+  const combined = locators.slice(1).reduce(
+    (locator, nextLocator) => locator.or(nextLocator),
+    locators[0],
+  );
+  const visible = combined.filter({ visible: true }).last();
+  return visible
+    .waitFor({ state: "visible", timeout })
+    .then(() => visible)
+    .catch(() => null);
 }
 
 async function fieldLabelLocator(page: Page, labelText: string) {
@@ -252,12 +120,33 @@ async function closeDropdownIfStillOpen(
   }
 
   await clickFieldLabel(page, closeLabelText);
-  await page.waitForTimeout(300);
+  await page.waitForTimeout(100);
 
   if (await isElementHandleVisible(sentinelHandle)) {
     await clickFieldLabel(page, closeLabelText);
-    await page.waitForTimeout(300);
+    await page.waitForTimeout(100);
   }
+}
+
+async function tagSelectTrigger(
+  page: Page,
+  labelText: string,
+  triggerText: string,
+) {
+  const formItem = await formItemByLabel(page, labelText);
+  const trigger = formItem
+    .getByPlaceholder(triggerText, { exact: true })
+    .or(formItem.getByText(triggerText, { exact: true }))
+    .or(formItem.locator(".mtd-select-selection, .mtd-select-selector, .mtd-select"))
+    .filter({ visible: true })
+    .first();
+
+  await trigger
+    .waitFor({ state: "visible", timeout: 15_000 })
+    .catch(() => {
+      throw new Error(`MEITUAN_TAG_SELECT_TRIGGER_NOT_FOUND: ${labelText}=${triggerText}`);
+    });
+  return trigger;
 }
 
 export async function selectSingleTag(
@@ -266,16 +155,14 @@ export async function selectSingleTag(
   triggerText: string,
   optionText: string,
 ) {
-  const trigger = page.getByText(triggerText, { exact: true });
+  const trigger = await tagSelectTrigger(page, labelText, triggerText);
   const option = page
     .locator("div")
     .filter({ hasText: exactTextPattern(optionText) })
     .last();
 
-  await trigger.waitFor({ state: "visible", timeout: 60_000 });
-  const triggerCenter = await locatorCenter(page, trigger);
-  await page.mouse.click(triggerCenter.x, triggerCenter.y);
-  await page.waitForTimeout(300);
+  await scrollLocatorIntoView(page, trigger);
+  await trigger.click({ timeout: 30_000 });
 
   await option.waitFor({ state: "visible", timeout: 30_000 });
   const optionHandle = await option.elementHandle();
@@ -284,7 +171,6 @@ export async function selectSingleTag(
   }
 
   await optionHandle.click({ timeout: 30_000 });
-  await page.waitForTimeout(300);
 
   await closeDropdownIfStillOpen(page, labelText, optionHandle);
   await optionHandle.dispose();
@@ -296,12 +182,10 @@ export async function selectMultipleTags(
   triggerText: string,
   optionTexts: string[],
 ) {
-  const trigger = page.getByText(triggerText, { exact: true });
+  const trigger = await tagSelectTrigger(page, labelText, triggerText);
 
-  await trigger.waitFor({ state: "visible", timeout: 60_000 });
-  const triggerCenter = await locatorCenter(page, trigger);
-  await page.mouse.click(triggerCenter.x, triggerCenter.y);
-  await page.waitForTimeout(300);
+  await scrollLocatorIntoView(page, trigger);
+  await trigger.click({ timeout: 30_000 });
 
   let lastOptionHandle: ElementHandle | null = null;
 
@@ -312,8 +196,7 @@ export async function selectMultipleTags(
       .last();
 
     if (!(await option.isVisible({ timeout: 500 }).catch(() => false))) {
-      await page.mouse.click(triggerCenter.x, triggerCenter.y);
-      await page.waitForTimeout(300);
+      await trigger.click({ timeout: 30_000 });
     }
 
     await option.waitFor({ state: "visible", timeout: 30_000 });
@@ -323,7 +206,6 @@ export async function selectMultipleTags(
     }
 
     await optionHandle.click({ timeout: 30_000 });
-    await page.waitForTimeout(200);
     await lastOptionHandle?.dispose();
     lastOptionHandle = optionHandle;
   }
@@ -336,8 +218,6 @@ export async function selectMultipleTags(
 
 async function textboxInFormItem(page: Page, labelText: string, placeholderText: string) {
   const formItem = await formItemByLabel(page, labelText);
-
-  await scrollLocatorIntoView(page, formItem);
 
   const byPlaceholder = formItem.getByPlaceholder(placeholderText, { exact: true }).first();
   if (await byPlaceholder.count()) {
@@ -376,13 +256,17 @@ async function forceSetTextboxValue(textbox: Locator, value: string) {
   }, value);
 }
 
-export async function fillTextbox(page: Page, labelText: string, placeholderText: string, value: string) {
+export async function fillTextbox(
+  page: Page,
+  labelText: string,
+  placeholderText: string,
+  value: string,
+) {
   const textbox = await textboxInFormItem(page, labelText, placeholderText);
 
   await scrollLocatorIntoView(page, textbox);
   await textbox.click({ timeout: 30_000 });
   await textbox.fill(value, { timeout: 30_000 });
-  await page.waitForTimeout(200);
 
   if ((await readTextboxValue(textbox)) === value) {
     return;
@@ -391,23 +275,26 @@ export async function fillTextbox(page: Page, labelText: string, placeholderText
   await textbox.click({ timeout: 30_000 });
   await textbox.press("Control+A").catch(() => undefined);
   await page.keyboard.insertText(value);
-  await page.waitForTimeout(200);
 
   if ((await readTextboxValue(textbox)) === value) {
     return;
   }
 
   await forceSetTextboxValue(textbox, value);
-  await page.waitForTimeout(200);
 
   if ((await readTextboxValue(textbox)) !== value) {
     throw new Error(`MEITUAN_TEXTBOX_FILL_FAILED: ${labelText}`);
   }
 }
 
-async function openCustomMultiTagSelect(formItem: Locator, placeholderText: string) {
+async function openCustomMultiTagSelect(
+  page: Page,
+  formItem: Locator,
+  placeholderText: string,
+) {
   const placeholder = formItem.getByText(placeholderText, { exact: true }).first();
   if (await placeholder.isVisible({ timeout: 1_000 }).catch(() => false)) {
+    await scrollLocatorIntoView(page, placeholder);
     await placeholder.click({ timeout: 30_000 });
     return;
   }
@@ -418,6 +305,7 @@ async function openCustomMultiTagSelect(formItem: Locator, placeholderText: stri
     )
     .first();
 
+  await scrollLocatorIntoView(page, selectBox);
   await selectBox.click({ timeout: 30_000 });
 }
 
@@ -462,19 +350,22 @@ export async function selectCustomMultiTags(
     .first();
 
   for (const value of values) {
-    await scrollLocatorIntoView(page, formItem);
-    await openCustomMultiTagSelect(formItem, placeholderText);
+    await openCustomMultiTagSelect(page, formItem, placeholderText);
 
     await searchInput.waitFor({ state: "visible", timeout: 30_000 });
+    await scrollLocatorIntoView(page, searchInput);
     await searchInput.fill(value, { timeout: 30_000 });
-    await page.waitForTimeout(300);
 
     const option = await mtdSelectOptionInVisiblePopper(page, value);
     await option.click({ timeout: 30_000 });
-    await page.waitForTimeout(200);
 
     const selectedTag = formItem.getByText(value, { exact: true });
-    if (!(await selectedTag.isVisible({ timeout: 1_000 }).catch(() => false))) {
+    if (
+      !(await selectedTag
+        .waitFor({ state: "visible", timeout: 3_000 })
+        .then(() => true)
+        .catch(() => false))
+    ) {
       throw new Error(`MEITUAN_CUSTOM_TAG_SELECT_FAILED: ${labelText}=${value}`);
     }
   }

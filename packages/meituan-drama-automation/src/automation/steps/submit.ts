@@ -11,7 +11,7 @@ export async function submitPublishStep(
 
   const publishButton = page
     .locator("button.submit-btn")
-    .filter({ hasText: exactTextPattern("发布") })
+    .filter({ hasText: exactTextPattern("提交并审核") })
     .first();
 
   await publishButton.waitFor({ state: "visible", timeout: 60_000 });
@@ -19,5 +19,5 @@ export async function submitPublishStep(
   await publishButton.click({ timeout: 30_000 });
   await page.waitForTimeout(1_000);
 
-  log(options, "[meituan-drama] publish button clicked");
+  log(options, "[meituan-drama] submit and review button clicked");
 }

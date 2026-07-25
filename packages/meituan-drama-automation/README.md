@@ -29,7 +29,8 @@ https://czz.meituan.com/new/publishVideo
     "collectionType": "真人短剧（含AI）",
     "collectionSubType": "真人短剧",
     "collectionTitle": "示例剧名",
-    "copyrightProofUrl": "https://example.com/copyright-proof.png",
+    "productionProofFiles": ["https://example.com/production-proof.png"],
+    "licenseProofFiles": ["https://example.com/license-proof.png"],
     "premiereProofUrl": "https://example.com/premiere-proof.png",
     "backgroundText": "现代",
     "plotSettingTexts": ["打脸虐渣", "重生"],
@@ -40,7 +41,6 @@ https://czz.meituan.com/new/publishVideo
     "directorNames": ["张三"],
     "producerNames": ["李四"],
     "screenwriterNames": ["王五"],
-    "actorNames": ["赵六", "钱七"],
     "averageEpisodeDurationMinutes": 2,
     "plotSynopsisText": "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
     "premiereStatus": "美团联合首发"
@@ -53,20 +53,25 @@ https://czz.meituan.com/new/publishVideo
 - `真人短剧（含AI）` -> `真人短剧`、`AI真人短剧`
 - `动漫短剧` -> `动态漫`、`沙雕漫`、`PPT漫`
 
-`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`copyrightProofUrl`、`premiereProofUrl`、`backgroundText`、`plotSettingTexts`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes`、`productionCompanyText`、`directorNames`、`producerNames`、`screenwriterNames`、`actorNames`、`averageEpisodeDurationMinutes`、`plotSynopsisText` 都是必填字段。
+`authorNicknameText`、`audience`、`collectionType`、`collectionSubType`、`collectionTitle`、`premiereProofUrl`、`backgroundText`、`plotSettingTexts`、`storyThemeText`、`totalEpisodes`、`checkpointEpisodes`、`productionCompanyText`、`directorNames`、`producerNames`、`screenwriterNames`、`averageEpisodeDurationMinutes`、`plotSynopsisText` 都是必填字段。
 `audience` 支持 `男频`、`女频`。
 `collectionTitle` 是合集标题，也就是剧名称。
 `collectionCoverUrl` 是可选的兼容字段。领取任务后，运行时会优先要求百度网盘同时下载
 正片和至少 1 张封面，并在 `{localEpisodeVideoRoot}/{originalTitle}` 下递归匹配
 文件名或目录名包含“封面/海报”的图片。匹配结果写入运行时
 `collectionCoverFile`，校验通过后才通过文件控件上传。
-`copyrightProofUrl` 是版权证明文件 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
-`premiereProofUrl` 是首发证明材料 URL，运行时会下载到平台运行数据目录后通过文件控件上传。
+`productionProofFiles` 和 `licenseProofFiles` 分别来自领取任务
+`payloadJson.copyright` 下的制作合同与授权委托合同 URL 数组。运行时还会从
+`{localEpisodeVideoRoot}/{originalTitle}` 的工程/权属目录扫描全部图片并合成一张
+纵向排列的图片，合成文件保存在剧集对应的工程/权属目录下，最后取最多两张合同和
+一张工程合成图上传到“版权证明”。
+`premiereProofUrl` 从领取任务 `payloadJson.meituanImages` 中
+`key="premiereProof"` 对应的 `url` 生成，运行时会下载到平台运行数据目录后通过文件控件上传。
 `backgroundText` 是时代背景，支持 `现代`、`都市`、`古代`、`乡村`、`年代`、`架空`、`职场`、`民国`、`宫廷`、`校园`、`荒岛`、`古装`、`末世`。
 `plotSettingTexts` 是剧情设定，最多 2 个，按美团下拉选项文本传入。
 `storyThemeText` 是故事主题，按美团下拉选项文本传入。
 `totalEpisodes` 是总集数；`checkpointEpisodes` 是卡点集，最多 3 个，取值不能超过总集数。
-`directorNames`、`producerNames`、`screenwriterNames`、`actorNames` 是自定义多选 tag 输入，按输入后下拉选项文本点击。
+`directorNames`、`producerNames`、`screenwriterNames` 是自定义多选 tag 输入，按输入后下拉选项文本点击；美团创建合集页面没有演员字段，`actorNames` 不参与填写。
 `averageEpisodeDurationMinutes` 是单集平均时长，单位分钟。
 `plotSynopsisText` 是剧情简介。
 `premiereStatus` 是全网首发情况，支持 `美团独家`、`美团联合首发`、`非美团首发`，不传时默认 `美团联合首发`。
@@ -74,7 +79,8 @@ https://czz.meituan.com/new/publishVideo
 
 `baiduPanResourceLink` 是可选的百度网盘分享文本。存在时，运行时先把资源下载并标准化到
 `{localEpisodeVideoRoot}/{originalTitle}`，再用 `originalTitle + totalEpisodes`
-严格校验第 1 集到第 N 集；校验通过后才开始页面填写和上传。
+严格校验第 1 集到第 N 集，同时要求至少下载 1 张工程/权属图片；校验通过后才开始
+页面填写和上传。
 
 ## 任务轮询
 

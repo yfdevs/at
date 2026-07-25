@@ -14,7 +14,8 @@ function hasTaskConfig(config: MeituanCreationConfig | undefined) {
     config?.collectionTitle ||
     config?.collectionCoverUrl ||
     config?.collectionCoverFile ||
-    config?.copyrightProofUrl ||
+    config?.productionProofFiles?.length ||
+    config?.licenseProofFiles?.length ||
     config?.premiereProofUrl ||
     config?.backgroundText ||
     config?.plotSettingTexts ||
@@ -25,7 +26,6 @@ function hasTaskConfig(config: MeituanCreationConfig | undefined) {
     config?.directorNames ||
     config?.producerNames ||
     config?.screenwriterNames ||
-    config?.actorNames ||
     config?.averageEpisodeDurationMinutes ||
     config?.plotSynopsisText ||
     config?.premiereStatus ||
