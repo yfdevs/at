@@ -1,20 +1,14 @@
 import type { BrowserContext, Page } from "playwright";
 import { MEITUAN_CREATION_PUBLISH_VIDEO_URL } from "../shared/constants.js";
-import type {
-  ClaimedMeituanDramaTask,
-  MeituanCreationRuntimeOptions,
-} from "../shared/types.js";
-import {
-  log,
-  saveCredentialState,
-  waitForLogin,
-} from "./browser-session.js";
+import type { ClaimedMeituanDramaTask, MeituanCreationRuntimeOptions } from "../shared/types.js";
+import { log, saveCredentialState, waitForLogin } from "./browser-session.js";
 import {
   getMeituanLocalEpisodeVideoRoot,
   getMeituanOriginalTitle,
   validateLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
 import { prepareMeituanPosterMaterial } from "../shared/poster-materials.js";
+import { prepareMeituanCopyrightProofMaterials } from "../shared/copyright-proof-materials.js";
 import { clickWhenReady } from "./form-controls.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
 import { selectPublishTargetStep } from "./steps/select-author.js";
@@ -47,13 +41,16 @@ async function ensureBaiduNetdiskResourceReady(
       log(
         options,
         `[meituan-drama] ensuring baidu netdisk resource: accountTaskId=${task.accountTaskId} ` +
-        `resourceName=${resourceName} episodeCount=${episodeCount} attempt=${attempt}/${maxAttempts}`,
+          `resourceName=${resourceName} episodeCount=${episodeCount} attempt=${attempt}/${maxAttempts}`,
       );
       await options.ensureBaiduNetdiskResource({
         shareText: baiduPanResourceLink,
         resourceName,
         localEpisodeVideoRoot,
         episodeCount,
+        requiredOwnership: {
+          minimumImages: 1,
+        },
         requiredPosterImages: 1,
       });
       return;
@@ -73,7 +70,7 @@ async function ensureBaiduNetdiskResourceReady(
       log(
         options,
         `[meituan-drama] baidu netdisk resource failed, retrying: ` +
-        `accountTaskId=${task.accountTaskId} nextAttempt=${attempt + 1}/${maxAttempts} error=${message}`,
+          `accountTaskId=${task.accountTaskId} nextAttempt=${attempt + 1}/${maxAttempts} error=${message}`,
       );
       await new Promise((resolve) => setTimeout(resolve, 5_000));
     }
@@ -122,10 +119,18 @@ export async function runPublishTask(
   log(options, "[meituan-drama] matching local collection cover before publishing");
   const poster = await prepareMeituanPosterMaterial(task, options);
   log(options, `[meituan-drama] local collection cover ready: ${poster.file}`);
+  log(options, "[meituan-drama] preparing copyright proof materials");
+  const copyrightProofMaterials = await prepareMeituanCopyrightProofMaterials(task, options);
 
-  await clickWhenReady(page, page.getByText("发布至合集"));
-  await selectPublishTargetStep(page, taskConfig, options);
-  await uploadEpisodeVideosStep(page, task, options);
-  await submitPublishStep(page, options);
-  log(options, "[meituan-drama] publish task completed");
+  try {
+    // oxlint-disable-next-line no-debugger
+    // debugger;
+    await clickWhenReady(page, page.getByText("发布至合集"));
+    await selectPublishTargetStep(page, taskConfig, options, copyrightProofMaterials.files);
+    await uploadEpisodeVideosStep(page, task, options);
+    await submitPublishStep(page, options);
+    log(options, "[meituan-drama] publish task completed");
+  } finally {
+    await copyrightProofMaterials.cleanup();
+  }
 }

@@ -50,17 +50,11 @@ async function uploadCollectionCover(
   taskConfig: MeituanCreationTaskConfig,
   options: MeituanCreationRuntimeOptions,
 ) {
-  const coverPath = taskConfig.collectionCoverFile
-    ?? (
-      taskConfig.collectionCoverUrl
-        ? await downloadRemoteAsset(
-          taskConfig.collectionCoverUrl,
-          options,
-          "remote-cover",
-          "cover",
-        )
-        : undefined
-    );
+  const coverPath =
+    taskConfig.collectionCoverFile ??
+    (taskConfig.collectionCoverUrl
+      ? await downloadRemoteAsset(taskConfig.collectionCoverUrl, options, "remote-cover", "cover")
+      : undefined);
   if (!coverPath) {
     throw new Error("MEITUAN_COLLECTION_COVER_REQUIRED");
   }
@@ -72,24 +66,19 @@ async function uploadCollectionCover(
   await page.waitForTimeout(500);
 }
 
-async function uploadCopyrightProof(
-  page: Page,
-  taskConfig: MeituanCreationTaskConfig,
-  options: MeituanCreationRuntimeOptions,
-) {
-  const proofPath = await downloadRemoteAsset(
-    taskConfig.copyrightProofUrl,
-    options,
-    "remote-copyright-proof",
-    "copyright proof",
-  );
+async function uploadCopyrightProof(page: Page, proofPaths: string[]) {
+  if (proofPaths.length === 0) {
+    throw new Error("MEITUAN_COPYRIGHT_PROOF_REQUIRED");
+  }
   const proofArea = await proofUploadContainer(page, "版权证明");
-  const proofInput = proofArea.locator(".label .mtd-upload-input").first();
 
   await scrollLocatorIntoView(page, proofArea);
-  await proofInput.waitFor({ state: "attached", timeout: 30_000 });
-  await proofInput.setInputFiles(proofPath, { timeout: 30_000 });
-  await waitUploadDone(page, "版权证明");
+  for (const [index, proofPath] of proofPaths.entries()) {
+    const proofInput = proofArea.locator(".label .mtd-upload-input").first();
+    await proofInput.waitFor({ state: "attached", timeout: 30_000 });
+    await proofInput.setInputFiles(proofPath, { timeout: 30_000 });
+    await waitUploadCount(proofArea, index + 1, "版权证明");
+  }
   await page.waitForTimeout(1_000);
 }
 
@@ -132,11 +121,63 @@ async function waitUploadDone(page: Page, labelText: string, timeout = 30_000) {
   });
   const status = container.locator("text=已上传").first();
   try {
-    await status.waitFor({ state: "visible", timeout });
+    await Promise.race([
+      status.waitFor({ state: "visible", timeout }),
+      waitForMtdMessageError(page, timeout),
+    ]);
     return true;
   } catch {
+    const message = await visibleMtdMessageError(page);
+    if (message) {
+      throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${message}`);
+    }
     throw new Error(`上传未完成：${labelText}`);
   }
+}
+
+async function visibleMtdMessageError(page: Page) {
+  const message = page
+    .locator(".mtd-message.mtd-message-error .mtd-message-content:visible")
+    .last();
+  if (!(await message.count())) return undefined;
+  return (await message.textContent())?.trim() || undefined;
+}
+
+async function waitForMtdMessageError(page: Page, timeout: number): Promise<never> {
+  const message = page.locator(".mtd-message.mtd-message-error .mtd-message-content").last();
+  await message.waitFor({ state: "visible", timeout });
+  const text = (await message.textContent())?.trim() || "美团页面出现错误提示";
+  throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${text}`);
+}
+
+async function waitUploadCount(
+  container: ReturnType<Page["locator"]>,
+  expectedCount: number,
+  labelText: string,
+  timeout = 30_000,
+) {
+  const deadline = Date.now() + timeout;
+  const uploadedStatuses = container.locator("text=已上传");
+  const failedStatuses = container.locator("text=上传失败");
+
+  while (Date.now() < deadline) {
+    const message = await visibleMtdMessageError(container.page());
+    if (message) {
+      throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${message}`);
+    }
+    if (await failedStatuses.count()) {
+      throw new Error(`上传失败：${labelText}，第${expectedCount}个文件`);
+    }
+    const uploadedCount = await uploadedStatuses.count();
+    if (uploadedCount >= expectedCount) {
+      return;
+    }
+    await new Promise((resolve) => setTimeout(resolve, 300));
+  }
+
+  throw new Error(
+    `上传未完成：${labelText}，期望${expectedCount}个，实际${await uploadedStatuses.count()}个`,
+  );
 }
 
 async function confirmCreateCollectionDrawer(page: Page) {
@@ -237,9 +278,6 @@ async function fillProductionInfo(
     taskConfig.screenwriterNames,
   );
 
-  log(options, "[meituan-drama] selecting actors");
-  await selectCustomMultiTags(page, "演员", "请填写演员姓名，支持多人", taskConfig.actorNames);
-
   log(options, "[meituan-drama] filling average episode duration");
   await fillTextbox(
     page,
@@ -284,10 +322,15 @@ async function fillStoryAndRights(
 ) {
   log(options, "[meituan-drama] filling plot synopsis");
   const synopsisTextbox = page.getByRole("textbox", { name: "请填写剧情简介" });
+  await scrollLocatorIntoView(page, synopsisTextbox);
   await synopsisTextbox.fill(taskConfig.plotSynopsisText, { timeout: 30_000 });
 
   log(options, "[meituan-drama] selecting premiere status");
-  await page.getByRole("textbox", { name: "请选择全网首发情况" }).click();
+  const premiereStatusTextbox = page.getByRole("textbox", {
+    name: "请选择全网首发情况",
+  });
+  await scrollLocatorIntoView(page, premiereStatusTextbox);
+  await premiereStatusTextbox.click();
   await page.getByText(taskConfig.premiereStatus, { exact: true }).click({ timeout: 30_000 });
   await page.waitForTimeout(1_000);
 
@@ -296,10 +339,7 @@ async function fillStoryAndRights(
     taskConfig.expectedPremiereTimeText,
   );
   if (!taskConfig.expectedPremiereTimeText) {
-    log(
-      options,
-      `[meituan-drama] expected premiere time generated: ${expectedPremiereTimeText}`,
-    );
+    log(options, `[meituan-drama] expected premiere time generated: ${expectedPremiereTimeText}`);
   } else if (expectedPremiereTimeText !== taskConfig.expectedPremiereTimeText) {
     log(options, `[meituan-drama] expected premiere time adjusted: ${expectedPremiereTimeText}`);
   }
@@ -307,6 +347,7 @@ async function fillStoryAndRights(
   const expectedPremiereTimeTextbox = page.getByRole("textbox", {
     name: "请选择预计首发时间",
   });
+  await scrollLocatorIntoView(page, expectedPremiereTimeTextbox);
   await expectedPremiereTimeTextbox.evaluate((node, value) => {
     const input = node as HTMLInputElement;
     input.value = value;
@@ -333,16 +374,16 @@ async function fillStoryAndRights(
   await uploadPremiereProof(page, taskConfig, options);
 }
 
-export async function fillCreateCollectionDrawer(
+async function fillCreateCollectionDrawerFields(
   page: Page,
   taskConfig: MeituanCreationTaskConfig,
   options: MeituanCreationRuntimeOptions,
+  copyrightProofFiles: string[],
 ) {
   const collectionTypeTextbox = page.getByRole("textbox", { name: "选择合集类型" });
   const audienceTextbox = page.getByRole("textbox", { name: "请选择短漫剧受众" });
   const titleTextbox = page.getByRole("textbox", { name: "输入合集标题" });
 
-  await page.waitForTimeout(500);
   await scrollLocatorIntoView(page, collectionTypeTextbox);
   await collectionTypeTextbox.click({ timeout: 30_000 });
   await clickWhenReady(page, page.getByText(taskConfig.collectionType));
@@ -358,11 +399,51 @@ export async function fillCreateCollectionDrawer(
   await uploadCollectionCover(page, taskConfig, options);
   await confirmCoverUploadDialog(page);
   await fillCollectionMetadata(page, taskConfig, options);
-  log(options, "[meituan-drama] uploading copyright proof");
-  await uploadCopyrightProof(page, taskConfig, options);
+  log(options, `[meituan-drama] uploading copyright proof: files=${copyrightProofFiles.length}`);
+  await uploadCopyrightProof(page, copyrightProofFiles);
   await fillProductionInfo(page, taskConfig, options);
   await fillStoryAndRights(page, taskConfig, options);
   log(options, "[meituan-drama] confirming collection drawer");
   await page.waitForTimeout(2000);
   await confirmCreateCollectionDrawer(page);
+}
+
+export async function fillCreateCollectionDrawer(
+  page: Page,
+  taskConfig: MeituanCreationTaskConfig,
+  options: MeituanCreationRuntimeOptions,
+  copyrightProofFiles: string[],
+) {
+  const messageContent = page.locator(".mtd-message.mtd-message-error .mtd-message-content");
+  const formItemErrors = page.locator(".mtd-form-item-error-tip:visible");
+  await page.addLocatorHandler(
+    messageContent,
+    async (message) => {
+      const text = (await message.last().textContent())?.trim() || "美团页面出现错误提示";
+      throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${text}`);
+    },
+    { noWaitAfter: true },
+  );
+
+  try {
+    await page.addLocatorHandler(
+      formItemErrors,
+      async (errors) => {
+        const texts = [
+          ...new Set((await errors.allInnerTexts()).map((text) => text.trim()).filter(Boolean)),
+        ];
+        throw new Error(
+          `MEITUAN_CREATE_COLLECTION_FORM_INVALID: ${texts.join("；") || "表单数据校验失败"}`,
+        );
+      },
+      { noWaitAfter: true },
+    );
+    try {
+      await fillCreateCollectionDrawerFields(page, taskConfig, options, copyrightProofFiles);
+    } finally {
+      await page.removeLocatorHandler(formItemErrors);
+    }
+  } finally {
+    await page.removeLocatorHandler(messageContent);
+  }
 }

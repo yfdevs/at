@@ -115,7 +115,8 @@ const commonTaskSchema = {
   collectionTitle: requiredText,
   collectionCoverUrl: requiredUrl.optional(),
   collectionCoverFile: requiredText.optional(),
-  copyrightProofUrl: requiredUrl,
+  productionProofFiles: z.array(requiredUrl).default([]),
+  licenseProofFiles: z.array(requiredUrl).default([]),
   premiereProofUrl: requiredUrl,
   backgroundText: backgroundSchema,
   plotSettingTexts: z.array(plotSettingSchema).min(1).max(2),
@@ -126,7 +127,7 @@ const commonTaskSchema = {
   directorNames: z.array(requiredText).min(1),
   producerNames: z.array(requiredText).min(1),
   screenwriterNames: z.array(requiredText).min(1),
-  actorNames: z.array(requiredText).min(1),
+  actorNames: z.array(requiredText).default([]),
   averageEpisodeDurationMinutes: z.coerce.number().positive(),
   plotSynopsisText: requiredText,
   premiereStatus: premiereStatusSchema.default("美团联合首发"),
@@ -201,7 +202,8 @@ export interface MeituanCreationConfig {
   collectionTitle?: string;
   collectionCoverUrl?: string;
   collectionCoverFile?: string;
-  copyrightProofUrl?: string;
+  productionProofFiles?: string[];
+  licenseProofFiles?: string[];
   premiereProofUrl?: string;
   backgroundText?: MeituanCreationBackground;
   plotSettingTexts?: MeituanCreationPlotSetting[];
@@ -226,11 +228,11 @@ export interface MeituanCreationConfig {
 export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown";
 export type MeituanCreationTaskFailStage =
   | "LOGIN"
-  | "CLAIM_TASK"
-  | "OPEN_FORM"
   | "FILL_FORM"
   | "UPLOAD_FILE"
-  | "SUBMIT";
+  | "SUBMIT"
+  | "RECOGNIZE_RESULT"
+  | "OTHER";
 
 export type MeituanCreationAccount = {
   id: number;
@@ -274,6 +276,9 @@ export type MeituanCreationRuntimeOptions = {
     resourceName: string;
     localEpisodeVideoRoot: string;
     episodeCount: number;
+    requiredOwnership?: {
+      minimumImages?: number;
+    };
     requiredPosterImages?: number;
   }) => Promise<unknown>;
   onLog?: (message: string) => void;

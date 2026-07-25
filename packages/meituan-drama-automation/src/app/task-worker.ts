@@ -28,28 +28,26 @@ function errorMessage(error: unknown) {
 function classifyFailStage(error: unknown): MeituanCreationTaskFailStage {
   const message = errorMessage(error);
   if (/LOGIN|登录/i.test(message)) return "LOGIN";
-  if (/CLAIM|领取|MEITUAN_CLAIMED_TASK_INVALID/i.test(message)) return "CLAIM_TASK";
+  if (/CLAIM|领取|MEITUAN_CLAIMED_TASK_INVALID/i.test(message)) return "OTHER";
   if (
-    /local-video-invalid|poster-material-invalid|本地剧集|剧集视频|百度网盘|封面|海报|UPLOAD|FILE/i
-      .test(message)
+    /local-video-invalid|poster-material-invalid|本地剧集|剧集视频|百度网盘|封面|海报|UPLOAD|FILE/i.test(
+      message,
+    )
   ) {
     return "UPLOAD_FILE";
   }
   if (/SUBMIT|发布按钮|发布失败/i.test(message)) return "SUBMIT";
-  if (/goto|OPEN_FORM|publish page/i.test(message)) return "OPEN_FORM";
+  if (/RECOGNIZE_RESULT|识别结果|审核结果/i.test(message)) return "RECOGNIZE_RESULT";
+  if (/goto|OPEN_FORM|publish page/i.test(message)) return "FILL_FORM";
   return "FILL_FORM";
 }
 
-async function waitWhileRunning(
-  delayMs: number,
-  isRunning: () => boolean,
-) {
+async function waitWhileRunning(delayMs: number, isRunning: () => boolean) {
   const deadline = Date.now() + delayMs;
   while (isRunning() && Date.now() < deadline) {
-    await new Promise((resolve) => setTimeout(
-      resolve,
-      Math.min(1_000, Math.max(1, deadline - Date.now())),
-    ));
+    await new Promise((resolve) =>
+      setTimeout(resolve, Math.min(1_000, Math.max(1, deadline - Date.now()))),
+    );
   }
 }
 
@@ -72,7 +70,7 @@ async function reportWithRetry(
       log(
         options,
         `[meituan-drama] task report failed, retrying: taskId=${report.taskId} ` +
-        `attempt=${attempt}/${reportMaxAttempts} error=${errorMessage(error)}`,
+          `attempt=${attempt}/${reportMaxAttempts} error=${errorMessage(error)}`,
       );
       await waitWhileRunning(reportRetryDelayMs, isRunning);
     }
@@ -87,13 +85,7 @@ export async function runMeituanAccountTaskWorker(options: {
   runtimeOptions: MeituanCreationRuntimeOptions;
   isRunning: () => boolean;
 }) {
-  const {
-    account,
-    context,
-    page,
-    runtimeOptions,
-    isRunning,
-  } = options;
+  const { account, context, page, runtimeOptions, isRunning } = options;
   if (!runtimeOptions.apiBaseUrl?.trim()) {
     throw new Error("MEITUAN_API_BASE_URL_REQUIRED");
   }
@@ -119,13 +111,12 @@ export async function runMeituanAccountTaskWorker(options: {
 
     if (readyTasks.length === 0) {
       consecutiveEmptyQueries += 1;
-      const retryDelayMs = consecutiveEmptyQueries >= slowEmptyTaskThreshold
-        ? slowEmptyTaskDelayMs
-        : emptyTaskDelayMs;
+      const retryDelayMs =
+        consecutiveEmptyQueries >= slowEmptyTaskThreshold ? slowEmptyTaskDelayMs : emptyTaskDelayMs;
       log(
         runtimeOptions,
         `[meituan-drama] no READY task: emptyCount=${consecutiveEmptyQueries} ` +
-        `retryDelayMs=${retryDelayMs}`,
+          `retryDelayMs=${retryDelayMs}`,
       );
       await waitWhileRunning(retryDelayMs, isRunning);
       continue;
@@ -150,7 +141,7 @@ export async function runMeituanAccountTaskWorker(options: {
         log(
           runtimeOptions,
           `[meituan-drama] task claim failed: accountTaskId=${listedTask.id} ` +
-          `error=${errorMessage(error)}`,
+            `error=${errorMessage(error)}`,
         );
         continue;
       }
@@ -168,7 +159,7 @@ export async function runMeituanAccountTaskWorker(options: {
         if (claimed.accountTaskId !== listedTask.id) {
           throw new Error(
             `MEITUAN_CLAIMED_TASK_ID_MISMATCH: expected=${listedTask.id} ` +
-            `actual=${claimed.accountTaskId}`,
+              `actual=${claimed.accountTaskId}`,
           );
         }
         const task = normalizeClaimedMeituanDramaTask({
@@ -180,33 +171,35 @@ export async function runMeituanAccountTaskWorker(options: {
         await runPublishTask(context, page, runtimeOptions, task);
       } catch (error) {
         const message = errorMessage(error);
-        const failStage = taskNormalized ? classifyFailStage(error) : "CLAIM_TASK";
+        const failStage = taskNormalized ? classifyFailStage(error) : "OTHER";
         log(
           runtimeOptions,
           `[meituan-drama] task failed: accountTaskId=${claimed.accountTaskId} ` +
-          `failStage=${failStage} error=${message}`,
+            `failStage=${failStage} error=${message}`,
         );
-        await reportWithRetry(
-          runtimeOptions,
-          {
-            taskId: claimed.accountTaskId,
-            success: false,
-            failStage,
-            errorMessage: message,
-            resultJson: {
-              activeUrl: page.url(),
-              accountId: account.accountId,
-              accountName: account.accountName,
-            },
-          },
-          isRunning,
-        ).catch((reportError) => {
-          log(
-            runtimeOptions,
-            `[meituan-drama] failed task report exhausted retries: ` +
-            `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
-          );
-        });
+
+        // 测试调试阶段，先不回调错误
+        // await reportWithRetry(
+        //   runtimeOptions,
+        //   {
+        //     taskId: claimed.accountTaskId,
+        //     success: false,
+        //     failStage,
+        //     errorMessage: message,
+        //     resultJson: {
+        //       activeUrl: page.url(),
+        //       accountId: account.accountId,
+        //       accountName: account.accountName,
+        //     },
+        //   },
+        //   isRunning,
+        // ).catch((reportError) => {
+        //   log(
+        //     runtimeOptions,
+        //     `[meituan-drama] failed task report exhausted retries: ` +
+        //     `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
+        //   );
+        // });
         continue;
       }
 
@@ -222,18 +215,20 @@ export async function runMeituanAccountTaskWorker(options: {
           },
         },
         isRunning,
-      ).then(() => {
-        log(
-          runtimeOptions,
-          `[meituan-drama] task succeeded and reported: accountTaskId=${claimed.accountTaskId}`,
-        );
-      }).catch((reportError) => {
-        log(
-          runtimeOptions,
-          `[meituan-drama] success report exhausted retries: ` +
-          `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
-        );
-      });
+      )
+        .then(() => {
+          log(
+            runtimeOptions,
+            `[meituan-drama] task succeeded and reported: accountTaskId=${claimed.accountTaskId}`,
+          );
+        })
+        .catch((reportError) => {
+          log(
+            runtimeOptions,
+            `[meituan-drama] success report exhausted retries: ` +
+              `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
+          );
+        });
     }
 
     if (claimedCount > 0) {
@@ -242,13 +237,12 @@ export async function runMeituanAccountTaskWorker(options: {
     }
 
     consecutiveEmptyQueries += 1;
-    const retryDelayMs = consecutiveEmptyQueries >= slowEmptyTaskThreshold
-      ? slowEmptyTaskDelayMs
-      : emptyTaskDelayMs;
+    const retryDelayMs =
+      consecutiveEmptyQueries >= slowEmptyTaskThreshold ? slowEmptyTaskDelayMs : emptyTaskDelayMs;
     log(
       runtimeOptions,
       `[meituan-drama] READY rows were not claimable: emptyCount=${consecutiveEmptyQueries} ` +
-      `retryDelayMs=${retryDelayMs}`,
+        `retryDelayMs=${retryDelayMs}`,
     );
     await waitWhileRunning(retryDelayMs, isRunning);
   }

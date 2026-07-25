@@ -16,20 +16,24 @@ const apiResponseBaseSchema = z.object({
   msg: z.string().nullish(),
 });
 
-const accountTaskSchema = z.object({
-  id: z.coerce.number().int().positive(),
-  dramaId: z.coerce.number().int().positive().optional(),
-  accountId: requiredText,
-  accountName: nullableText,
-  status: nullableText,
-  originalTitle: nullableText,
-}).passthrough();
+const accountTaskSchema = z
+  .object({
+    id: z.coerce.number().int().positive(),
+    dramaId: z.coerce.number().int().positive().optional(),
+    accountId: requiredText,
+    accountName: nullableText,
+    status: nullableText,
+    originalTitle: nullableText,
+  })
+  .passthrough();
 
 const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
-  data: z.object({
-    total: z.coerce.number().int().nonnegative().optional(),
-    data: z.array(accountTaskSchema),
-  }).nullish(),
+  data: z
+    .object({
+      total: z.coerce.number().int().nonnegative().optional(),
+      data: z.array(accountTaskSchema),
+    })
+    .nullish(),
 });
 
 const claimResponseDataSchema = z.object({
@@ -55,10 +59,12 @@ const reportResponseSchema = apiResponseBaseSchema.extend({
   data: z.boolean().nullish(),
 });
 
-const imageSchema = z.object({
-  key: z.string().trim().optional(),
-  url: z.string().trim().optional(),
-}).passthrough();
+const imageSchema = z
+  .object({
+    key: z.string().trim().optional(),
+    url: z.string().trim().optional(),
+  })
+  .passthrough();
 
 export type MeituanReadyAccountTask = z.infer<typeof accountTaskSchema>;
 export type MeituanClaimResponseData = z.infer<typeof claimResponseDataSchema>;
@@ -102,14 +108,9 @@ async function postJson(
   return response.json();
 }
 
-function assertApiSuccess(
-  payload: z.infer<typeof apiResponseBaseSchema>,
-  action: string,
-) {
+function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action: string) {
   if (payload.code !== 0) {
-    throw new Error(
-      `${action}: code=${payload.code} message=${payload.msg || "-"}`,
-    );
+    throw new Error(`${action}: code=${payload.code} message=${payload.msg || "-"}`);
   }
 }
 
@@ -118,28 +119,27 @@ export async function fetchReadyMeituanAccountTasksApi(options: {
   account: MeituanCreationAccount;
   fetcher?: typeof fetch;
 }): Promise<MeituanReadyAccountTask[]> {
-  const payload = accountTaskPageResponseSchema.parse(await postJson(
-    options.apiBaseUrl,
-    "/dramaAiRpa/meituan/accountTask/page",
-    {
-      page: 1,
-      pageSize: readyTaskPageSize,
-      dramaId: null,
-      originalTitle: null,
-      accountId: options.account.accountId,
-      accountName: null,
-      status: "READY",
-      auditStatus: null,
-    },
-    options.fetcher ?? fetch,
-  ));
+  const payload = accountTaskPageResponseSchema.parse(
+    await postJson(
+      options.apiBaseUrl,
+      "/dramaAiRpa/meituan/accountTask/page",
+      {
+        page: 1,
+        pageSize: readyTaskPageSize,
+        dramaId: null,
+        originalTitle: null,
+        accountId: options.account.accountId,
+        accountName: null,
+        status: "READY",
+        auditStatus: null,
+      },
+      options.fetcher ?? fetch,
+    ),
+  );
   assertApiSuccess(payload, "MEITUAN_ACCOUNT_TASK_PAGE_FAILED");
 
   return (payload.data?.data ?? [])
-    .filter((task) => (
-      task.accountId === options.account.accountId
-      && task.status === "READY"
-    ))
+    .filter((task) => task.accountId === options.account.accountId && task.status === "READY")
     .slice(0, readyTaskPageSize);
 }
 
@@ -148,12 +148,96 @@ export async function claimMeituanAccountTaskApi(options: {
   accountTaskId: number;
   fetcher?: typeof fetch;
 }): Promise<MeituanClaimResponseData | null> {
-  const payload = claimResponseSchema.parse(await postJson(
-    options.apiBaseUrl,
-    "/dramaAiRpa/meituan/rpa/claim",
-    { accountTaskId: options.accountTaskId },
-    options.fetcher ?? fetch,
-  ));
+  void options;
+  // const response = await postJson(
+  //   options.apiBaseUrl,
+  //   "/dramaAiRpa/meituan/rpa/claim",
+  //   { accountTaskId: options.accountTaskId },
+  //   options.fetcher ?? fetch,
+  // );
+
+  // 调试假数据，不能删除先！
+  const response = {
+    code: 0,
+    msg: "操作成功",
+    data: {
+      accountTaskId: 8,
+      originalTitle: "修鞋摊前的状元测试",
+      accountId: "15173",
+      rpaProfileKey: null,
+      accountConfigJson: null,
+      payloadJson: {
+        name: "修鞋摊前的状元测试",
+        posters: {
+          main: "",
+          promotion: "",
+        },
+        summary: "美团 - 修鞋摊前的状元测试",
+        platform: "meituan",
+        copyright: {
+          licenseProofFiles: [
+            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-e5c8ca84d37647f0ad6865c3e5b80d02.png",
+            // "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-b3b047ed236a4415a8229d802bd7aeed.png",
+          ],
+          productionProofFiles: [
+            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-620045fbb1d247438c60a43d3eb7373f.png",
+          ],
+        },
+        episodeCount: 12,
+        producerName: "明星说（北京）科技有限公司",
+        meituanImages: [
+          {
+            key: "premiereProof",
+            url: "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
+            name: "首发证明",
+            size: 763971,
+            sortNo: 1,
+            tosKey: "drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
+            contentType: "image/jpeg",
+            originalFilename: "20260521-172934.jpg",
+          },
+        ],
+        qualification: {
+          type: "其他微短剧",
+          proofFiles: [],
+        },
+        productionCost: {
+          amountWan: 1,
+          proofFiles: [],
+        },
+        meituanExtraInfo: {
+          audience: "男频",
+          actorNames: ["明星说漫剧"],
+          directorNames: ["明星说漫剧"],
+          producerNames: ["明星说漫剧"],
+          totalEpisodes: 12,
+          backgroundText: "现代",
+          collectionType: "真人短剧（含AI）",
+          premiereStatus: "美团联合首发",
+          storyThemeText: "现言",
+          collectionTitle: "修鞋摊前的状元测试",
+          plotSettingTexts: ["打脸虐渣", "大男主"],
+          plotSynopsisText:
+            "美团 - 修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试",
+          premiereProofUrl:
+            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
+          collectionSubType: "AI真人短剧",
+          screenwriterNames: ["明星说漫剧"],
+          authorNicknameText: "明星说漫剧",
+          checkpointEpisodes: [2],
+          productionCompanyText: "明星说（北京）科技有限公司",
+          averageEpisodeDurationMinutes: 1,
+        },
+        baiduPanResourceLink:
+          "通过网盘分享的文件：修鞋摊前的状元测试\n链接: https://pan.baidu.com/s/1yTNaXlMXErFI48dBF5RVUQ?pwd=19r9 提取码: 19r9 \n--来自百度网盘超级会员v2的分享",
+      },
+    },
+  };
+
+  // oxlint-disable-next-line no-debugger
+  // debugger;
+
+  const payload = claimResponseSchema.parse(response);
   assertApiSuccess(payload, "MEITUAN_ACCOUNT_TASK_CLAIM_FAILED");
   return payload.data ?? null;
 }
@@ -163,12 +247,14 @@ export async function reportMeituanAccountTaskApi(options: {
   report: MeituanTaskReport;
   fetcher?: typeof fetch;
 }): Promise<void> {
-  const payload = reportResponseSchema.parse(await postJson(
-    options.apiBaseUrl,
-    "/dramaAiRpa/meituan/rpa/report",
-    options.report,
-    options.fetcher ?? fetch,
-  ));
+  const payload = reportResponseSchema.parse(
+    await postJson(
+      options.apiBaseUrl,
+      "/dramaAiRpa/meituan/rpa/report",
+      options.report,
+      options.fetcher ?? fetch,
+    ),
+  );
   assertApiSuccess(payload, "MEITUAN_ACCOUNT_TASK_REPORT_FAILED");
   if (payload.data === false) {
     throw new Error("MEITUAN_ACCOUNT_TASK_REPORT_FAILED: data=false");
@@ -198,9 +284,9 @@ function numberValue(value: unknown) {
 function stringArray(value: unknown) {
   return Array.isArray(value)
     ? value.flatMap((item) => {
-      const normalized = stringValue(item);
-      return normalized ? [normalized] : [];
-    })
+        const normalized = stringValue(item);
+        return normalized ? [normalized] : [];
+      })
     : [];
 }
 
@@ -217,14 +303,6 @@ function meituanImageUrl(payload: Record<string, unknown>, key: string) {
   return images.data.find((image) => image.key === key)?.url?.trim() || undefined;
 }
 
-function firstMaterialFile(payload: Record<string, unknown>) {
-  const copyright = recordValue(payload.copyright);
-  return (
-    stringArray(copyright.licenseProofFiles)[0]
-    ?? stringArray(copyright.productionProofFiles)[0]
-  );
-}
-
 export function normalizeClaimedMeituanDramaTask(options: {
   claimed: MeituanClaimResponseData;
   listedTask: MeituanReadyAccountTask;
@@ -234,39 +312,29 @@ export function normalizeClaimedMeituanDramaTask(options: {
   if (claimed.accountId !== options.account.accountId) {
     throw new Error(
       `MEITUAN_CLAIMED_ACCOUNT_MISMATCH: expected=${options.account.accountId} ` +
-      `actual=${claimed.accountId}`,
+        `actual=${claimed.accountId}`,
     );
   }
 
   const payload = parsePayloadJson(claimed.payloadJson);
   const extra = recordValue(payload.meituanExtraInfo);
   const posters = recordValue(payload.posters);
+  const copyright = recordValue(payload.copyright);
   const playlet = {
     ...extra,
     baiduPanResourceLink: stringValue(payload.baiduPanResourceLink),
-    collectionTitle:
-      stringValue(extra.collectionTitle)
-      ?? stringValue(payload.name),
+    collectionTitle: stringValue(extra.collectionTitle) ?? stringValue(payload.name),
     collectionCoverUrl:
-      stringValue(extra.collectionCoverUrl)
-      ?? stringValue(posters.main)
-      ?? meituanImageUrl(payload, "collectionCover"),
-    copyrightProofUrl:
-      stringValue(extra.copyrightProofUrl)
-      ?? meituanImageUrl(payload, "copyrightProof")
-      ?? firstMaterialFile(payload),
-    premiereProofUrl:
-      stringValue(extra.premiereProofUrl)
-      ?? meituanImageUrl(payload, "premiereProof"),
-    totalEpisodes:
-      numberValue(extra.totalEpisodes)
-      ?? numberValue(payload.episodeCount),
+      stringValue(extra.collectionCoverUrl) ??
+      stringValue(posters.main) ??
+      meituanImageUrl(payload, "collectionCover"),
+    productionProofFiles: stringArray(copyright.productionProofFiles),
+    licenseProofFiles: stringArray(copyright.licenseProofFiles),
+    premiereProofUrl: meituanImageUrl(payload, "premiereProof"),
+    totalEpisodes: numberValue(extra.totalEpisodes) ?? numberValue(payload.episodeCount),
     productionCompanyText:
-      stringValue(extra.productionCompanyText)
-      ?? stringValue(payload.producerName),
-    plotSynopsisText:
-      stringValue(extra.plotSynopsisText)
-      ?? stringValue(payload.summary),
+      stringValue(extra.productionCompanyText) ?? stringValue(payload.producerName),
+    plotSynopsisText: stringValue(extra.plotSynopsisText) ?? stringValue(payload.summary),
   };
 
   const result = claimedMeituanDramaTaskSchema.safeParse({

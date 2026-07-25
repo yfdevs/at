@@ -426,6 +426,71 @@ export async function composeOwnershipMaterialsIntoTwo(options: {
   }));
 }
 
+export async function composeOwnershipMaterialsIntoOne(options: {
+  files: LocalOwnershipMaterialFile[];
+  outputDir: string;
+  resourceName: string;
+}) {
+  if (options.files.length === 0) {
+    throw new Error("[production-proof-invalid] 没有可合成的权属图片。");
+  }
+  const source = await Promise.all(options.files.map(async (file) => {
+    const metadata = await sharp(file.file, { failOn: "error" }).metadata();
+    if (!metadata.width || !metadata.height) {
+      throw new Error(`[production-proof-invalid] 无法读取权属图片尺寸: ${file.file}`);
+    }
+    return { file, width: metadata.width, height: metadata.height };
+  }));
+  const initialWidth = Math.min(2400, ...source.map((item) => item.width));
+
+  const prepareAtWidth = (width: number) => Promise.all(source.map(async (item) => {
+    const buffer = await sharp(item.file.file)
+      .resize({ width, withoutEnlargement: true })
+      .png()
+      .toBuffer();
+    const metadata = await sharp(buffer).metadata();
+    return {
+      buffer,
+      width: metadata.width ?? width,
+      height: metadata.height ?? item.height,
+    };
+  }));
+
+  let prepared = await prepareAtWidth(initialWidth);
+  const initialHeight = prepared.reduce((sum, item) => sum + item.height, 0);
+  if (initialHeight > 30_000) {
+    const reducedWidth = Math.max(1, Math.floor(initialWidth * 30_000 / initialHeight));
+    prepared = await prepareAtWidth(reducedWidth);
+  }
+
+  const canvasWidth = Math.max(...prepared.map((item) => item.width));
+  const canvasHeight = prepared.reduce((sum, item) => sum + item.height, 0);
+  let top = 0;
+  const composites = prepared.map((item) => {
+    const result = { input: item.buffer, left: 0, top };
+    top += item.height;
+    return result;
+  });
+
+  await mkdir(options.outputDir, { recursive: true });
+  const output = path.join(
+    options.outputDir,
+    `${safeEpisodeFileBaseName(options.resourceName)}-权属工程文件合成1.jpg`,
+  );
+  await sharp({
+    create: {
+      width: canvasWidth,
+      height: canvasHeight,
+      channels: 3,
+      background: "white",
+    },
+  })
+    .composite(composites)
+    .jpeg({ quality: 92, progressive: true })
+    .toFile(output);
+  return output;
+}
+
 function sameResolvedPath(left: string, right: string) {
   return path.resolve(left).toLowerCase() === path.resolve(right).toLowerCase();
 }
