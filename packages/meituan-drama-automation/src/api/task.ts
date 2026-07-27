@@ -66,6 +66,13 @@ const imageSchema = z
   })
   .passthrough();
 
+const meituanContractFileSchema = z
+  .object({
+    fileUrl: z.string().trim().optional(),
+    fileType: z.string().trim().optional(),
+  })
+  .passthrough();
+
 export type MeituanReadyAccountTask = z.infer<typeof accountTaskSchema>;
 export type MeituanClaimResponseData = z.infer<typeof claimResponseDataSchema>;
 
@@ -149,93 +156,12 @@ export async function claimMeituanAccountTaskApi(options: {
   fetcher?: typeof fetch;
 }): Promise<MeituanClaimResponseData | null> {
   void options;
-  // const response = await postJson(
-  //   options.apiBaseUrl,
-  //   "/dramaAiRpa/meituan/rpa/claim",
-  //   { accountTaskId: options.accountTaskId },
-  //   options.fetcher ?? fetch,
-  // );
-
-  // 调试假数据，不能删除先！
-  const response = {
-    code: 0,
-    msg: "操作成功",
-    data: {
-      accountTaskId: 8,
-      originalTitle: "修鞋摊前的状元测试",
-      accountId: "15173",
-      rpaProfileKey: null,
-      accountConfigJson: null,
-      payloadJson: {
-        name: "修鞋摊前的状元测试",
-        posters: {
-          main: "",
-          promotion: "",
-        },
-        summary: "美团 - 修鞋摊前的状元测试",
-        platform: "meituan",
-        copyright: {
-          licenseProofFiles: [
-            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-e5c8ca84d37647f0ad6865c3e5b80d02.png",
-            // "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-b3b047ed236a4415a8229d802bd7aeed.png",
-          ],
-          productionProofFiles: [
-            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260725/account-task-650-620045fbb1d247438c60a43d3eb7373f.png",
-          ],
-        },
-        episodeCount: 12,
-        producerName: "明星说（北京）科技有限公司",
-        meituanImages: [
-          {
-            key: "premiereProof",
-            url: "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
-            name: "首发证明",
-            size: 763971,
-            sortNo: 1,
-            tosKey: "drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
-            contentType: "image/jpeg",
-            originalFilename: "20260521-172934.jpg",
-          },
-        ],
-        qualification: {
-          type: "其他微短剧",
-          proofFiles: [],
-        },
-        productionCost: {
-          amountWan: 1,
-          proofFiles: [],
-        },
-        meituanExtraInfo: {
-          audience: "男频",
-          actorNames: ["明星说漫剧"],
-          directorNames: ["明星说漫剧"],
-          producerNames: ["明星说漫剧"],
-          totalEpisodes: 12,
-          backgroundText: "现代",
-          collectionType: "真人短剧（含AI）",
-          premiereStatus: "美团联合首发",
-          storyThemeText: "现言",
-          collectionTitle: "修鞋摊前的状元测试",
-          plotSettingTexts: ["打脸虐渣", "大男主"],
-          plotSynopsisText:
-            "美团 - 修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试修鞋摊前的状元测试",
-          premiereProofUrl:
-            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/meituan/265/images/20260725/bc236ee531f647878dad3e19da8fd65b.jpg",
-          collectionSubType: "AI真人短剧",
-          screenwriterNames: ["明星说漫剧"],
-          authorNicknameText: "明星说漫剧",
-          checkpointEpisodes: [2],
-          productionCompanyText: "明星说（北京）科技有限公司",
-          averageEpisodeDurationMinutes: 1,
-        },
-        baiduPanResourceLink:
-          "通过网盘分享的文件：修鞋摊前的状元测试\n链接: https://pan.baidu.com/s/1yTNaXlMXErFI48dBF5RVUQ?pwd=19r9 提取码: 19r9 \n--来自百度网盘超级会员v2的分享",
-      },
-    },
-  };
-
-  // oxlint-disable-next-line no-debugger
-  // debugger;
+  const response = await postJson(
+    options.apiBaseUrl,
+    "/dramaAiRpa/meituan/rpa/claim",
+    { accountTaskId: options.accountTaskId },
+    options.fetcher ?? fetch,
+  );
 
   const payload = claimResponseSchema.parse(response);
   assertApiSuccess(payload, "MEITUAN_ACCOUNT_TASK_CLAIM_FAILED");
@@ -303,6 +229,18 @@ function meituanImageUrl(payload: Record<string, unknown>, key: string) {
   return images.data.find((image) => image.key === key)?.url?.trim() || undefined;
 }
 
+function meituanContractFileUrl(
+  payload: Record<string, unknown>,
+  fileType: "CONTRACT" | "AUTHORIZATION",
+) {
+  const files = z.array(meituanContractFileSchema).safeParse(payload.meituanContractFiles);
+  if (!files.success) return undefined;
+  return (
+    files.data.find((file) => file.fileType?.toUpperCase() === fileType)?.fileUrl?.trim() ||
+    undefined
+  );
+}
+
 export function normalizeClaimedMeituanDramaTask(options: {
   claimed: MeituanClaimResponseData;
   listedTask: MeituanReadyAccountTask;
@@ -320,6 +258,10 @@ export function normalizeClaimedMeituanDramaTask(options: {
   const extra = recordValue(payload.meituanExtraInfo);
   const posters = recordValue(payload.posters);
   const copyright = recordValue(payload.copyright);
+  const productionProofFiles = stringArray(copyright.productionProofFiles);
+  const licenseProofFiles = stringArray(copyright.licenseProofFiles);
+  const fallbackProductionProofFile = meituanContractFileUrl(payload, "CONTRACT");
+  const fallbackLicenseProofFile = meituanContractFileUrl(payload, "AUTHORIZATION");
   const playlet = {
     ...extra,
     baiduPanResourceLink: stringValue(payload.baiduPanResourceLink),
@@ -328,8 +270,18 @@ export function normalizeClaimedMeituanDramaTask(options: {
       stringValue(extra.collectionCoverUrl) ??
       stringValue(posters.main) ??
       meituanImageUrl(payload, "collectionCover"),
-    productionProofFiles: stringArray(copyright.productionProofFiles),
-    licenseProofFiles: stringArray(copyright.licenseProofFiles),
+    productionProofFiles:
+      productionProofFiles.length > 0
+        ? productionProofFiles
+        : fallbackProductionProofFile
+          ? [fallbackProductionProofFile]
+          : [],
+    licenseProofFiles:
+      licenseProofFiles.length > 0
+        ? licenseProofFiles
+        : fallbackLicenseProofFile
+          ? [fallbackLicenseProofFile]
+          : [],
     premiereProofUrl: meituanImageUrl(payload, "premiereProof"),
     totalEpisodes: numberValue(extra.totalEpisodes) ?? numberValue(payload.episodeCount),
     productionCompanyText:

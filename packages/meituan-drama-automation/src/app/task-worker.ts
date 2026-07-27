@@ -178,28 +178,27 @@ export async function runMeituanAccountTaskWorker(options: {
             `failStage=${failStage} error=${message}`,
         );
 
-        // 测试调试阶段，先不回调错误
-        // await reportWithRetry(
-        //   runtimeOptions,
-        //   {
-        //     taskId: claimed.accountTaskId,
-        //     success: false,
-        //     failStage,
-        //     errorMessage: message,
-        //     resultJson: {
-        //       activeUrl: page.url(),
-        //       accountId: account.accountId,
-        //       accountName: account.accountName,
-        //     },
-        //   },
-        //   isRunning,
-        // ).catch((reportError) => {
-        //   log(
-        //     runtimeOptions,
-        //     `[meituan-drama] failed task report exhausted retries: ` +
-        //     `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
-        //   );
-        // });
+        await reportWithRetry(
+          runtimeOptions,
+          {
+            taskId: claimed.accountTaskId,
+            success: false,
+            failStage,
+            errorMessage: message,
+            resultJson: {
+              activeUrl: page.url(),
+              accountId: account.accountId,
+              accountName: account.accountName,
+            },
+          },
+          isRunning,
+        ).catch((reportError) => {
+          log(
+            runtimeOptions,
+            `[meituan-drama] failed task report exhausted retries: ` +
+              `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
+          );
+        });
         continue;
       }
 

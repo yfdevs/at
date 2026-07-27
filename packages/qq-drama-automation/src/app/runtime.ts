@@ -19,6 +19,8 @@ import {
   getQqDramaOriginalTitle,
   validateQqDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
+import { prepareQqDramaPosterMaterial } from "../shared/poster-materials.js";
+import { prepareQqDramaCopyrightProofMaterials } from "../shared/copyright-proof-materials.js";
 import {
   launchQqDramaBrowserContext,
   qqDramaLoginStateFromUrl,
@@ -133,7 +135,10 @@ async function installFixedPageTitle(context: BrowserContext, title: string) {
 function classifyFailStage(error: unknown, fallback: QqDramaTaskFailStage): QqDramaTaskFailStage {
   const message = errorMessage(error);
   if (message.includes("LOGIN")) return "LOGIN";
-  if (/\[local-video-invalid\]|local episode videos|剧集视频|本地剧集视频|FILE|UPLOAD/i.test(message)) {
+  if (
+    /\[local-video-invalid\]|\[poster-material-invalid\]|\[copyright-proof-invalid\]|local episode videos|剧集视频|本地剧集视频|封面|海报|权属|FILE|UPLOAD/i
+      .test(message)
+  ) {
     return "UPLOAD_FILE";
   }
   if (message.includes("FIELD") || message.includes("FORM")) return "FILL_FORM";
@@ -172,6 +177,10 @@ async function ensureBaiduNetdiskResourceReady(
         resourceName,
         localEpisodeVideoRoot,
         episodeCount,
+        requiredOwnership: {
+          minimumImages: 1,
+        },
+        requiredPosterImages: 1,
       });
       return;
     } catch (error) {
@@ -180,6 +189,8 @@ async function ensureBaiduNetdiskResourceReady(
       const nonRetryable = [
         "分享文本中没有找到百度网盘链接",
         "百度网盘账号登录已过期",
+        "百度网盘权属材料数量不足",
+        "百度网盘海报封面数量不足",
         "剧集视频目录不存在",
         "存在重复集数",
         "剧集文件应按文件名匹配",
@@ -224,7 +235,20 @@ async function runTask(
       async () => {
         await ensureBaiduNetdiskResourceReady(task, options);
         await validateQqDramaLocalEpisodeVideos(task, options);
-        await runQqDramaPublishTask(page, context, task, options);
+        const poster = await prepareQqDramaPosterMaterial(task, options);
+        log(options, `[qq-drama] local cover ready: ${poster.file}`);
+        const copyrightProofMaterials = await prepareQqDramaCopyrightProofMaterials(task, options);
+        task.playlet.licenseProofFiles = copyrightProofMaterials.files;
+        log(
+          options,
+          `[qq-drama] local copyright proof ready: ` +
+            `source=${copyrightProofMaterials.sourceCount} upload=${copyrightProofMaterials.files.length}`,
+        );
+        try {
+          await runQqDramaPublishTask(page, context, task, options);
+        } finally {
+          await copyrightProofMaterials.cleanup();
+        }
       },
     );
     publishSucceeded = true;

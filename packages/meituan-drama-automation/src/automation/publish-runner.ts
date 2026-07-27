@@ -123,8 +123,6 @@ export async function runPublishTask(
   const copyrightProofMaterials = await prepareMeituanCopyrightProofMaterials(task, options);
 
   try {
-    // oxlint-disable-next-line no-debugger
-    // debugger;
     await clickWhenReady(page, page.getByText("发布至合集"));
     await selectPublishTargetStep(page, taskConfig, options, copyrightProofMaterials.files);
     await uploadEpisodeVideosStep(page, task, options);

@@ -78,13 +78,13 @@ export async function prepareMeituanCopyrightProofMaterials(
     }
 
     const productionProofFiles = await downloadProofFiles({
-      urls: task.playlet.productionProofFiles,
+      urls: task.playlet.productionProofFiles.slice(0, 1),
       kind: "production",
       taskDir,
       runtimeOptions: options,
     });
     const licenseProofFiles = await downloadProofFiles({
-      urls: task.playlet.licenseProofFiles,
+      urls: task.playlet.licenseProofFiles.slice(0, 1),
       kind: "license",
       taskDir,
       runtimeOptions: options,
@@ -92,7 +92,7 @@ export async function prepareMeituanCopyrightProofMaterials(
     const contractProofFiles = [
       ...productionProofFiles,
       ...licenseProofFiles,
-    ].slice(0, 2);
+    ];
     const ownershipComposite = await composeOwnershipMaterialsIntoOne({
       files: ownershipFiles,
       outputDir: path.dirname(ownershipFiles[0].file),

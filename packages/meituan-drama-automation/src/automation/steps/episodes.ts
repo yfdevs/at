@@ -11,7 +11,7 @@ import { log } from "../browser-session.js";
 import { scrollLocatorIntoView } from "../form-controls.js";
 
 const videoUploadRowsSelector = "#video-list .tab-video, .video-list .tab-video";
-const videoUploadProgressTimeoutMs = 30 * 60 * 1000;
+const videoUploadProgressTimeoutMs = 2 * 60 * 60 * 1000;
 const videoUploadProgressPollMs = 2_000;
 
 type VideoUploadRow = {

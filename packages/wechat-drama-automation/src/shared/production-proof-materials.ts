@@ -1,4 +1,5 @@
 import path from "node:path";
+import { randomInt } from "node:crypto";
 import { rm, stat } from "node:fs/promises";
 import {
   composeOwnershipMaterialsIntoTwo,
@@ -6,7 +7,12 @@ import {
   safeEpisodeFileBaseName,
 } from "@drama/drama-media-assets";
 import { prepareUploadFiles } from "../automation/upload/upload-helpers.js";
-import { resolveFromRoot, resolveRunDataPath } from "./config.js";
+import {
+  mingxingshuoContractSubject,
+  normalizeContractSubject,
+  resolveFromRoot,
+  resolveRunDataPath,
+} from "./config.js";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
 import { booleanSetting } from "./settings-value.js";
 import type { Config } from "./types.js";
@@ -50,7 +56,27 @@ async function resolveContractFiles(config: Config) {
   );
 }
 
-export async function prepareWechatProductionProofMaterials(config: Config) {
+function isMingxingshuoContractSubject(contractSubject?: string) {
+  return Boolean(
+    contractSubject
+    && normalizeContractSubject(contractSubject) === mingxingshuoContractSubject,
+  );
+}
+
+export function selectRandomOwnershipFiles(files: string[], maximumCount = 4) {
+  const shuffled = [...files];
+  const selectedCount = Math.min(Math.max(0, maximumCount), shuffled.length);
+  for (let index = 0; index < selectedCount; index += 1) {
+    const selectedIndex = randomInt(index, shuffled.length);
+    [shuffled[index], shuffled[selectedIndex]] = [shuffled[selectedIndex], shuffled[index]];
+  }
+  return shuffled.slice(0, selectedCount);
+}
+
+export async function prepareWechatProductionProofMaterials(
+  config: Config,
+  contractSubject?: string,
+) {
   const localEpisodeVideoRoot = getWechatVideoRuntimeSettings().localEpisodeVideoRoot.trim();
   const ownership = await listLocalOwnershipMaterials({
     root: localEpisodeVideoRoot,
@@ -63,6 +89,13 @@ export async function prepareWechatProductionProofMaterials(config: Config) {
       `[production-proof-invalid] 微信视频号权属材料不足：${missing.join("；")}；` +
         `扫描目录=${localEpisodeVideoRoot}`,
     );
+  }
+
+  if (isMingxingshuoContractSubject(contractSubject)) {
+    config.playlet.copyright.productionProofFiles = selectRandomOwnershipFiles(
+      ownership.map((file) => file.file),
+    );
+    return config.playlet.copyright.productionProofFiles;
   }
 
   const contractFiles = await resolveContractFiles(config);

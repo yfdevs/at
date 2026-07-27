@@ -198,7 +198,10 @@ export class TaskWorkerPool {
           consecutiveEmptyClaims = 0;
 
           try {
-            const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
+            const playletConfig = normalizeClaimedTaskConfig(
+              claimedAccountTask,
+              videoAccount.contractSubject,
+            );
             await this.assertMingxingshuoAuditApproved(videoAccount, playletConfig.playlet.name);
             logger.info("audit gate passed; verify login before task execution", {
               accountTaskId: claimedAccountTask.accountTaskId,
@@ -218,10 +221,22 @@ export class TaskWorkerPool {
                 },
               );
             }
-            await this.ensureBaiduNetdiskResourceReady(claimedAccountTask, playletConfig);
+            await this.ensureBaiduNetdiskResourceReady(videoAccount, claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
             await prepareWechatPosterMaterials(playletConfig);
-            await prepareWechatProductionProofMaterials(playletConfig);
+            const productionProofFiles = await prepareWechatProductionProofMaterials(
+              playletConfig,
+              videoAccount.contractSubject,
+            );
+            logger.info("production proof materials ready", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              contractSubject: videoAccount.contractSubject,
+              strategy: videoAccount.contractSubject
+                && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject
+                ? "mingxingshuo-random-ownership"
+                : "contract-and-ownership",
+              files: productionProofFiles,
+            });
 
             const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
               videoAccountId,
@@ -309,6 +324,7 @@ export class TaskWorkerPool {
   }
 
   private async ensureBaiduNetdiskResourceReady(
+    videoAccount: VideoAccount,
     claimedAccountTask: Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>,
     playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>,
   ): Promise<void> {
@@ -330,6 +346,10 @@ export class TaskWorkerPool {
     const settings = getWechatVideoRuntimeSettings();
     const retryAttempts = integerSetting(settings.baiduNetdiskDownloadRetryAttempts, 3);
     const maxAttempts = retryAttempts + 1;
+    const isMingxingshuo = Boolean(
+      videoAccount.contractSubject
+      && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject,
+    );
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -348,7 +368,7 @@ export class TaskWorkerPool {
           episodeCount: playletConfig.playlet.episodeCount,
           requiredOwnership: wechatOwnershipRequirements,
           requiredPosterImages: 1,
-          mergeOwnershipMaterials: !["false", "0", "no", "off"].includes(
+          mergeOwnershipMaterials: !isMingxingshuo && !["false", "0", "no", "off"].includes(
             String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
           ),
         });

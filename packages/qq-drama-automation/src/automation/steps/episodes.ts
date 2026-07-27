@@ -20,6 +20,100 @@ type EpisodeUploadStatus = {
   failedText?: string;
 };
 
+type FailedEpisodeUpload = {
+  fileName: string;
+  errorMessage: string;
+  retryAttempts: number;
+};
+
+function normalizeUiText(value: string | null | undefined) {
+  return value?.replace(/\s+/g, " ").trim() ?? "";
+}
+
+async function collectFailedEpisodeUploads(
+  page: Page,
+  retryAttemptsByFile: Map<string, number>,
+): Promise<FailedEpisodeUpload[]> {
+  const rows = page.locator(".episode-row.ep-error:visible");
+  const failures: FailedEpisodeUpload[] = [];
+  for (let index = 0; index < await rows.count(); index += 1) {
+    const row = rows.nth(index);
+    const fileName = normalizeUiText(
+      await row.locator(".ep-file-name").first().textContent().catch(() => ""),
+    ) || `未知剧集-${index + 1}`;
+    const errorMessage = normalizeUiText(
+      await row.locator(".ep-error-msg").first().textContent().catch(() => ""),
+    ) || "页面未提供失败原因";
+    failures.push({
+      fileName,
+      errorMessage,
+      retryAttempts: retryAttemptsByFile.get(fileName) ?? 0,
+    });
+  }
+  return failures;
+}
+
+function failedEpisodeUploadError(
+  failures: FailedEpisodeUpload[],
+  maxRetryAttempts: number,
+) {
+  const details = failures.map((failure) =>
+    `${failure.fileName}：${failure.errorMessage}（已重试 ${failure.retryAttempts}/${maxRetryAttempts} 次）`
+  ).join("；");
+  return new Error(`[upload-failed] QQ 剧集视频上传失败：${details || "未读取到失败集信息"}`);
+}
+
+async function retryFailedEpisodeRows(
+  page: Page,
+  retryAttemptsByFile: Map<string, number>,
+  maxRetryAttempts: number,
+  options: QqDramaRuntimeOptions,
+) {
+  while (true) {
+    const failures = await collectFailedEpisodeUploads(page, retryAttemptsByFile);
+    if (failures.length === 0) return;
+
+    const failure = failures[0];
+    if (failure.retryAttempts >= maxRetryAttempts) {
+      throw failedEpisodeUploadError(failures, maxRetryAttempts);
+    }
+
+    const row = page
+      .locator(".episode-row.ep-error:visible")
+      .filter({
+        has: page.locator(".ep-file-name").filter({
+          hasText: new RegExp(`^\\s*${failure.fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`),
+        }),
+      })
+      .first();
+    const retryButton = row.getByRole("button", { name: "重试", exact: true }).first();
+    if (await retryButton.count() === 0) {
+      throw failedEpisodeUploadError(failures, maxRetryAttempts);
+    }
+
+    const nextAttempt = failure.retryAttempts + 1;
+    retryAttemptsByFile.set(failure.fileName, nextAttempt);
+    log(
+      options,
+      `[qq-drama] retrying failed episode: file=${failure.fileName} ` +
+        `attempt=${nextAttempt}/${maxRetryAttempts} error=${failure.errorMessage}`,
+    );
+    await retryButton.scrollIntoViewIfNeeded();
+    await retryButton.click({ timeout: 10_000 });
+
+    const leftErrorState = await row.waitFor({
+      state: "hidden",
+      timeout: 30_000,
+    }).then(() => true, () => false);
+    if (!leftErrorState && nextAttempt >= maxRetryAttempts) {
+      throw failedEpisodeUploadError(
+        await collectFailedEpisodeUploads(page, retryAttemptsByFile),
+        maxRetryAttempts,
+      );
+    }
+  }
+}
+
 async function readEpisodeUploadStatus(page: Page, episodeCount: number): Promise<EpisodeUploadStatus> {
   return page.evaluate((expectedCount): EpisodeUploadStatus => {
     const normalize = (value: string | null | undefined) =>
@@ -75,17 +169,16 @@ async function waitForEpisodeUploadComplete(
   const timeoutMs = 80 * 60 * 1000;
   const pollMs = 2_000;
   const startedAt = Date.now();
+  const maxRetryAttempts = Math.max(0, options.episodeUploadFailedRetryAttempts ?? 3);
+  const retryAttemptsByFile = new Map<string, number>();
   let lastText = "";
 
   while (Date.now() - startedAt < timeoutMs) {
+    await retryFailedEpisodeRows(page, retryAttemptsByFile, maxRetryAttempts, options);
     const result = await readEpisodeUploadStatus(page, episodeCount);
     if (result.text && result.text !== lastText) {
       lastText = result.text;
       log(options, `[qq-drama] episode upload status: ${result.text}`);
-    }
-
-    if (result.status === "failed") {
-      throw new Error(`[upload-failed] 剧集视频上传失败：${result.failedText || result.text}`);
     }
 
     if (result.status === "succeeded") {
@@ -95,6 +188,10 @@ async function waitForEpisodeUploadComplete(
     await page.waitForTimeout(pollMs);
   }
 
+  const failures = await collectFailedEpisodeUploads(page, retryAttemptsByFile);
+  if (failures.length > 0) {
+    throw failedEpisodeUploadError(failures, maxRetryAttempts);
+  }
   throw new Error(
     `[upload-failed] 等待 QQ 剧集视频上传完成超时。当前状态：${lastText || "未读取到上传状态"}`,
   );

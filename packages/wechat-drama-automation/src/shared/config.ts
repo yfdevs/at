@@ -182,13 +182,17 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   };
 }
 
-function validatePlayletConfig(playletConfig: Config): Config {
+function validatePlayletConfig(playletConfig: Config, contractSubject?: string): Config {
   if (!playletConfig.originalTitle) throw new Error("data.originalTitle is required");
   if (!playletConfig.playlet?.name) throw new Error("data.playlet.name is required");
   if (!playletConfig.playlet.summary) throw new Error("data.playlet.summary is required");
   if (!playletConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
   const productionProofFileCount = playletConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
-  if (productionProofFileCount < 1) {
+  const isMingxingshuo = Boolean(
+    contractSubject
+    && normalizeContractSubject(contractSubject) === mingxingshuoContractSubject,
+  );
+  if (!isMingxingshuo && productionProofFileCount < 1) {
     throw new Error("data.playlet.copyright.productionProofFiles must contain at least 1 contract file.");
   }
 
@@ -205,8 +209,11 @@ function parseDataJson(dataJson: unknown): Config {
   throw new Error("dramaAiRpa detail response data.dataJson is required.");
 }
 
-export function normalizeClaimedTaskConfig(task: ClaimedAccountTask): Config {
-  const playlet = task.playlet as Config["playlet"] & Partial<Config>;
+export function normalizeClaimedTaskConfig(task: ClaimedAccountTask, contractSubject?: string): Config {
+  const playlet = {
+    ...(task.playlet as Config["playlet"] & Partial<Config>),
+    name: task.originalTitle,
+  };
   const videoAccountConfig = (task.videoAccountConfig ?? {}) as Partial<Config>;
   const accountTask = (task.accountTask ?? {}) as Partial<Config>;
 
@@ -215,7 +222,7 @@ export function normalizeClaimedTaskConfig(task: ClaimedAccountTask): Config {
     ...(accountTask as object),
     originalTitle: task.originalTitle,
     playlet,
-  } as Config);
+  } as Config, contractSubject);
 }
 
 export async function loadConfigFromDramaAiRpa(id: string): Promise<Config> {

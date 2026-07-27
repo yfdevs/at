@@ -5,6 +5,7 @@ export type QqDramaConfig = {
   apiBaseUrl: string
   localEpisodeVideoRoot: string
   baiduNetdiskDownloadRetryAttempts: string
+  episodeUploadFailedRetryAttempts: string
   headless: string
   operationDelaySeconds: string
   taskPollIntervalSeconds: string

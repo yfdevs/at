@@ -20,7 +20,7 @@
 | `browser.keepOpenOnError` | 出错后保持浏览器打开 | `true` | 方便排查失败页面。 |
 | `browser.keepOpenAfterRun` | 任务结束后保持浏览器打开 | `false` | 调试时可改为 `true`。 |
 | `dryRun` | 是否试运行 | `true` | 保留字段；当前流程进入第三步后会自动确认提审。 |
-| `playlet.name` | 剧目名称 | 示例剧名 | 必填。 |
+| `playlet.name` | 剧目名称 | 示例剧名 | 领取任务后会被外层 `originalTitle` 原样覆盖，不做清洗。 |
 | `playlet.summary` | 剧目简介 | 示例简介 | 必填。 |
 | `playlet.recommendation` | 推荐语 | 示例推荐语 | 非必填。 |
 | `playlet.episodeCount` | 总集数 | `9` | 必填，提交后通常不可变更。 |
@@ -32,7 +32,7 @@
 | `playlet.posters.promotion` | 推广海报 | 无 | 非必填文件路径，支持远程 URL 或非 `assets/` 的本地绝对路径。 |
 | `playlet.submissionIdentity` | 提审身份 | `版权方/授权播出方` | 可选 `剧目制作方`、`版权方/授权播出方`。 |
 | `playlet.producerName` | 制作方名称 | 示例公司名 | 必填。 |
-| `playlet.copyright.productionProofFiles` | 合同材料 | 示例文件数组 | 至少提供 1 个候选文件；按顺序选择第一张可用图片，微信只上传 1 张合同图。 |
+| `playlet.copyright.productionProofFiles` | 合同材料 | 示例文件数组 | 非明星说主体至少提供 1 个候选文件；按顺序选择第一张可用图片，微信只上传 1 张合同图。明星说主体忽略该字段。 |
 | `playlet.copyright.licenseProofFiles` | 版权采买&播出授权证明材料 | 示例文件数组 | 可上传多个文件。 |
 | `playlet.qualification.type` | 剧目资质 | `其他微短剧` | 可选 `重点/普通微短剧`、`其他微短剧`。 |
 | `playlet.qualification.proofFiles` | 剧目资质证明材料 | 示例文件数组 | 可上传多个文件。 |
@@ -42,7 +42,7 @@
 | `playlet.otherMaterials` | 其他材料 | `[]` | 可上传多个文件。 |
 剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频`、`根目录/originalTitle/正片` 下的 `.mp4` 文件。源文件名支持 `originalTitle-第N集.mp4`、`originalTitle - 第N集.mp4`、`originalTitle 第N集.mp4`、`originalTitleNN.mp4`、`originalTitle NN.mp4`、`originalTitle-NN.mp4`、`originalTitle - NN.mp4` 和 `N.mp4`；`-` 前后空格可有可无，不再支持下划线分隔。上传前会在运行数据目录创建硬链接，并把上传文件名设为 `payloadJson.name-第N集.mp4`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
 
-微信会递归扫描 `根目录/originalTitle` 下名称包含“权属”或“工程”的目录，收集目录及其子目录中的全部 `png/jpg/jpeg/bmp/webp` 图片；图片文件名、剧名、工程类型和编号均不作要求。任务包含百度网盘链接时，程序会将视频目录和完整权属目录分别下载，等待权属目录下载完成后再整理到本地标准目录。默认把全部权属图片按数量平均分为两组并纵向合成为最多两张图片（例如 10 张拆为 5+5），与合同图片共同上传。
+微信会递归扫描 `根目录/originalTitle` 下名称包含“权属”或“工程”的目录，收集目录及其子目录中的全部 `png/jpg/jpeg/bmp/webp` 图片；图片文件名、剧名、工程类型和编号均不作要求。任务包含百度网盘链接时，程序会将视频目录和完整权属目录分别下载，等待权属目录下载完成后再整理到本地标准目录。默认把全部权属图片按数量平均分为两组并纵向合成为最多两张图片（例如 10 张拆为 5+5），与合同图片共同上传。明星说主体账号除外：忽略领取接口返回的合同图片，权属图片不拼接；至少需要 1 张，少于 4 张时全部上传，达到 4 张时从原始权属图片中无重复随机选取 4 张上传。百度网盘资源同样按至少 1 张权属图片校验，并关闭权属图片拼接。
 
 微信的剧目海报和推广海报不使用后端返回的 `playlet.posters` 文件地址，且只匹配一张图片。程序会递归扫描本地剧目目录或百度网盘资源：首先在整个资源中匹配文件名包含“封面”或“海报”的 `png/jpg/jpeg/bmp/webp` 图片；完全没有文件名匹配时，才查找名称包含“封面”或“海报”的目录，并取首个匹配目录中按文件名排序后的第一张图片。网盘素材会随所在目录下载，完成后只复制一张到 `根目录/originalTitle/海报封面`，命名为 `originalTitle - 海报.扩展名`。剧目海报和推广海报固定复用该图片。
 | `publish.submit` | 是否确认提审 | `false` | 保留字段；当前流程进入第三步后会自动确认提审。 |

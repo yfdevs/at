@@ -4,17 +4,17 @@ export type QqDramaLoginState = "login-required" | "logged-in" | "unknown";
 export type QqDramaTaskStatus = "READY" | "RUNNING" | "SUCCESS" | "FAILED";
 export type QqDramaTaskFailStage =
   | "LOGIN"
-  | "CLAIM_TASK"
-  | "OPEN_FORM"
   | "FILL_FORM"
+  | "OTHER"
+  | "RECOGNIZE_RESULT"
   | "UPLOAD_FILE"
   | "SUBMIT";
 
 export const qqDramaTaskFailStageValues = [
   "LOGIN",
-  "CLAIM_TASK",
-  "OPEN_FORM",
   "FILL_FORM",
+  "OTHER",
+  "RECOGNIZE_RESULT",
   "UPLOAD_FILE",
   "SUBMIT",
 ] as const;
@@ -68,8 +68,8 @@ const qqDramaPublishFormBaseSchema = z.object({
   summary: requiredText.max(200).describe("作品简介，最多 200 个字。"),
   // 受众类型：男频、女频、通用
   audienceType: z.enum(qqDramaAudienceTypeValues).describe("受众类型。"),
-  coverImageFile: fileReference.describe(
-    "封面图，比例 7:10，分辨率 >= 350x500，<= 5MB，支持 JPG、JPEG、PNG、BMP。",
+  localCoverFile: fileReference.describe(
+    "运行时从本地资源匹配的封面图，比例 7:10，分辨率 >= 350x500，<= 5MB。",
   ),
   episodeCount: z.coerce.number().int().min(1).max(1000).describe("承诺总集数，范围 1 ~ 1000。"),
   // 更新状态：已完结、连载中
@@ -109,9 +109,10 @@ const qqDramaPublishFormBaseSchema = z.object({
   productionCostRange: z.enum(qqDramaProductionCostRangeValues).describe("制作成本范围。"),
   productionCostWan: z.coerce.number().finite().nonnegative().describe("具体成本，单位：万元。"),
   productionYear: z.coerce.number().int().min(1900).max(2100).describe("年份，例如 2026。"),
-  costAllocationReportFile: fileReference.describe(
-    "成本配置比例情况报告，支持 JPG、PNG、PDF，<= 10MB。",
-  ),
+  costAllocationReportFiles: z
+    .array(fileReference)
+    .min(1)
+    .describe("成本配置比例情况报告，支持 JPG、PNG、PDF，单个 <= 10MB。"),
   licenseProofFiles: z
     .array(fileReference)
     .min(1)
@@ -149,11 +150,9 @@ export const qqDramaTaskPayloadSchema = z
     title: requiredText.max(20).describe("新剧名"),
     summary: requiredText.max(200).describe("作品简介，最多 200 个字"),
     audienceType: z.enum(qqDramaAudienceTypeValues).describe("受众类型"),
-    coverImageFile: fileReference
+    localCoverFile: fileReference
       .optional()
-      .describe("封面图，比例 7:10，分辨率 >= 350x500，<= 5MB，支持 JPG、JPEG、PNG、BMP"),
-    coverImageUrl: z.string().trim().url().optional(),
-    posterImageUrl: z.string().trim().url().optional(),
+      .describe("运行时从本地资源匹配的封面图，比例 7:10，分辨率 >= 350x500，<= 5MB"),
     episodeCount: z.coerce.number().int().min(1).max(1000).describe("承诺总集数，范围 1 ~ 1000"),
     baiduPanResourceLink: z.string().trim().optional(),
     updateStatus: z.enum(qqDramaUpdateStatusValues).describe("更新状态"),
@@ -184,9 +183,10 @@ export const qqDramaTaskPayloadSchema = z
     productionCostRange: z.enum(qqDramaProductionCostRangeValues).describe("制作成本范围"),
     productionCostWan: z.coerce.number().finite().nonnegative().describe("具体成本，单位：万元"),
     productionYear: z.coerce.number().int().min(1900).max(2100).describe("年份，例如 2026"),
-    costAllocationReportFile: fileReference.optional().describe(
-      "成本配置比例情况报告，支持 JPG、PNG、PDF，<= 10MB",
-    ),
+    costAllocationReportFiles: z
+      .array(fileReference)
+      .min(1, "payloadJson.productionCost.proofFiles must contain at least 1 file")
+      .describe("成本配置比例情况报告，至少 1 个，支持 JPG、PNG、PDF，单个 <= 10MB"),
     licenseProofFiles: z
       .array(fileReference)
       .default([])
@@ -252,6 +252,7 @@ export type QqDramaRuntimeOptions = {
   apiConfig?: QqDramaApiConfig;
   localEpisodeVideoRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
+  episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
   taskPollingEnabled?: boolean;
   config?: {
@@ -266,6 +267,10 @@ export type QqDramaRuntimeOptions = {
     resourceName: string;
     localEpisodeVideoRoot: string;
     episodeCount: number;
+    requiredOwnership?: {
+      minimumImages?: number;
+    };
+    requiredPosterImages?: number;
   }) => Promise<unknown>;
 };
 

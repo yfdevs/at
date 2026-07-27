@@ -73,6 +73,7 @@ export type QqDramaConfig = {
   apiBaseUrl: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
+  episodeUploadFailedRetryAttempts: string;
   headless: string;
   operationDelaySeconds: string;
   taskPollIntervalSeconds: string;
@@ -110,6 +111,7 @@ const defaultQqDramaConfig: QqDramaConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
+  episodeUploadFailedRetryAttempts: "3",
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
@@ -196,6 +198,11 @@ function normalizeConfig(
     baiduNetdiskDownloadRetryAttempts: normalizeNumberText(
       config.baiduNetdiskDownloadRetryAttempts,
       defaultQqDramaConfig.baiduNetdiskDownloadRetryAttempts,
+      0,
+    ),
+    episodeUploadFailedRetryAttempts: normalizeNumberText(
+      config.episodeUploadFailedRetryAttempts,
+      defaultQqDramaConfig.episodeUploadFailedRetryAttempts,
       0,
     ),
     headless: config.headless ?? defaultQqDramaConfig.headless,
@@ -381,6 +388,10 @@ async function startRuntime() {
     0,
     Number.parseInt(config.baiduNetdiskDownloadRetryAttempts, 10) || 0,
   );
+  const episodeUploadFailedRetryAttempts = Math.max(
+    0,
+    Number.parseInt(config.episodeUploadFailedRetryAttempts, 10) || 0,
+  );
   const taskPollIntervalMs = Math.max(1, Number.parseFloat(config.taskPollIntervalSeconds) || 10) * 1000;
   const {
     fetchQqDramaAccounts,
@@ -418,6 +429,7 @@ async function startRuntime() {
         logRetentionDays,
         localEpisodeVideoRoot: config.localEpisodeVideoRoot,
         baiduNetdiskDownloadRetryAttempts,
+        episodeUploadFailedRetryAttempts,
         taskPollIntervalMs,
         taskPollingEnabled: true,
         ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,

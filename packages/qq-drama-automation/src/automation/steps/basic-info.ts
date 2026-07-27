@@ -30,10 +30,6 @@ function fileFromRef(
   return /^https?:\/\//i.test(ref) ? { label, url: ref, fileName } : { label, path: ref, fileName };
 }
 
-function firstAvailableFileRef(...fileRefs: Array<string | undefined>) {
-  return fileRefs.find((fileRef) => Boolean(fileRef?.trim()));
-}
-
 async function fillFieldIfPresent(
   page: Page,
   options: QqDramaRuntimeOptions,
@@ -155,7 +151,7 @@ export async function fillBasicInfoStep(
     options,
     fileFromRef(
       "封面图",
-      firstAvailableFileRef(payload.coverImageFile, payload.coverImageUrl, payload.posterImageUrl),
+      payload.localCoverFile,
       "cover",
     ),
   );
@@ -247,10 +243,17 @@ export async function fillBasicInfoStep(
     kind: "text",
     placeholder: "如 2026",
   });
-  await uploadFileIfPresent(
+  await uploadFilesIfPresent(
     page,
     options,
-    fileFromRef("成本配置比例情况报告", payload.costAllocationReportFile, "cost-allocation-report"),
+    payload.costAllocationReportFiles.flatMap((fileRef, index) => {
+      const file = fileFromRef(
+        "成本配置比例情况报告",
+        fileRef,
+        `cost-allocation-report-${index + 1}`,
+      );
+      return file ? [file] : [];
+    }),
   );
 
   // 版权信息

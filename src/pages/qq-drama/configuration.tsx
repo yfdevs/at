@@ -16,6 +16,7 @@ const emptyConfig: QqDramaConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
+  episodeUploadFailedRetryAttempts: "3",
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
@@ -56,11 +57,19 @@ const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
         suffix: "次",
         min: 0,
       },
+      {
+        key: "episodeUploadFailedRetryAttempts",
+        label: "上传失败重试",
+        description: "单集视频出现“重试”按钮时的最多重试次数。",
+        type: "number",
+        suffix: "次",
+        min: 0,
+      },
     ],
   },
   {
     title: "浏览器与运行数据",
-    description: "QQ 短剧平台使用独立浏览器登录态和素材缓存。",
+    description: "QQ 短剧平台使用 Playwright 安装的 Chromium，并保存独立浏览器登录态和素材缓存。",
     fields: [
       {
         key: "runDataDir",

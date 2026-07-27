@@ -1,87 +1,15 @@
-import { execFile } from "node:child_process";
-import { access, mkdir } from "node:fs/promises";
-import path, { dirname } from "node:path";
-import { promisify } from "node:util";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { QQ_DRAMA_LOGIN_URL } from "../shared/constants.js";
 import { log } from "../shared/logger.js";
 import type { QqDramaLoginState, QqDramaRuntimeOptions } from "../shared/types.js";
-
-const execFileAsync = promisify(execFile);
 
 export function qqDramaLoginStateFromUrl(url: string | undefined): QqDramaLoginState {
   if (!url || url === "about:blank") return "unknown";
   return /(?:#|\/)\/?login(?:\?|$|&|\/)/i.test(url) || url.includes("#/login")
     ? "login-required"
     : "logged-in";
-}
-
-async function pathExists(filePath: string) {
-  return access(filePath).then(
-    () => true,
-    () => false,
-  );
-}
-
-function isChromeForTestingPath(filePath: string) {
-  const normalizedPath = filePath.toLowerCase();
-  return normalizedPath.includes("chrome for testing") || normalizedPath.includes("ms-playwright");
-}
-
-async function queryWindowsChromeAppPath(root: "HKCU" | "HKLM") {
-  const key = `${root}\\Software\\Microsoft\\Windows\\CurrentVersion\\App Paths\\chrome.exe`;
-  const { stdout } = await execFileAsync("reg", ["query", key, "/ve"], {
-    windowsHide: true,
-  });
-  const match = stdout.match(/REG_SZ\s+(.+chrome\.exe)\s*$/im);
-  return match?.[1]?.trim();
-}
-
-async function findWindowsChromeExecutable() {
-  const registryCandidates = await Promise.all([
-    queryWindowsChromeAppPath("HKCU").catch(() => undefined),
-    queryWindowsChromeAppPath("HKLM").catch(() => undefined),
-  ]);
-  const pathCandidates = [
-    process.env.PROGRAMFILES
-      ? path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe")
-      : undefined,
-    process.env["PROGRAMFILES(X86)"]
-      ? path.join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe")
-      : undefined,
-    process.env.LOCALAPPDATA
-      ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")
-      : undefined,
-  ];
-  const candidates = [...registryCandidates, ...pathCandidates].filter(
-    (candidate): candidate is string => Boolean(candidate?.trim()),
-  );
-
-  for (const candidate of candidates) {
-    if (isChromeForTestingPath(candidate)) continue;
-    if (await pathExists(candidate)) return candidate;
-  }
-
-  return undefined;
-}
-
-async function findLocalGoogleChromeExecutable() {
-  const executablePath =
-    process.platform === "win32"
-      ? await findWindowsChromeExecutable()
-      : process.platform === "darwin"
-        ? "/Applications/Google Chrome.app/Contents/MacOS/Google Chrome"
-        : "/usr/bin/google-chrome";
-
-  if (
-    executablePath &&
-    !isChromeForTestingPath(executablePath) &&
-    (await pathExists(executablePath))
-  ) {
-    return executablePath;
-  }
-
-  throw new Error("QQ 短剧需要本机正式版 Google Chrome。请安装 Google Chrome 后再启动服务。");
 }
 
 function qqDramaBrowserLaunchOptions(options: QqDramaRuntimeOptions) {
@@ -104,22 +32,9 @@ export async function launchQqDramaBrowserContext(
   options: QqDramaRuntimeOptions,
 ) {
   const launchOptions = qqDramaBrowserLaunchOptions(options);
-
-  try {
-    const executablePath = await findLocalGoogleChromeExecutable();
-    const context = await chromium.launchPersistentContext(userDataDir, {
-      ...launchOptions,
-      executablePath,
-    });
-    log(options, `[qq-drama] started browser with local Google Chrome: ${executablePath}`);
-    return context;
-  } catch (error) {
-    log(options, "[qq-drama] failed to start local Google Chrome");
-    throw Object.assign(
-      new Error("QQ 短剧需要本机正式版 Google Chrome。请安装 Google Chrome 后再启动服务。"),
-      { cause: error },
-    );
-  }
+  const context = await chromium.launchPersistentContext(userDataDir, launchOptions);
+  log(options, "[qq-drama] started browser with Playwright Chromium");
+  return context;
 }
 
 export async function saveCredentialState(context: BrowserContext, options: QqDramaRuntimeOptions) {

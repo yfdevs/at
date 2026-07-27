@@ -46,9 +46,7 @@ type ClaimedQqDramaTask = {
 | `title` | 是 | 字符串 | 文本框，作品名称 | 1～20 字 |
 | `summary` | 是 | 字符串 | 多行文本，作品简介 | 最多 200 字 |
 | `audienceType` | 是 | 枚举 | 单选 | `男频`、`女频`、`通用` |
-| `coverImageFile` | 条件必填 | 字符串 | 封面文件上传 | 本地路径或 HTTP(S) URL |
-| `coverImageUrl` | 条件必填 | URL | 下载后上传封面 | HTTP(S) URL |
-| `posterImageUrl` | 条件必填 | URL | 封面兜底地址 | HTTP(S) URL |
+| `localCoverFile` | 运行时生成 | 字符串 | 封面文件上传 | 仅从本地/百度网盘剧目资源匹配 |
 | `episodeCount` | 是 | 整数 | 数字文本框 | 1～1000 |
 | `baiduPanResourceLink` | 否 | 字符串 | 百度网盘资源文本 | 用于准备本地正片 |
 | `updateStatus` | 是 | 枚举 | 单选 | `已完结`、`连载中` |
@@ -65,18 +63,19 @@ type ClaimedQqDramaTask = {
 | `productionCostRange` | 是 | 枚举 | 单选 | `< 30 万`、`30 ~ 80 万`、`≥ 80 万` |
 | `productionCostWan` | 是 | 数字 | 数字文本框 | 大于等于 0，单位万元 |
 | `productionYear` | 是 | 整数 | 数字文本框 | 1900～2100 |
-| `costAllocationReportFile` | 否 | 字符串 | 文件上传 | 优先取 `qqPlaylet.costAllocationReportFile`，否则取 `productionCost.proofFiles[0]` |
-| `licenseProofFiles` | 否 | 字符串数组 | 权属文件批量上传 | 合并 `qqPlaylet.licenseProofFiles` 与 `copyright.licenseProofFiles`；单个支持 PDF、JPG、JPEG、PNG，最大 10 MB |
+| `costAllocationReportFiles` | 是 | 字符串数组 | 文件批量上传 | 仅取 `productionCost.proofFiles` 的全部文件，至少 1 个 |
+| `licenseProofFiles` | 运行时生成 | 字符串数组 | 权属文件上传 | 忽略接口字段；本地工程/权属图片合成为 1 张后上传 |
 | `contractName` | 是 | 字符串 | 合同下拉 | 动态选项，取决于当前账号 |
 | `submit` | 否 | 布尔值 | 是否提交审核 | 默认 `false` |
 
-封面字段的实际使用优先级：
+QQ 正式任务与美团使用相同的本地封面准备逻辑：从
+`{localEpisodeVideoRoot}/{originalTitle}` 中匹配文件名包含“封面”或“海报”的图片；
+完全没有文件名匹配时，再查找名称包含“封面”或“海报”的目录并取排序后的第一张。
+任务包含百度网盘链接时，下载阶段要求至少 1 张封面并标准化到本地目录。最终上传使用
+运行时生成的 `localCoverFile`。后端返回的 `coverImageFile`、`coverImageUrl` 和
+`posterImageUrl` 均会被忽略。
 
-```text
-coverImageFile → coverImageUrl → posterImageUrl
-```
-
-业务接口应保证三个封面字段中至少存在一个。当前 Zod schema 尚未强制这一交叉校验。
+正式任务找不到本地封面时以 `poster-material-invalid` 失败，不进入页面填写，并上报后端。
 
 ### 一级分类
 
@@ -145,21 +144,27 @@ type QqDramaRole = {
 
 成本配置比例情况报告：
 
+- 后端字段：`payloadJson.productionCost.proofFiles`。
+- 至少 1 个；缺失或为空时任务校验失败并上报后端。
+- 取全部文件，去重后批量上传。
 - 最大文件：10 MB。
 - 格式：JPG、PNG、PDF。
 
 版权采买与播出授权证明：
 
-- 后端字段：`licenseProofFiles`。
-- 至少 1 个文件，支持一次上传多个。
-- 单个文件最大 10 MB。
-- 格式：PDF、JPG、JPEG、PNG。
+- 忽略接口返回的 `payloadJson.copyright.licenseProofFiles`。
+- 从 `{localEpisodeVideoRoot}/{originalTitle}` 下名称包含“工程”或“权属”的目录递归收集图片。
+- 有百度网盘链接时，下载阶段要求至少 1 张工程/权属图片。
+- 将全部本地权属图片纵向合成为 1 张临时图片后上传，任务结束后清理合成图。
+- 本地和百度网盘均找不到权属图片时，任务失败并上报后端。
 
 正片视频：
 
 - `originalTitle` 用于定位本地资源目录。
 - `episodeCount` 用于验证第 1 集到第 N 集是否完整。
 - 上传时会为文件准备规范化的临时文件名。
+- 页面出现失败剧集和“重试”按钮时，按文件分别累计重试次数，默认最多重试 3 次。
+- 达到上限后会汇总失败文件名、页面错误信息和实际重试次数，以 `UPLOAD_FILE` 阶段上报后端。
 
 ### 状态与失败阶段
 
@@ -176,9 +181,9 @@ FAILED
 
 ```text
 LOGIN
-CLAIM_TASK
-OPEN_FORM
 FILL_FORM
+OTHER
+RECOGNIZE_RESULT
 UPLOAD_FILE
 SUBMIT
 ```
@@ -259,7 +264,8 @@ type MeituanBackendPayload = {
 `meituanExtraInfo.copyrightProofUrl`，其次取 `meituanImages` 或
 `copyright.licenseProofFiles`；首发证明优先取
 `meituanExtraInfo.premiereProofUrl`，其次取 `meituanImages[key=premiereProof]`。
-规范化后仍缺少必填字段时，任务会以 `CLAIM_TASK` 阶段失败并回写错误，不进入页面发布。
+规范化后仍缺少必填素材时，任务会以 `UPLOAD_FILE` 阶段失败并回写错误；其他领取数据错误以
+`OTHER` 阶段回写，均不进入页面发布。
 
 ### 领取结果结构
 
