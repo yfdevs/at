@@ -1,5 +1,7 @@
 :root {
   --app-titlebar-height: 37px;
+  --app-titlebar-left-reserve: 4px;
+  --app-titlebar-right-reserve: 92px;
   --app-shell-background: radial-gradient(
       circle at 0 0,
       rgba(150, 195, 255, 0.28) 0%,
@@ -9,6 +11,12 @@
       rgba(255, 255, 255, 0) 75%
     ),
     #ffffff;
+}
+
+:root[data-platform="darwin"] {
+  --app-titlebar-height: 38px;
+  --app-titlebar-left-reserve: 78px;
+  --app-titlebar-right-reserve: 12px;
 }
 
 .dark {
@@ -92,7 +100,7 @@ body {
 .app-titlebar-memory-host {
   position: absolute;
   top: 0;
-  right: 92px;
+  right: var(--app-titlebar-right-reserve);
   z-index: 100;
   height: var(--app-titlebar-height);
   display: flex;
@@ -111,7 +119,7 @@ body {
 .app-titlebar-platform-switcher {
   position: absolute;
   top: calc((var(--app-titlebar-height) - 30px) / 2);
-  left: 4px;
+  left: var(--app-titlebar-left-reserve);
   display: inline-flex;
   height: 30px;
   align-items: center;
@@ -142,6 +150,10 @@ body {
 }
 
 .cet-titlebar .cet-control-maximize {
+  display: none !important;
+}
+
+:root[data-platform="darwin"] .cet-titlebar .cet-window-controls {
   display: none !important;
 }
 
