@@ -326,6 +326,7 @@ type MeituanCreationTaskConfig = {
   plotSynopsisText: string;
   premiereStatus?: "美团独家" | "美团联合首发" | "非美团首发";
   expectedPremiereTimeText?: string;
+  otherPlatformPremiereDateText?: string;
 };
 ```
 
@@ -356,7 +357,8 @@ type MeituanCreationTaskConfig = {
 | `averageEpisodeDurationMinutes` | 是 | 数字 | 数字文本框 | 大于 0，单位分钟 |
 | `plotSynopsisText` | 是 | 字符串 | 多行文本 | 剧情简介 |
 | `premiereStatus` | 否 | 枚举 | 下拉 | 默认 `美团联合首发` |
-| `expectedPremiereTimeText` | 否 | 字符串 | 日期时间控件 | 不传时由程序生成当前时间加 1 分钟 |
+| `expectedPremiereTimeText` | 联合首发时必填 | 字符串 | 预计首发时间控件 | `YYYY-MM-DD HH:mm:ss` |
+| `otherPlatformPremiereDateText` | 非美团首发时必填 | 字符串 | 其他平台首发时间控件 | `YYYY-MM-DD`，只有日期 |
 
 ### 合集类型
 
@@ -494,11 +496,11 @@ type MeituanCreationTaskConfig = {
 
 ### 预计首发时间
 
-`expectedPremiereTimeText` 不需要业务接口强制传入：
+`expectedPremiereTimeText` 在 `premiereStatus="美团联合首发"` 时必须由接口返回：
 
-- 不传：程序在填写页面前自动生成当前时间加 1 分钟。
+- 缺失：任务校验失败并上报后端。
 - 传入：作为业务指定的预计首发时间使用。
-- 传入时间已经过期或早于允许的最小时间：自动调整为当前时间加 1 分钟。
+- 运行时按接口值填写，不会因为任务排队或时间已过而自动调整。
 
 支持以下输入格式：
 
@@ -515,7 +517,12 @@ YYYY-MM-DDTHH:mm
 YYYY-MM-DD HH:mm:ss
 ```
 
-该时间在页面实际填写前生成或校正，避免任务排队时间导致预先生成的时间失效。
+填写后会回读页面输入框；页面实际值与接口值不一致时，任务失败并上报期望值和实际值。
+
+### 其他平台首发时间
+
+`otherPlatformPremiereDateText` 在 `premiereStatus="非美团首发"` 时必须由接口返回。
+格式固定为 `YYYY-MM-DD`，只填写日期，不包含时分秒。缺失或格式错误时任务校验失败并上报后端。
 
 ### 本地视频要求
 
@@ -545,6 +552,14 @@ QQ 和美团都在领取任务后、执行页面发布前按同一顺序处理�
 - 不缺集。
 
 任一条件不满足时，任务在打开发布表单操作之前失败，不会继续填写或上传。
+
+### 美团剧集上传失败重试
+
+- 剧集上传完成等待上限为 2 小时。
+- 单集出现“上传失败”和“重试”控件时，按文件名单独累计并点击重试。
+- 默认最多重试 5 次，可在美团配置页通过“上传失败重试”修改。
+- 达到上限仍失败时，汇总失败集号、文件名、页面错误信息和实际重试次数，
+  以 `UPLOAD_FILE` 阶段上报后端。
 
 ### 美团封面要求
 

@@ -1,4 +1,5 @@
 import path from "node:path";
+import { mkdir } from "node:fs/promises";
 import {
   chromium,
   type BrowserContext,
@@ -138,6 +139,7 @@ export async function startMeituanCreationRuntime(
     for (const account of options.accounts) {
       const browserOptions = accountRuntimeOptions(options, account);
       const userDataDir = browserOptions.userDataDir!;
+      await mkdir(userDataDir, { recursive: true });
       log(browserOptions, "[meituan-drama] starting account browser");
       const context = await chromium.launchPersistentContext(userDataDir, {
         headless: options.config?.browser?.headless ?? false,

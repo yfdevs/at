@@ -29,7 +29,8 @@ function hasTaskConfig(config: MeituanCreationConfig | undefined) {
     config?.averageEpisodeDurationMinutes ||
     config?.plotSynopsisText ||
     config?.premiereStatus ||
-    config?.expectedPremiereTimeText,
+    config?.expectedPremiereTimeText ||
+    config?.otherPlatformPremiereDateText,
   );
 }
 

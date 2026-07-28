@@ -18,7 +18,14 @@ type VideoUploadRow = {
   indexText: string;
   fileName: string;
   uploaded: boolean;
+  failed: boolean;
+  errorText: string;
+  retryAvailable: boolean;
 };
+
+function normalizeUiText(value: string | null | undefined) {
+  return value?.replace(/\s+/g, " ").trim() ?? "";
+}
 
 async function episodeVideoInputByDragger(page: Page) {
   const dragger = page.locator(".mtd-upload-dragger:visible").first();
@@ -118,15 +125,114 @@ async function readVideoUploadRows(page: Page): Promise<VideoUploadRow[]> {
     return Array.from(document.querySelectorAll<HTMLElement>(selector)).map((row) => {
       const uploadSuccess = row.querySelector<HTMLElement>(".upload-success");
       const successText = uploadSuccess?.innerText.trim() ?? "";
+      const uploadError = row.querySelector<HTMLElement>(".upload-error");
+      const failed = Boolean(uploadError && isVisible(uploadError));
+      const retryAvailable = Array.from(
+        row.querySelectorAll<HTMLElement>(".error-btn .scale-text"),
+      ).some((element) => element.innerText.trim() === "重试" && isVisible(element));
       return {
         indexText: row.querySelector<HTMLElement>(".video-index")?.innerText.trim() ?? "",
         fileName: row.querySelector<HTMLElement>(".file-name")?.innerText.trim() ?? "",
         uploaded: Boolean(
           uploadSuccess && (successText.includes("上传成功") || isVisible(uploadSuccess)),
         ),
+        failed,
+        errorText:
+          row.querySelector<HTMLElement>(".show-error-name")?.innerText.trim() ||
+          uploadError?.innerText.trim() ||
+          "",
+        retryAvailable,
       };
     });
   }, videoUploadRowsSelector);
+}
+
+function failedVideoUploadError(
+  failures: VideoUploadRow[],
+  retryAttemptsByFile: Map<string, number>,
+  maxRetryAttempts: number,
+) {
+  const details = failures
+    .map((failure, index) => {
+      const fileName = failure.fileName || failure.indexText || `未知剧集-${index + 1}`;
+      const errorText = failure.errorText || "页面仅显示上传失败，未提供具体原因";
+      const retryAttempts = retryAttemptsByFile.get(fileName) ?? 0;
+      return `${failure.indexText || "未知集号"} ${fileName}：${errorText}` +
+        `（已重试 ${retryAttempts}/${maxRetryAttempts} 次）`;
+    })
+    .join("；");
+  return new Error(
+    `[upload-failed] 美团剧集视频上传失败：${details || "未读取到失败剧集信息"}`,
+  );
+}
+
+async function retryFirstFailedVideoRow(
+  page: Page,
+  rows: VideoUploadRow[],
+  retryAttemptsByFile: Map<string, number>,
+  maxRetryAttempts: number,
+  options: MeituanCreationRuntimeOptions,
+) {
+  const failures = rows.filter((row) => row.failed);
+  if (failures.length === 0) return false;
+
+  const exhausted = failures.filter((failure, index) => {
+    const key = failure.fileName || failure.indexText || `未知剧集-${index + 1}`;
+    return (retryAttemptsByFile.get(key) ?? 0) >= maxRetryAttempts;
+  });
+  if (exhausted.length > 0) {
+    throw failedVideoUploadError(failures, retryAttemptsByFile, maxRetryAttempts);
+  }
+
+  const failure = failures[0];
+  const key = failure.fileName || failure.indexText || "未知剧集";
+  if (!failure.retryAvailable) {
+    throw failedVideoUploadError(failures, retryAttemptsByFile, maxRetryAttempts);
+  }
+
+  const escapedFileName = failure.fileName.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+  const row = page
+    .locator(videoUploadRowsSelector)
+    .filter({
+      has: page.locator(".file-name").filter({
+        hasText: new RegExp(`^\\s*${escapedFileName}\\s*$`),
+      }),
+    })
+    .first();
+  const retryControl = row
+    .locator(".error-btn .scale-text")
+    .filter({ hasText: /^\s*重试\s*$/ })
+    .filter({ visible: true })
+    .first();
+  if ((await retryControl.count()) === 0) {
+    throw failedVideoUploadError(failures, retryAttemptsByFile, maxRetryAttempts);
+  }
+
+  const nextAttempt = (retryAttemptsByFile.get(key) ?? 0) + 1;
+  retryAttemptsByFile.set(key, nextAttempt);
+  log(
+    options,
+    `[meituan-drama] retrying failed episode video: ` +
+      `episode=${failure.indexText || "-"} file=${key} ` +
+      `attempt=${nextAttempt}/${maxRetryAttempts} ` +
+      `error=${normalizeUiText(failure.errorText) || "上传失败"}`,
+  );
+  await retryControl.scrollIntoViewIfNeeded({ timeout: 30_000 });
+  await retryControl.click({ timeout: 30_000 });
+
+  const leftFailedState = await row
+    .locator(".upload-error:visible")
+    .waitFor({ state: "hidden", timeout: 30_000 })
+    .then(() => true, () => false);
+  if (!leftFailedState && nextAttempt >= maxRetryAttempts) {
+    const latestRows = await readVideoUploadRows(page);
+    throw failedVideoUploadError(
+      latestRows.filter((item) => item.failed),
+      retryAttemptsByFile,
+      maxRetryAttempts,
+    );
+  }
+  return true;
 }
 
 async function waitForVideoUploadProgress(
@@ -135,6 +241,8 @@ async function waitForVideoUploadProgress(
   options: MeituanCreationRuntimeOptions,
 ): Promise<void> {
   const deadline = Date.now() + videoUploadProgressTimeoutMs;
+  const maxRetryAttempts = Math.max(0, options.episodeUploadFailedRetryAttempts ?? 5);
+  const retryAttemptsByFile = new Map<string, number>();
   const loggedSuccessKeys = new Set<string>();
   let lastProgressLine = "";
 
@@ -146,6 +254,18 @@ async function waitForVideoUploadProgress(
 
     const rows = await readVideoUploadRows(page);
     const rowsToCheck = rows.slice(0, expectedCount);
+    if (
+      await retryFirstFailedVideoRow(
+        page,
+        rowsToCheck,
+        retryAttemptsByFile,
+        maxRetryAttempts,
+        options,
+      )
+    ) {
+      await page.waitForTimeout(videoUploadProgressPollMs);
+      continue;
+    }
     const uploadedRows = rowsToCheck.filter((row) => row.uploaded);
     const progressLine = `${uploadedRows.length}/${expectedCount} uploaded, ${rows.length} row(s) visible`;
 
@@ -175,7 +295,12 @@ async function waitForVideoUploadProgress(
   }
 
   const rows = await readVideoUploadRows(page);
-  const uploadedCount = rows.slice(0, expectedCount).filter((row) => row.uploaded).length;
+  const rowsToCheck = rows.slice(0, expectedCount);
+  const failures = rowsToCheck.filter((row) => row.failed);
+  if (failures.length > 0) {
+    throw failedVideoUploadError(failures, retryAttemptsByFile, maxRetryAttempts);
+  }
+  const uploadedCount = rowsToCheck.filter((row) => row.uploaded).length;
   throw new Error(
     `MEITUAN_VIDEO_UPLOAD_TIMEOUT: expected ${expectedCount} uploaded episode video(s), got ${uploadedCount}`,
   );

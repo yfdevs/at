@@ -43,7 +43,8 @@ https://czz.meituan.com/new/publishVideo
     "screenwriterNames": ["王五"],
     "averageEpisodeDurationMinutes": 2,
     "plotSynopsisText": "该剧讲述主角历经困境后逆袭成长，揭开真相并收获亲情与爱情的故事。",
-    "premiereStatus": "美团联合首发"
+    "premiereStatus": "美团联合首发",
+    "expectedPremiereTimeText": "2026-07-28 12:30:00"
   }
 }
 ```
@@ -75,7 +76,8 @@ https://czz.meituan.com/new/publishVideo
 `averageEpisodeDurationMinutes` 是单集平均时长，单位分钟。
 `plotSynopsisText` 是剧情简介。
 `premiereStatus` 是全网首发情况，支持 `美团独家`、`美团联合首发`、`非美团首发`，不传时默认 `美团联合首发`。
-`expectedPremiereTimeText` 是可选的预计首发时间，格式示例 `2026-06-25 12:30:00`。不传时，程序会在填写页面前自动生成当前时间加 1 分钟；传入时间过早时也会自动调整。
+`expectedPremiereTimeText` 是“美团联合首发”的预计首发时间，格式为 `YYYY-MM-DD HH:mm:ss`，选择该状态时接口必须返回；运行时按接口值填写并回读页面校验，不会自动改写。
+`otherPlatformPremiereDateText` 是“非美团首发”的其他平台首发时间，格式为 `YYYY-MM-DD`，只有日期、没有时间，选择该状态时接口必须返回。
 
 `baiduPanResourceLink` 是可选的百度网盘分享文本。存在时，运行时先把资源下载并标准化到
 `{localEpisodeVideoRoot}/{originalTitle}`，再用 `originalTitle + totalEpisodes`
@@ -99,6 +101,12 @@ POST /dramaAiRpa/meituan/accountTask/page（status=READY）
 
 领取接口的 `payloadJson` 使用后端通用短剧结构。运行时会合并其中的
 `meituanExtraInfo`，并从 `name`、`summary`、`episodeCount`、`producerName`、
-`posters`、`copyright`、`meituanImages` 和 `baiduPanResourceLink`
+`posters`、`copyright`、`meituanImages`、`baiduPanResourceLink`、
+`expectedPremiereTimeText` 和 `otherPlatformPremiereDateText`
 补齐美团发布配置，再通过 `ClaimedMeituanDramaTask` schema 校验。领取后的配置、
 资源下载或页面发布失败都会通过 `/rpa/report` 回写失败阶段和错误信息。
+
+剧集视频上传最多等待 2 小时。页面单集出现“上传失败”和“重试”控件时，
+运行时按文件名单独累计并点击重试，默认最多重试 5 次。该次数可在桌面端美团配置页
+通过“上传失败重试”调整；达到上限仍失败时，会汇总集号、文件名、页面错误信息和
+实际重试次数，以 `UPLOAD_FILE` 阶段上报后端。

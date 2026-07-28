@@ -241,6 +241,22 @@ function meituanContractFileUrl(
   );
 }
 
+function meituanTimeFieldValue(
+  payload: Record<string, unknown>,
+  extra: Record<string, unknown>,
+  key: "expectedPremiereTimeText" | "otherPlatformPremiereDateText",
+) {
+  const extraValue = stringValue(extra[key]);
+  const rootValue = stringValue(payload[key]);
+  if (extraValue && rootValue && extraValue !== rootValue) {
+    throw new Error(
+      `美团任务时间字段冲突：payloadJson.meituanExtraInfo.${key}=${extraValue}，` +
+        `payloadJson.${key}=${rootValue}`,
+    );
+  }
+  return extraValue ?? rootValue;
+}
+
 export function normalizeClaimedMeituanDramaTask(options: {
   claimed: MeituanClaimResponseData;
   listedTask: MeituanReadyAccountTask;
@@ -282,6 +298,16 @@ export function normalizeClaimedMeituanDramaTask(options: {
         : fallbackLicenseProofFile
           ? [fallbackLicenseProofFile]
           : [],
+    expectedPremiereTimeText: meituanTimeFieldValue(
+      payload,
+      extra,
+      "expectedPremiereTimeText",
+    ),
+    otherPlatformPremiereDateText: meituanTimeFieldValue(
+      payload,
+      extra,
+      "otherPlatformPremiereDateText",
+    ),
     premiereProofUrl: meituanImageUrl(payload, "premiereProof"),
     totalEpisodes: numberValue(extra.totalEpisodes) ?? numberValue(payload.episodeCount),
     productionCompanyText:

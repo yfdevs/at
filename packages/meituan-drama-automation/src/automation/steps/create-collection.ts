@@ -1,6 +1,6 @@
 import dayjs from "dayjs";
 import customParseFormat from "dayjs/plugin/customParseFormat.js";
-import type { Page } from "playwright";
+import type { Locator, Page } from "playwright";
 import type {
   MeituanCreationRuntimeOptions,
   MeituanCreationTaskConfig,
@@ -20,6 +20,7 @@ import { downloadRemoteAsset } from "../upload/remote-assets.js";
 dayjs.extend(customParseFormat);
 
 const expectedPremiereTimeFormat = "YYYY-MM-DD HH:mm:ss";
+const otherPlatformPremiereDateFormat = "YYYY-MM-DD";
 const expectedPremiereTimeInputFormats = [
   expectedPremiereTimeFormat,
   "YYYY-MM-DD HH:mm",
@@ -28,9 +29,8 @@ const expectedPremiereTimeInputFormats = [
 ];
 
 function normalizeExpectedPremiereTimeText(value?: string) {
-  const minimum = dayjs().add(1, "minute");
   if (!value?.trim()) {
-    return minimum.format(expectedPremiereTimeFormat);
+    throw new Error("MEITUAN_EXPECTED_PREMIERE_TIME_REQUIRED");
   }
 
   const parsed = dayjs(value.trim(), expectedPremiereTimeInputFormats, true);
@@ -38,11 +38,40 @@ function normalizeExpectedPremiereTimeText(value?: string) {
     throw new Error(`MEITUAN_EXPECTED_PREMIERE_TIME_INVALID: ${value}`);
   }
 
-  if (parsed.isBefore(minimum)) {
-    return minimum.format(expectedPremiereTimeFormat);
+  return parsed.format(expectedPremiereTimeFormat);
+}
+
+function normalizeOtherPlatformPremiereDateText(value?: string) {
+  if (!value?.trim()) {
+    throw new Error("MEITUAN_OTHER_PLATFORM_PREMIERE_DATE_REQUIRED");
   }
 
-  return parsed.format(expectedPremiereTimeFormat);
+  const parsed = dayjs(value.trim(), otherPlatformPremiereDateFormat, true);
+  if (!parsed.isValid()) {
+    throw new Error(`MEITUAN_OTHER_PLATFORM_PREMIERE_DATE_INVALID: ${value}`);
+  }
+
+  return parsed.format(otherPlatformPremiereDateFormat);
+}
+
+async function fillAndVerifyDateTextbox(options: {
+  page: Page;
+  textbox: Locator;
+  value: string;
+  fieldLabel: string;
+}) {
+  await scrollLocatorIntoView(options.page, options.textbox);
+  await options.textbox.click({ timeout: 30_000 });
+  await options.textbox.fill(options.value, { timeout: 30_000 });
+  await options.textbox.press("Tab", { timeout: 30_000 });
+  await options.page.waitForTimeout(300);
+
+  const actualValue = (await options.textbox.inputValue()).trim();
+  if (actualValue !== options.value) {
+    throw new Error(
+      `美团${options.fieldLabel}填写结果不一致：接口值=${options.value}，页面值=${actualValue || "(空)"}`,
+    );
+  }
 }
 
 async function uploadCollectionCover(
@@ -330,36 +359,41 @@ async function fillStoryAndRights(
   await premiereStatusTextbox.click();
   await page.getByText(taskConfig.premiereStatus, { exact: true }).click({ timeout: 30_000 });
 
-  log(options, "[meituan-drama] filling expected premiere time");
-  const expectedPremiereTimeText = normalizeExpectedPremiereTimeText(
-    taskConfig.expectedPremiereTimeText,
-  );
-  if (!taskConfig.expectedPremiereTimeText) {
-    log(options, `[meituan-drama] expected premiere time generated: ${expectedPremiereTimeText}`);
-  } else if (expectedPremiereTimeText !== taskConfig.expectedPremiereTimeText) {
-    log(options, `[meituan-drama] expected premiere time adjusted: ${expectedPremiereTimeText}`);
-  }
+  if (taskConfig.premiereStatus === "美团联合首发") {
+    log(options, "[meituan-drama] filling expected premiere time");
+    const expectedPremiereTimeText = normalizeExpectedPremiereTimeText(
+      taskConfig.expectedPremiereTimeText,
+    );
+    log(options, `[meituan-drama] expected premiere time received: ${expectedPremiereTimeText}`);
 
-  const expectedPremiereTimeTextbox = page.getByRole("textbox", {
-    name: "请选择预计首发时间",
-  });
-  await scrollLocatorIntoView(page, expectedPremiereTimeTextbox);
-  await expectedPremiereTimeTextbox.evaluate((node, value) => {
-    const input = node as HTMLInputElement;
-    input.value = value;
-    input.dispatchEvent(new Event("input", { bubbles: true }));
-    input.dispatchEvent(new Event("change", { bubbles: true }));
-  }, expectedPremiereTimeText);
-  await expectedPremiereTimeTextbox.click({ timeout: 30_000 });
-  await page
-    .getByText(
-      "预计首发时间（需满足全网同步上线（含付费及免费内容），若其他平台已先行发布付费版本，则不符合美团首发资质）",
-      { exact: true },
-    )
-    .click({ timeout: 30_000 })
-    .catch(async () => {
-      await page.getByText("版权声明").click({ timeout: 30_000 });
+    const expectedPremiereTimeTextbox = page.getByRole("textbox", {
+      name: "请选择预计首发时间",
     });
+    await fillAndVerifyDateTextbox({
+      page,
+      textbox: expectedPremiereTimeTextbox,
+      value: expectedPremiereTimeText,
+      fieldLabel: "预计首发时间",
+    });
+  } else if (taskConfig.premiereStatus === "非美团首发") {
+    log(options, "[meituan-drama] filling other-platform premiere date");
+    const otherPlatformPremiereDateText = normalizeOtherPlatformPremiereDateText(
+      taskConfig.otherPlatformPremiereDateText,
+    );
+    log(
+      options,
+      `[meituan-drama] other-platform premiere date received: ${otherPlatformPremiereDateText}`,
+    );
+    const otherPlatformPremiereDateTextbox = page.getByRole("textbox", {
+      name: "请选择其他平台首发时间",
+    });
+    await fillAndVerifyDateTextbox({
+      page,
+      textbox: otherPlatformPremiereDateTextbox,
+      value: otherPlatformPremiereDateText,
+      fieldLabel: "其他平台首发时间",
+    });
+  }
 
   log(options, "[meituan-drama] accepting copyright agreement");
   await clickCopyrightAgreement(page);

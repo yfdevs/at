@@ -9,7 +9,6 @@ import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
 import {
   claimNextTaskForVideoAccountApi,
-  fetchMingxingshuoAuditTaskBySelectedTitleApi,
   reportClaimedTaskErrorApi,
   reportClaimedTaskSuccessApi,
 } from "../api/task.js";
@@ -41,13 +40,6 @@ const nonRetryableBaiduNetdiskErrorPatterns = [
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
-}
-
-function mingxingshuoAuditGateError(message: string): Error {
-  return Object.assign(new Error(message), {
-    errorType: ErrorType.TaskExecution,
-    failStage: "OTHER" as const,
-  });
 }
 
 interface AccountWorkerControl {
@@ -140,6 +132,8 @@ export class TaskWorkerPool {
     const videoAccountId = worker.videoAccount.id;
     let consecutiveEmptyClaims = 0;
     let nextLoginCheckAt = 0;
+    let lastBusyLogKey = "";
+    let lastBusyLoggedAt = 0;
     logger.info("worker started", { videoAccountId });
 
     while (!this.stopped && !worker.stopped) {
@@ -147,38 +141,64 @@ export class TaskWorkerPool {
       try {
         const reservation = this.taskService.tryReserveChannel(videoAccountId, "worker-claim");
         if (!reservation) {
-          logger.info("skip claim, channel busy", {
-            videoAccountId,
-            videoAccountName: videoAccount.name,
-          });
+          const busyState = this.taskService.getChannelBusyState(videoAccountId);
+          const busyLogKey = busyState
+            ? `${busyState.kind}:${busyState.label}:${
+                busyState.kind === "task" ? busyState.accountTaskId ?? "-" : "-"
+              }`
+            : "unknown";
+          if (busyLogKey !== lastBusyLogKey || Date.now() - lastBusyLoggedAt >= 30_000) {
+            logger.info("skip claim, channel busy", {
+              videoAccountId,
+              videoAccountName: videoAccount.name,
+              busyKind: busyState?.kind ?? "unknown",
+              busyLabel: busyState?.label ?? "unknown",
+              busySince: busyState?.busySince,
+              busyDurationMs: busyState?.busyDurationMs,
+              busyAccountTaskId: busyState?.kind === "task"
+                ? busyState.accountTaskId
+                : undefined,
+              busyOriginalTitle: busyState?.kind === "task"
+                ? busyState.originalTitle
+                : undefined,
+              busyTaskStatus: busyState?.kind === "task"
+                ? busyState.status
+                : undefined,
+            });
+            lastBusyLogKey = busyLogKey;
+            lastBusyLoggedAt = Date.now();
+          }
           await sleep(1000);
           continue;
         }
+        lastBusyLogKey = "";
+        lastBusyLoggedAt = 0;
 
-        if (Date.now() >= nextLoginCheckAt) {
-          const loggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
-            videoAccountId,
-            this.serviceConfig.idlePageRefresh.timeoutMs,
-          );
-          if (!loggedIn) {
-            logger.info("skip claim, login required", {
-              videoAccountId,
-              videoAccountName: videoAccount.name,
-              retryDelayMs: loginRequiredDelayMs,
-            });
-            reservation.release();
-            await sleep(loginRequiredDelayMs);
-            continue;
-          }
-          nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
-        }
-
-        logger.info("claiming task", {
-          videoAccountId,
-          videoAccountName: videoAccount.name,
-        });
         try {
-          const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount);
+          if (Date.now() >= nextLoginCheckAt) {
+            const loggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
+              videoAccountId,
+              this.serviceConfig.idlePageRefresh.timeoutMs,
+            );
+            if (!loggedIn) {
+              logger.info("skip claim, login required", {
+                videoAccountId,
+                videoAccountName: videoAccount.name,
+                retryDelayMs: loginRequiredDelayMs,
+              });
+              reservation.release();
+              await sleep(loginRequiredDelayMs);
+              continue;
+            }
+            nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
+          }
+
+          logger.info("claiming task", {
+            videoAccountId,
+            videoAccountName: videoAccount.name,
+          });
+          try {
+            const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount);
           // debugger
           if (!claimedAccountTask) {
             consecutiveEmptyClaims += 1;
@@ -202,8 +222,7 @@ export class TaskWorkerPool {
               claimedAccountTask,
               videoAccount.contractSubject,
             );
-            await this.assertMingxingshuoAuditApproved(videoAccount, playletConfig.playlet.name);
-            logger.info("audit gate passed; verify login before task execution", {
+            logger.info("verify login before task execution", {
               accountTaskId: claimedAccountTask.accountTaskId,
               videoAccountId,
             });
@@ -304,6 +323,9 @@ export class TaskWorkerPool {
               errorType: errorInfo.type,
               errorMessage: errorInfo.message,
             });
+          }
+          } finally {
+            reservation.release();
           }
         } finally {
           reservation.release();
@@ -414,61 +436,6 @@ export class TaskWorkerPool {
     throw lastError instanceof Error ? lastError : new Error(String(lastError));
   }
 
-  private async assertMingxingshuoAuditApproved(
-    videoAccount: VideoAccount,
-    selectedTitle: string,
-  ): Promise<void> {
-    if (
-      videoAccount.contractSubject
-      && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject
-    ) {
-      return;
-    }
-
-    const normalizedTitle = selectedTitle.trim();
-    logger.info("check mingxingshuo audit gate", {
-      selectedTitle: normalizedTitle,
-      contractSubject: videoAccount.contractSubject,
-    });
-    const mingxingshuoTask = await fetchMingxingshuoAuditTaskBySelectedTitleApi(normalizedTitle);
-    if (!mingxingshuoTask) {
-      logger.info("mingxingshuo audit gate passed because no matching task was found", {
-        selectedTitle: normalizedTitle,
-        contractSubject: videoAccount.contractSubject,
-      });
-      return;
-    }
-    if (mingxingshuoTask.rpaStatus !== "SUCCESS") {
-      throw mingxingshuoAuditGateError(
-        `明星说主体同名剧《${normalizedTitle}》尚未上传成功（RPA状态：${mingxingshuoTask.rpaStatus || "无"}），其他主体暂不可上剧。`,
-      );
-    }
-
-    switch (mingxingshuoTask.auditStatus) {
-      case "APPROVED":
-        logger.info("mingxingshuo audit gate approved", {
-          selectedTitle: normalizedTitle,
-          mingxingshuoTaskId: mingxingshuoTask.id,
-        });
-        return;
-      case "REJECTED":
-        throw mingxingshuoAuditGateError(
-          `明星说主体同名剧《${normalizedTitle}》审核未通过，其他主体不可上剧。`,
-        );
-      case "UNDER_REVIEW":
-        throw mingxingshuoAuditGateError(
-          `明星说主体同名剧《${normalizedTitle}》正在审核中，其他主体暂不可上剧。`,
-        );
-      case "NONE":
-        throw mingxingshuoAuditGateError(
-          `明星说主体同名剧《${normalizedTitle}》尚未提交审核，其他主体暂不可上剧。`,
-        );
-      default:
-        throw mingxingshuoAuditGateError(
-          `明星说主体同名剧《${normalizedTitle}》审核状态异常（${mingxingshuoTask.auditStatus || "无"}），其他主体暂不可上剧。`,
-        );
-    }
-  }
 }
 
 function stringValue(value: unknown) {

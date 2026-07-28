@@ -18,7 +18,6 @@ export class VideoAccountSyncService {
     private readonly browserContexts: BrowserContextManager,
     private readonly taskWorkerPool: TaskWorkerPool,
     private readonly idlePageRefreshService?: { syncVideoAccounts(): void },
-    private readonly auditStatusPollingService?: { syncVideoAccounts(): void },
   ) {}
 
   start(): void {
@@ -54,7 +53,6 @@ export class VideoAccountSyncService {
       this.taskWorkerPool.syncVideoAccounts(videoAccounts);
       this.serviceConfig.videoAccounts = videoAccounts;
       this.idlePageRefreshService?.syncVideoAccounts();
-      this.auditStatusPollingService?.syncVideoAccounts();
       logger.info("synced video accounts", {
         selectedContractSubjects: this.serviceConfig.videoAccountContractSubjects,
         totalCount: allVideoAccounts.length,

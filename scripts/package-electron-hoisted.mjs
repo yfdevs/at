@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, rm, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -66,17 +66,64 @@ async function writeHoistedPnpmConfig() {
 
 async function writePackageJson() {
   const packageJson = await readJson(packageJsonPath);
+  const installedPlaywrightPackage = await readJson(
+    path.join(rootDir, "node_modules", "playwright", "package.json"),
+  );
   packageJson.scripts = {};
   packageJson.devDependencies = {
     electron: packageJson.devDependencies?.electron,
   };
   packageJson.dependencies = Object.fromEntries(runtimeDependencyNames.map((name) => {
-    const version = packageJson.dependencies?.[name];
+    const version =
+      name === "playwright"
+        ? installedPlaywrightPackage.version
+        : packageJson.dependencies?.[name];
     if (!version) throw new Error(`Runtime dependency is missing from package.json: ${name}`);
     return [name, version];
   }));
 
   await writeFile(path.join(stagingDir, "package.json"), `${JSON.stringify(packageJson, null, 2)}\n`);
+}
+
+async function chromiumRevision(playwrightCoreRoot) {
+  const browsers = await readJson(path.join(playwrightCoreRoot, "browsers.json"));
+  const chromium = browsers.browsers?.find((browser) => browser.name === "chromium");
+  if (!chromium?.revision) {
+    throw new Error(`Cannot resolve Chromium revision from ${playwrightCoreRoot}`);
+  }
+  return String(chromium.revision);
+}
+
+async function ensurePlaywrightBrowserInstalled() {
+  await run("node", ["scripts/install-playwright-browsers.mjs"]);
+}
+
+async function validatePackagedPlaywrightInputs() {
+  const sourcePlaywrightCoreRoot = path.join(rootDir, "node_modules", "playwright-core");
+  const stagingPlaywrightCoreRoot = path.join(stagingDir, "node_modules", "playwright-core");
+  const [sourceRevision, stagingRevision] = await Promise.all([
+    chromiumRevision(sourcePlaywrightCoreRoot),
+    chromiumRevision(stagingPlaywrightCoreRoot),
+  ]);
+  if (sourceRevision !== stagingRevision) {
+    throw new Error(
+      `Playwright Chromium revision mismatch: source=${sourceRevision} staging=${stagingRevision}`,
+    );
+  }
+
+  const browserDir = path.join(
+    rootDir,
+    ".cache",
+    "playwright-browsers",
+    `chromium-${stagingRevision}`,
+  );
+  await access(path.join(browserDir, "INSTALLATION_COMPLETE"));
+  if (process.platform === "win32" || process.argv.includes("--win")) {
+    await access(path.join(browserDir, "chrome-win64", "chrome.exe"));
+  }
+  console.log(
+    `Validated packaged Playwright: version/revision aligned, chromium-${stagingRevision} present.`,
+  );
 }
 
 async function electronTarget() {
@@ -117,6 +164,7 @@ async function copyBuildInputs() {
 }
 
 async function main() {
+  await ensurePlaywrightBrowserInstalled();
   await copyBuildInputs();
   await Promise.all([
     writePackageJson(),
@@ -140,6 +188,7 @@ async function main() {
     },
   });
 
+  await validatePackagedPlaywrightInputs();
   await run("pnpm", [
     "exec",
     "electron-builder",

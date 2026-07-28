@@ -25,6 +25,35 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+function reportableErrorMessage(error: unknown) {
+  const message = errorMessage(error)
+    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(/\r\n/g, "\n")
+    .replace(/\nCall log:[\s\S]*$/i, "")
+    .trim();
+
+  if (/Target page, context or browser has been closed/i.test(message)) {
+    return "美团页面或浏览器已关闭，无法继续执行页面操作";
+  }
+
+  const locatorTimeout = message.match(
+    /^locator\.(click|waitFor|fill|check|setInputFiles): Timeout (\d+)ms exceeded\.?$/i,
+  );
+  if (locatorTimeout) {
+    const actionLabels: Record<string, string> = {
+      click: "点击页面元素",
+      waitfor: "等待页面元素显示",
+      fill: "填写页面内容",
+      check: "勾选页面选项",
+      setinputfiles: "选择上传文件",
+    };
+    const action = actionLabels[locatorTimeout[1].toLowerCase()] ?? "执行页面操作";
+    return `${action}超时（等待 ${locatorTimeout[2]} 毫秒）`;
+  }
+
+  return message || "美团任务执行失败，未获取到具体错误信息";
+}
+
 function classifyFailStage(error: unknown): MeituanCreationTaskFailStage {
   const message = errorMessage(error);
   if (/LOGIN|登录/i.test(message)) return "LOGIN";
@@ -170,7 +199,7 @@ export async function runMeituanAccountTaskWorker(options: {
         taskNormalized = true;
         await runPublishTask(context, page, runtimeOptions, task);
       } catch (error) {
-        const message = errorMessage(error);
+        const message = reportableErrorMessage(error);
         const failStage = taskNormalized ? classifyFailStage(error) : "OTHER";
         log(
           runtimeOptions,

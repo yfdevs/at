@@ -30,8 +30,6 @@ export type WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: string
   workerSlowEmptyClaimDelaySeconds: string
   videoAccountSyncIntervalSeconds: string
-  auditStatusTaskDelaySeconds: string
-  auditStatusPollingIntervalHours: string
   idlePageRefreshIntervalSeconds: string
   idlePageRefreshTimeoutSeconds: string
   idlePageRefreshJitterSeconds: string

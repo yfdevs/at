@@ -16,7 +16,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
-    "playwright": "latest",
+    "playwright": "1.61.1",
     "zod": "3.22.4"
   },
   "devDependencies": {

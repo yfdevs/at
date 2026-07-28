@@ -15,6 +15,7 @@ const emptyConfig: MeituanCreationConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   headless: "false",
   operationDelaySeconds: "0.02",
+  episodeUploadFailedRetryAttempts: "5",
   localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-drama",
 }
@@ -55,6 +56,14 @@ const sections: ConfigSectionDefinition<MeituanCreationConfig>[] = [
         description: "每一步 Playwright 操作之间的延迟。",
         suffix: "秒",
         step: "0.01",
+      },
+      {
+        key: "episodeUploadFailedRetryAttempts",
+        label: "上传失败重试",
+        type: "number",
+        description: "单集视频出现“重试”时的最多重试次数，耗尽后上报任务失败。",
+        suffix: "次",
+        min: 0,
       },
       {
         kind: "switch",

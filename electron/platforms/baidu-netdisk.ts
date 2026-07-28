@@ -124,6 +124,34 @@ const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
 let store: Store<BaiduNetdiskStore> | null = null;
 let downloadRecordsRepository: BaiduNetdiskDownloadRecordsRepository | null = null;
 const activeDownloadPromises = new Map<string, Promise<BaiduNetdiskDownloadRecord>>();
+let baiduCdpOperationTail: Promise<void> = Promise.resolve();
+let queuedBaiduCdpOperations = 0;
+
+function runBaiduCdpOperationExclusive<T>(label: string, operation: () => Promise<T>): Promise<T> {
+  queuedBaiduCdpOperations += 1;
+  const queuePosition = queuedBaiduCdpOperations;
+  if (queuePosition > 1) {
+    console.log(`[baidu] CDP操作排队中：${label}，前方${queuePosition - 1}个任务`);
+  }
+
+  const previous = baiduCdpOperationTail;
+  const current = previous
+    .catch(() => undefined)
+    .then(async () => {
+      console.log(`[baidu] CDP操作开始：${label}`);
+      try {
+        return await operation();
+      } finally {
+        queuedBaiduCdpOperations = Math.max(0, queuedBaiduCdpOperations - 1);
+        console.log(`[baidu] CDP操作结束：${label}`);
+      }
+    });
+  baiduCdpOperationTail = current.then(
+    () => undefined,
+    () => undefined,
+  );
+  return current;
+}
 
 function getStore() {
   if (!store) {
@@ -407,11 +435,13 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
   let result: Omit<BaiduNetdiskShareDownloadResult, "downloadDir">;
 
   try {
-    result = await downloadBaiduNetdiskShare({
-      shareText,
-      port: cdpPort(config),
-      downloadDir: defaultBaiduNetdiskDownloadDir,
-    });
+    result = await runBaiduCdpOperationExclusive("手动下载百度网盘分享", () =>
+      downloadBaiduNetdiskShare({
+        shareText,
+        port: cdpPort(config),
+        downloadDir: defaultBaiduNetdiskDownloadDir,
+      }),
+    );
   } catch (error) {
     const message = readableError(error);
     upsertDownloadRecord({
@@ -518,15 +548,17 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       sourceLocalPath: existingRecord?.localPath,
       downloadTaskName: existingRecord?.resourceName,
       downloadShare: (downloadRequest) =>
-        downloadBaiduNetdiskShare({
-          shareText: downloadRequest.shareText,
-          resourceName: downloadRequest.resourceName,
-          expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
-          expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
-          expectedPosterImages: downloadRequest.expectedPosterImages,
-          port,
-          downloadDir: downloadRequest.downloadDir,
-        }),
+        runBaiduCdpOperationExclusive(downloadRequest.resourceName, () =>
+          downloadBaiduNetdiskShare({
+            shareText: downloadRequest.shareText,
+            resourceName: downloadRequest.resourceName,
+            expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
+            expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
+            expectedPosterImages: downloadRequest.expectedPosterImages,
+            port,
+            downloadDir: downloadRequest.downloadDir,
+          }),
+        ),
       getDownloadTaskStatus: (statusRequest) =>
         getBaiduNetdiskDownloadTaskStatus({
           port,

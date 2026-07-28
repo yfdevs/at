@@ -4,6 +4,7 @@ export type MeituanCreationConfig = {
   apiBaseUrl: string
   headless: string
   operationDelaySeconds: string
+  episodeUploadFailedRetryAttempts: string
   localEpisodeVideoRoot: string
   runDataDir: string
 }

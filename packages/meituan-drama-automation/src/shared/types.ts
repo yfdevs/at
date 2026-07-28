@@ -131,7 +131,8 @@ const commonTaskSchema = {
   averageEpisodeDurationMinutes: z.coerce.number().positive(),
   plotSynopsisText: requiredText,
   premiereStatus: premiereStatusSchema.default("美团联合首发"),
-  expectedPremiereTimeText: requiredText.optional()
+  expectedPremiereTimeText: requiredText.optional(),
+  otherPlatformPremiereDateText: requiredText.optional()
 };
 
 export const meituanCreationTaskSchema = z.discriminatedUnion("collectionType", [
@@ -154,6 +155,28 @@ export const meituanCreationTaskSchema = z.discriminatedUnion("collectionType", 
         message: "Checkpoint episode cannot exceed totalEpisodes"
       });
     }
+  }
+
+  if (
+    taskConfig.premiereStatus === "美团联合首发" &&
+    !taskConfig.expectedPremiereTimeText
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["expectedPremiereTimeText"],
+      message: "美团联合首发必须由接口返回预计首发时间"
+    });
+  }
+
+  if (
+    taskConfig.premiereStatus === "非美团首发" &&
+    !taskConfig.otherPlatformPremiereDateText
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["otherPlatformPremiereDateText"],
+      message: "非美团首发必须由接口返回其他平台首发时间"
+    });
   }
 });
 
@@ -219,6 +242,7 @@ export interface MeituanCreationConfig {
   plotSynopsisText?: string;
   premiereStatus?: MeituanCreationPremiereStatus;
   expectedPremiereTimeText?: string;
+  otherPlatformPremiereDateText?: string;
   publish?: {
     submit?: boolean;
   };
@@ -271,6 +295,7 @@ export type MeituanCreationRuntimeOptions = {
   credentialStatePath?: string;
   assetDownloadDir?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
+  episodeUploadFailedRetryAttempts?: number;
   ensureBaiduNetdiskResource?: (request: {
     shareText: string;
     resourceName: string;

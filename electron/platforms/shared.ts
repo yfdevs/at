@@ -143,7 +143,7 @@ export function directoryDefaultPath(currentPath: string | undefined, fallback: 
 
   return path.isAbsolute(trimmedPath)
     ? trimmedPath
-    : path.join(process.env.APP_ROOT, trimmedPath)
+    : path.join(app.isPackaged ? path.dirname(process.execPath) : process.env.APP_ROOT, trimmedPath)
 }
 
 export function normalizePlatformRunDataDir(selectedPath: string | null, platformDirName: string) {
@@ -167,7 +167,14 @@ export function normalizePlatformRunDataDir(selectedPath: string | null, platfor
 }
 
 export function resolveFromAppRoot(value: string) {
-  return path.isAbsolute(value) ? value : path.join(process.env.APP_ROOT, value)
+  if (path.isAbsolute(value)) {
+    return value
+  }
+
+  const relativePathRoot = app.isPackaged
+    ? path.dirname(process.execPath)
+    : process.env.APP_ROOT
+  return path.join(relativePathRoot, value)
 }
 
 export function playwrightBrowsersPath() {

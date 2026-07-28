@@ -38,6 +38,7 @@ export type MeituanCreationConfig = {
   apiBaseUrl: string;
   headless: string;
   operationDelaySeconds: string;
+  episodeUploadFailedRetryAttempts: string;
   localEpisodeVideoRoot: string;
   runDataDir: string;
 };
@@ -60,6 +61,7 @@ const defaultMeituanCreationConfig: MeituanCreationConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   headless: "false",
   operationDelaySeconds: "0.02",
+  episodeUploadFailedRetryAttempts: "5",
   localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-drama",
 };
@@ -127,10 +129,15 @@ function normalizeConfig(
     config.operationDelaySeconds ??
     (Number.isFinite(legacySlowMo) ? String(legacySlowMo / 1000) : undefined) ??
     defaultMeituanCreationConfig.operationDelaySeconds;
+  const retryAttempts = Number.parseInt(config.episodeUploadFailedRetryAttempts ?? "", 10);
   return {
     apiBaseUrl: config.apiBaseUrl?.trim() || defaultMeituanCreationConfig.apiBaseUrl,
     headless: config.headless ?? defaultMeituanCreationConfig.headless,
     operationDelaySeconds,
+    episodeUploadFailedRetryAttempts:
+      Number.isInteger(retryAttempts) && retryAttempts >= 0
+        ? String(retryAttempts)
+        : defaultMeituanCreationConfig.episodeUploadFailedRetryAttempts,
     localEpisodeVideoRoot:
       config.localEpisodeVideoRoot ?? defaultMeituanCreationConfig.localEpisodeVideoRoot,
     runDataDir:
@@ -200,6 +207,10 @@ async function startRuntime() {
 
   const config = readConfig();
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
+  const episodeUploadFailedRetryAttempts = Math.max(
+    0,
+    Number.parseInt(config.episodeUploadFailedRetryAttempts, 10) || 0,
+  );
   const {
     fetchMeituanCreationAccounts,
     startMeituanCreationRuntime,
@@ -215,6 +226,7 @@ async function startRuntime() {
     apiBaseUrl: config.apiBaseUrl,
     authRoot: meituanCreationAuthRoot(),
     assetDownloadRoot: meituanCreationAssetDownloadRoot(),
+    episodeUploadFailedRetryAttempts,
     ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
     onLog: (message: string) => {
       console.log(message);

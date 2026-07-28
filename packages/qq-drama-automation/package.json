@@ -18,7 +18,7 @@
   "dependencies": {
     "@drama/drama-media-assets": "workspace:*",
     "pino": "^10.3.1",
-    "playwright": "latest",
+    "playwright": "1.61.1",
     "zod": "3.22.4"
   },
   "devDependencies": {

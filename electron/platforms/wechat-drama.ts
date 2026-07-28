@@ -51,8 +51,6 @@ export type WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: string
   workerSlowEmptyClaimDelaySeconds: string
   videoAccountSyncIntervalSeconds: string
-  auditStatusTaskDelaySeconds: string
-  auditStatusPollingIntervalHours: string
   idlePageRefreshIntervalSeconds: string
   idlePageRefreshTimeoutSeconds: string
   idlePageRefreshJitterSeconds: string
@@ -86,8 +84,6 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   workerSlowEmptyClaimThreshold: '30',
   workerSlowEmptyClaimDelaySeconds: '30',
   videoAccountSyncIntervalSeconds: '600',
-  auditStatusTaskDelaySeconds: '3',
-  auditStatusPollingIntervalHours: '3',
   idlePageRefreshIntervalSeconds: '10800',
   idlePageRefreshTimeoutSeconds: '60',
   idlePageRefreshJitterSeconds: '300',
@@ -263,8 +259,6 @@ function normalizeConfig(
     workerSlowEmptyClaimThreshold: config.workerSlowEmptyClaimThreshold ?? defaultWechatVideoConfig.workerSlowEmptyClaimThreshold,
     workerSlowEmptyClaimDelaySeconds: config.workerSlowEmptyClaimDelaySeconds ?? defaultWechatVideoConfig.workerSlowEmptyClaimDelaySeconds,
     videoAccountSyncIntervalSeconds: config.videoAccountSyncIntervalSeconds ?? defaultWechatVideoConfig.videoAccountSyncIntervalSeconds,
-    auditStatusTaskDelaySeconds: config.auditStatusTaskDelaySeconds ?? defaultWechatVideoConfig.auditStatusTaskDelaySeconds,
-    auditStatusPollingIntervalHours: config.auditStatusPollingIntervalHours ?? defaultWechatVideoConfig.auditStatusPollingIntervalHours,
     idlePageRefreshIntervalSeconds: config.idlePageRefreshIntervalSeconds ?? defaultWechatVideoConfig.idlePageRefreshIntervalSeconds,
     idlePageRefreshTimeoutSeconds: config.idlePageRefreshTimeoutSeconds ?? defaultWechatVideoConfig.idlePageRefreshTimeoutSeconds,
     idlePageRefreshJitterSeconds: config.idlePageRefreshJitterSeconds ?? defaultWechatVideoConfig.idlePageRefreshJitterSeconds,

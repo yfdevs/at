@@ -1,6 +1,6 @@
 import path from "node:path";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
-import { hoursToMs, numberSetting, secondsSettingToMs } from "./settings-value.js";
+import { numberSetting, secondsSettingToMs } from "./settings-value.js";
 import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
@@ -11,8 +11,6 @@ const emptyClaimDelaySeconds = 5;
 const slowEmptyClaimThreshold = 10;
 const slowEmptyClaimDelaySeconds = 30;
 const videoAccountSyncIntervalSeconds = 60;
-const auditStatusTaskDelaySeconds = 3;
-const auditStatusPollingIntervalHours = 3;
 const idlePageRefreshIntervalSeconds = 1500;
 const idlePageRefreshTimeoutSeconds = 60;
 const idlePageRefreshJitterSeconds = 300;
@@ -116,10 +114,6 @@ export interface ServiceConfig {
   videoAccountSync: {
     intervalMs: number;
   };
-  auditStatusPolling: {
-    taskDelayMs: number;
-    intervalMs: number;
-  };
   idlePageRefresh: {
     intervalMs: number;
     timeoutMs: number;
@@ -166,13 +160,6 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
     },
     videoAccountSync: {
       intervalMs: secondsSettingToMs(settings.videoAccountSyncIntervalSeconds, videoAccountSyncIntervalSeconds),
-    },
-    auditStatusPolling: {
-      taskDelayMs: secondsSettingToMs(settings.auditStatusTaskDelaySeconds, auditStatusTaskDelaySeconds),
-      intervalMs: hoursToMs(numberSetting(
-        settings.auditStatusPollingIntervalHours,
-        auditStatusPollingIntervalHours,
-      )),
     },
     idlePageRefresh: {
       intervalMs: secondsSettingToMs(settings.idlePageRefreshIntervalSeconds, idlePageRefreshIntervalSeconds),

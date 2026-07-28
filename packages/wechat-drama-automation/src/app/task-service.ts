@@ -11,9 +11,27 @@ const loginCheckTimeoutMs = 60000;
 export interface ChannelReservation {
   readonly channelId: string;
   readonly label: string;
+  readonly reservedAt: string;
   readonly token: symbol;
   release(): void;
 }
+
+export type ChannelBusyState =
+  | {
+      kind: "reservation";
+      label: string;
+      busySince: string;
+      busyDurationMs: number;
+    }
+  | {
+      kind: "task";
+      label: "active-task";
+      busySince: string;
+      busyDurationMs: number;
+      accountTaskId?: number;
+      originalTitle?: string;
+      status: TaskRecord["status"];
+    };
 
 export class TaskService {
   private readonly taskRecordsByKey = new Map<string, TaskRecord>();
@@ -36,22 +54,60 @@ export class TaskService {
 
   isBusy(channelId?: string): boolean {
     return channelId
-      ? this.activeTaskKeyByChannelId.has(channelId) || this.channelReservationsById.has(channelId)
+      ? this.getChannelBusyState(channelId) !== null
       : this.activeTaskKeyByChannelId.size > 0 || this.channelReservationsById.size > 0;
+  }
+
+  getChannelBusyState(channelId: string): ChannelBusyState | null {
+    const activeTaskKey = this.activeTaskKeyByChannelId.get(channelId);
+    if (activeTaskKey) {
+      const taskRecord = this.taskRecordsByKey.get(activeTaskKey);
+      if (!taskRecord || taskRecord.status === "succeeded" || taskRecord.status === "failed") {
+        this.activeTaskKeyByChannelId.delete(channelId);
+        logger.warn("cleared stale active task lock", {
+          videoAccountId: channelId,
+          videoAccountName: this.browserContexts.getVideoAccountName(channelId),
+          taskKey: activeTaskKey,
+          taskStatus: taskRecord?.status ?? "missing",
+        });
+      } else {
+        const busySince = taskRecord.startedAt ?? taskRecord.createdAt;
+        return {
+          kind: "task",
+          label: "active-task",
+          busySince,
+          busyDurationMs: Math.max(0, Date.now() - Date.parse(busySince)),
+          accountTaskId: taskRecord.accountTaskId,
+          originalTitle: taskRecord.originalTitle,
+          status: taskRecord.status,
+        };
+      }
+    }
+
+    const reservation = this.channelReservationsById.get(channelId);
+    if (!reservation) return null;
+    return {
+      kind: "reservation",
+      label: reservation.label,
+      busySince: reservation.reservedAt,
+      busyDurationMs: Math.max(0, Date.now() - Date.parse(reservation.reservedAt)),
+    };
   }
 
   tryReserveChannel(channelId: string, label: string): ChannelReservation | null {
     if (!this.browserContexts.has(channelId)) {
       throw new Error(`Unknown channelId: ${channelId}`);
     }
-    if (this.activeTaskKeyByChannelId.has(channelId) || this.channelReservationsById.has(channelId)) {
+    if (this.getChannelBusyState(channelId)) {
       return null;
     }
 
     const token = Symbol(label);
+    const reservedAt = new Date().toISOString();
     const reservation: ChannelReservation = {
       channelId,
       label,
+      reservedAt,
       token,
       release: () => {
         if (this.channelReservationsById.get(channelId)?.token === token) {
@@ -67,6 +123,7 @@ export class TaskService {
     this.channelReservationsById.set(channelId, reservation);
     logger.info("reserved channel", {
       reservationLabel: label,
+      reservedAt,
       videoAccountId: channelId,
       videoAccountName: this.browserContexts.getVideoAccountName(channelId),
     });

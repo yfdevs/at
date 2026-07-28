@@ -19,7 +19,7 @@
     "@drama/axios": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "@drama/feishu-notifier": "workspace:*",
-    "playwright": "latest"
+    "playwright": "1.61.1"
   },
   "devDependencies": {
     "@types/fs-extra": "^11.0.4",
