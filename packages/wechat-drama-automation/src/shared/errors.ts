@@ -12,6 +12,7 @@ export enum ErrorType {
   Upload = "UPLOAD",
   LocalFile = "LOCAL_FILE",
   Browser = "BROWSER",
+  Interrupted = "INTERRUPTED",
 }
 
 export type RpaFailStage = "LOGIN" | "FILL_FORM" | "UPLOAD_FILE" | "SUBMIT" | "RECOGNIZE_RESULT" | "OTHER";
@@ -25,9 +26,13 @@ export interface StandardErrorInfo {
 }
 
 const errorTypeRules: Array<[ErrorType, RegExp]> = [
+  [
+    ErrorType.Interrupted,
+    /Target (?:page, context or browser|page|context|browser) has been closed|Target closed|(?:page|context|browser) (?:has been|was) closed/i,
+  ],
   [ErrorType.StepTimeout, /\[step-timeout\]|timeout|timed out/i],
   [ErrorType.Upload, /\[upload-failed\]|upload|上传|未能上传/i],
-  [ErrorType.LocalFile, /\[local-video-invalid\]|\[production-proof-invalid\]|\[poster-material-invalid\]|file not found|directory|目录不存在|本地文件/i],
+  [ErrorType.LocalFile, /\[local-video-invalid\]|\[production-proof-invalid\]|\[ai-production-proof-invalid\]|\[poster-material-invalid\]|file not found|directory|目录不存在|本地文件/i],
   [ErrorType.Validation, /validation|invalid|required|must|empty|校验|提示|不能为空|不存在/i],
   [ErrorType.Authentication, /login|required login|登录|scan|扫码/i],
   [ErrorType.ChannelState, /Unknown channelId|Channel is|reserved|busy|video account/i],

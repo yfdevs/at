@@ -32,6 +32,12 @@ export type LocalPosterImageFile = {
   size: number;
 };
 
+export type LocalAiProductionProofFile = {
+  name: string;
+  file: string;
+  size: number;
+};
+
 export type PreparedEpisodeUploadFiles = {
   uploadDir: string;
   files: string[];
@@ -47,6 +53,7 @@ export type EpisodeDirectorySummary = {
 
 const knownEpisodeSubDirs = ["成片", "成品", "视频", "正片"];
 const ownershipImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp"]);
+const aiProductionProofExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp", ".pdf"]);
 const invalidUploadFileNameChars = new Set(["<", ">", ":", '"', "/", "\\", "|", "?", "*"]);
 
 function escapeRegExp(value: string) {
@@ -271,6 +278,58 @@ export async function listLocalPosterImages(options: {
     || left.file.localeCompare(right.file));
   const selected = sortCandidates(namedCandidates)[0] ?? sortCandidates(directoryCandidates)[0];
   return selected ? [selected] : [];
+}
+
+export async function listLocalAiProductionProofFiles(options: {
+  root: string;
+  resourceName: string;
+  rootIsResourceDir?: boolean;
+}): Promise<LocalAiProductionProofFile[]> {
+  const resourceDir = options.rootIsResourceDir ? options.root : playletDir(options.root, options.resourceName);
+  const result: LocalAiProductionProofFile[] = [];
+  const seenFiles = new Set<string>();
+
+  for (const dir of await recursiveDirs(resourceDir)) {
+    const directoryMatches = /ai制作证明/i.test(
+      path.relative(resourceDir, dir).replace(/\s+/g, ""),
+    );
+    const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isFile() || !aiProductionProofExtensions.has(path.extname(entry.name).toLowerCase())) continue;
+      if (!directoryMatches && !/ai制作证明/i.test(entry.name.replace(/\s+/g, ""))) continue;
+      const file = path.join(dir, entry.name);
+      const resolved = path.resolve(file).toLowerCase();
+      if (seenFiles.has(resolved)) continue;
+      const fileStat = await stat(file).catch(() => undefined);
+      if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      seenFiles.add(resolved);
+      result.push({ name: entry.name, file, size: fileStat.size });
+    }
+  }
+
+  return result.sort((left, right) =>
+    left.name.localeCompare(right.name, "zh-CN", { numeric: true })
+    || left.file.localeCompare(right.file));
+}
+
+export async function standardizeAiProductionProofFilesToRoot(options: {
+  files: LocalAiProductionProofFile[];
+  targetRoot: string;
+  resourceName: string;
+  onLog?: (message: string) => void;
+}) {
+  const targetDir = path.join(playletDir(options.targetRoot, options.resourceName), "AI制作证明");
+  await mkdir(targetDir, { recursive: true });
+  const standardized: LocalAiProductionProofFile[] = [];
+  for (const [position, source] of options.files.entries()) {
+    const extension = path.extname(source.file).toLowerCase() || ".jpg";
+    const target = path.join(targetDir, `${options.resourceName} - AI制作证明${position + 1}${extension}`);
+    if (!sameResolvedPath(source.file, target)) await copyFile(source.file, target);
+    const targetStat = await stat(target);
+    standardized.push({ name: path.basename(target), file: target, size: targetStat.size });
+  }
+  options.onLog?.(`[video-assets] AI制作证明标准化完成：文件=${standardized.length} dir=${targetDir}`);
+  return standardized;
 }
 
 export async function standardizePosterImagesToRoot(options: {

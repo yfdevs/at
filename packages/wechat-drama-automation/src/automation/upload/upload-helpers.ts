@@ -1,21 +1,11 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
 import { mkdir, writeFile } from "node:fs/promises";
-import type { Locator, Page, Response } from "playwright";
+import type { Locator, Page } from "playwright";
 import { resolveRunDataPath } from "../../shared/config.js";
 import { getWechatVideoRuntimeSettings } from "../../shared/runtime-settings.js";
 import { secondsSettingToMs } from "../../shared/settings-value.js";
 import { rootSelector } from "../constants.js";
-
-interface BizmediaUploadResponse {
-  base_resp?: {
-    ret?: number;
-    err_msg?: string;
-  };
-  location?: string;
-  type?: string;
-  content?: string;
-}
 
 const remoteFilePromises = new Map<string, Promise<string>>();
 const defaultRemoteFileDirectoryName = "ungrouped";
@@ -144,125 +134,161 @@ export async function prepareUploadFiles(
   return files.filter((value): value is string => Boolean(value));
 }
 
-function isBizmediaUploadResponse(response: Response): boolean {
-  const urlStr = response.url();
-  if (response.request().method().toUpperCase() !== "POST" || !urlStr.includes("/cgi-bin/filetransfer")) {
-    return false;
-  }
-
-  try {
-    const url = new URL(urlStr);
-    const params = url.searchParams;
-    return (
-      url.hostname.endsWith("mp.weixin.qq.com")
-      && url.pathname === "/cgi-bin/filetransfer"
-      && params.get("action")?.toLowerCase() === "bizmedia"
-      && params.get("f")?.toLowerCase() === "json"
-    );
-  } catch {
-    return false;
-  }
+interface UploadUiState {
+  text: string;
+  html: string;
+  previewCount: number;
+  busyCount: number;
+  inputFileCount: number;
 }
 
-async function readBizmediaUploadResponse(response: Response): Promise<BizmediaUploadResponse | null> {
-  try {
-    return await response.json() as BizmediaUploadResponse;
-  } catch {
-    return null;
-  }
+const uploadPreviewSelector = [
+  ".img_text",
+  ".weui-desktop-img-picker__item",
+  ".weui-desktop-upload__preview",
+  ".weui-desktop-upload__file",
+  "[class*='upload'][class*='item']",
+  "[class*='preview'] img",
+  "[class*='file_name']",
+  "[class*='filename']",
+].join(",");
+const uploadBusySelector = [
+  ".weui-loading",
+  "[class*='loading']",
+  "[class*='uploading']",
+  "[class*='progress']",
+].join(",");
+const uploadErrorSelector = [
+  ".weui-desktop-form__tips_warn",
+  ".weui-desktop-form__tips_error",
+  ".weui-desktop-form__error",
+  ".weui-desktop-upload__error",
+  ".upload-error",
+  "[class*='upload'][class*='error']",
+].join(",");
+
+async function visibleElementCount(locator: Locator): Promise<number> {
+  return locator.evaluateAll((elements) => elements.filter((element) => {
+    const htmlElement = element as HTMLElement;
+    const style = getComputedStyle(htmlElement);
+    const rect = htmlElement.getBoundingClientRect();
+    return style.display !== "none"
+      && style.visibility !== "hidden"
+      && Number(style.opacity || "1") > 0
+      && rect.width > 0
+      && rect.height > 0;
+  }).length);
 }
 
-async function waitForBizmediaUploadSuccesses(
-  page: Page,
-  expectedCount: number,
+async function readUploadUiState(container: Locator): Promise<UploadUiState> {
+  const input = container.locator('input[type="file"]').first();
+  return {
+    text: await container.innerText().catch(() => ""),
+    html: await container.innerHTML().catch(() => ""),
+    previewCount: await visibleElementCount(container.locator(uploadPreviewSelector)).catch(() => 0),
+    busyCount: await visibleElementCount(container.locator(uploadBusySelector)).catch(() => 0),
+    inputFileCount: await input.evaluate((element) => (element as HTMLInputElement).files?.length ?? 0).catch(() => 0),
+  };
+}
+
+function uploadFileNames(files: string[]): string[] {
+  return files.map((filePath) => path.basename(filePath));
+}
+
+async function readVisibleUploadError(container: Locator): Promise<string> {
+  const texts = await container.locator(uploadErrorSelector).evaluateAll((elements) =>
+    elements.flatMap((element) => {
+      const htmlElement = element as HTMLElement;
+      const style = getComputedStyle(htmlElement);
+      const rect = htmlElement.getBoundingClientRect();
+      if (
+        style.display === "none"
+        || style.visibility === "hidden"
+        || Number(style.opacity || "1") <= 0
+        || rect.width <= 0
+        || rect.height <= 0
+      ) {
+        return [];
+      }
+      const text = (htmlElement.innerText || htmlElement.textContent || "").trim();
+      return text ? [text] : [];
+    }),
+  ).catch(() => []);
+  return texts.find((text) =>
+    /上传失败|重新上传|文件过大|文件大小超过|超过(?:文件)?大小限制|文件格式(?:错误|不支持)|不支持的文件/i.test(text)
+  ) ?? "";
+}
+
+async function setInputFilesAndWaitForUi(
+  container: Locator,
+  input: Locator,
+  files: string[],
   label: string,
-  action: () => Promise<void>,
-  timeout = 180000,
-  uiConfirmation?: () => Promise<void>,
+  inputTimeout = 10000,
+  uiTimeout = 30000,
 ): Promise<void> {
-  if (expectedCount <= 0) {
-    await action();
-    return;
+  const fileNames = uploadFileNames(files);
+  const before = await readUploadUiState(container);
+  console.log(`[upload-start] ${label}: ${files.length} file(s)`);
+  await input.setInputFiles(files, { timeout: inputTimeout });
+
+  const startedAt = Date.now();
+  let stableSuccessChecks = 0;
+  let latest = before;
+  while (Date.now() - startedAt < uiTimeout) {
+    latest = await readUploadUiState(container);
+    const normalizedText = latest.text.replace(/\s+/g, "");
+    const hasAllFileNames = fileNames.every((fileName) =>
+      normalizedText.includes(fileName.replace(/\s+/g, "")));
+    const previewAdded = latest.previewCount >= before.previewCount + files.length;
+    const uiChanged = latest.html !== before.html;
+    const uploadSelected = latest.inputFileCount >= files.length;
+    const noNewBusyState = latest.busyCount <= before.busyCount;
+    const failureText = await readVisibleUploadError(container);
+    if (failureText) {
+      throw new Error(`[upload-failed] ${label}: UI提示${failureText}`);
+    }
+
+    if ((hasAllFileNames || previewAdded || (uiChanged && uploadSelected)) && noNewBusyState) {
+      stableSuccessChecks += 1;
+      if (stableSuccessChecks >= 2) {
+        console.log(
+          `[upload-ui-ok] ${label}: files=${files.length} previews=${latest.previewCount} busy=${latest.busyCount}`,
+        );
+        return;
+      }
+    } else {
+      stableSuccessChecks = 0;
+    }
+    await container.page().waitForTimeout(500);
   }
 
-  let successCount = 0;
-  let confirmedByUi = false;
-  const successes: string[] = [];
-
-  await new Promise<void>((resolve, reject) => {
-    let settled = false;
-    const timer = setTimeout(() => {
-      finish(new Error(`[upload-failed] ${label}: timed out waiting for ${expectedCount} bizmedia upload response(s), got ${successCount}.`));
-    }, timeout);
-
-    const finish = (error?: Error) => {
-      if (settled) return;
-      settled = true;
-      clearTimeout(timer);
-      page.off("response", onResponse);
-      if (error) reject(error);
-      else resolve();
-    };
-
-    const onResponse = (response: Response) => {
-      if (!isBizmediaUploadResponse(response)) return;
-
-      void readBizmediaUploadResponse(response).then((body) => {
-        if (settled) return;
-        const ret = body?.base_resp?.ret;
-        const errMsg = body?.base_resp?.err_msg ?? "unknown";
-        if (ret !== 0 || !body?.content) {
-          finish(new Error(`[upload-failed] ${label}: bizmedia upload returned ret=${String(ret)} err_msg=${errMsg}.`));
-          return;
-        }
-
-        successCount += 1;
-        successes.push(body.content);
-        if (successCount >= expectedCount) finish();
-      }).catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        finish(new Error(`[upload-failed] ${label}: failed to parse bizmedia upload response: ${message}`));
-      });
-    };
-
-    page.on("response", onResponse);
-    void action()
-      .then(async () => {
-        if (!uiConfirmation) return;
-        try {
-          await uiConfirmation();
-          confirmedByUi = true;
-          console.log(`[upload-ui-ok] ${label}: visible upload state confirmed`);
-          finish();
-        } catch {
-          console.warn(`[warn] ${label}: visible upload state not confirmed, keep waiting for bizmedia response`);
-        }
-      })
-      .catch((error: unknown) => {
-        const message = error instanceof Error ? error.message : String(error);
-        finish(new Error(`[upload-failed] ${label}: upload action failed: ${message}`));
-      });
-  });
-
-  if (!confirmedByUi) {
-    console.log(`[upload-api-ok] ${label}: ${successes.length} bizmedia response(s) confirmed`);
-  }
+  throw new Error(
+    `[upload-failed] ${label}: UI在${Math.round(uiTimeout / 1000)}秒内未确认上传完成；` +
+      `selected=${latest.inputFileCount}/${files.length} previews=${latest.previewCount} busy=${latest.busyCount}`,
+  );
 }
 
-export async function waitForUploadedFiles(page: Page, files: string[], label: string): Promise<void> {
-  const fileNames = files.map((filePath) => path.basename(filePath));
+export async function waitForUploadedFiles(
+  page: Page,
+  files: string[],
+  label: string,
+  timeout = 30000,
+): Promise<void> {
+  const fileNames = uploadFileNames(files);
   if (!fileNames.length) return;
 
-  try {
-    const imageTexts = page.locator("wujie-app .img_text");
-    await imageTexts.first().waitFor({ state: "visible", timeout: 60000 });
-    await Promise.all(fileNames.map(async (fileName) => {
-      await imageTexts.filter({ hasText: fileName }).first().waitFor({ state: "visible", timeout: 60000 });
-    }));
-    console.log(`[upload-ok] ${label}: ${fileNames.join(", ")}`);
-  } catch {
-    console.warn(`[warn] upload result not confirmed for ${label}: ${fileNames.join(", ")}`);
-  }
+  await page.waitForFunction(
+    ({ names, selector }) => {
+      const container = document.querySelector(selector);
+      if (!container) return false;
+      const text = (container.textContent ?? "").replace(/\s+/g, "");
+      return names.every((name) => text.includes(name.replace(/\s+/g, "")));
+    },
+    { names: fileNames, selector: rootSelector },
+    { timeout },
+  );
+  console.log(`[upload-ui-ok] ${label}: ${fileNames.join(", ")}`);
 }
 
 export async function findVisibleLabeledGroup(
@@ -342,10 +368,13 @@ export async function uploadBySelector(
     console.warn(`[warn] ${label}: trigger selector ignored, using input.setInputFiles directly`);
   }
 
-  await waitForBizmediaUploadSuccesses(page, files.length, label, async () => {
-    await locator.setInputFiles(files, { timeout: 10000 });
-  });
-  await waitForUploadedFiles(page, files, label);
+  const labeledGroup = locator.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' weui-desktop-form__control-group ')][1]",
+  );
+  const uiContainer = await labeledGroup.count() > 0
+    ? labeledGroup
+    : page.locator(rootSelector).first();
+  await setInputFilesAndWaitForUi(uiContainer, locator, files, label);
   console.log(`[upload] ${label}: ${files.length} file(s)`);
 }
 
@@ -369,10 +398,7 @@ export async function uploadInGroup(
     return;
   }
 
-  await waitForBizmediaUploadSuccesses(group.page(), files.length, label, async () => {
-    await input.setInputFiles(files, { timeout: 10000 });
-  });
-  await waitForUploadedFiles(group.page(), files, label);
+  await setInputFilesAndWaitForUi(group, input, files, label);
   console.log(`[upload] ${label}: ${files.length} file(s)`);
 }
 

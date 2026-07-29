@@ -21,6 +21,7 @@ export type EnsureBaiduNetdiskResourceRequest = {
     minimumImages?: number;
   };
   requiredPosterImages?: number;
+  requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
 };
 

@@ -62,7 +62,12 @@ export class TaskService {
     const activeTaskKey = this.activeTaskKeyByChannelId.get(channelId);
     if (activeTaskKey) {
       const taskRecord = this.taskRecordsByKey.get(activeTaskKey);
-      if (!taskRecord || taskRecord.status === "succeeded" || taskRecord.status === "failed") {
+      if (
+        !taskRecord
+        || taskRecord.status === "succeeded"
+        || taskRecord.status === "failed"
+        || taskRecord.status === "interrupted"
+      ) {
         this.activeTaskKeyByChannelId.delete(channelId);
         logger.warn("cleared stale active task lock", {
           videoAccountId: channelId,
@@ -274,6 +279,17 @@ export class TaskService {
         logger.info("task succeeded", this.createTaskLogFields(taskRecord));
       } catch (error) {
         const errorInfo = classifyError(error, ErrorType.TaskExecution);
+        if (errorInfo.type === ErrorType.Interrupted) {
+          taskRecord.status = "interrupted";
+          taskRecord.error = errorInfo.message;
+          taskRecord.errorType = errorInfo.type;
+          logger.warn("task interrupted", {
+            ...this.createTaskLogFields(taskRecord),
+            errorType: errorInfo.type,
+            errorMessage: errorInfo.message,
+          });
+          throw error;
+        }
         taskRecord.status = "failed";
         taskRecord.error = errorInfo.message;
         taskRecord.errorType = errorInfo.type;

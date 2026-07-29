@@ -36,6 +36,7 @@ export type BaiduNetdiskShareDownloadOptions = {
     minimumImages?: number;
   };
   expectedPosterImages?: number;
+  expectedAiProductionProofFiles?: number;
   port?: number;
   downloadDir?: string;
 };
@@ -102,6 +103,11 @@ export type BaiduNetdiskRemotePosterListing = {
   roots: Array<{ path: string; fsId?: number | string }>;
 };
 
+export type BaiduNetdiskRemoteAiProductionProofListing = {
+  files: BaiduNetdiskRemoteOwnershipFile[];
+  roots: Array<{ path: string; fsId?: number | string }>;
+};
+
 export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
@@ -109,8 +115,10 @@ export type BaiduNetdiskShareDownloadResult = {
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   remoteOwnership?: BaiduNetdiskRemoteOwnershipListing;
   remotePosters?: BaiduNetdiskRemotePosterListing;
+  remoteAiProductionProofs?: BaiduNetdiskRemoteAiProductionProofListing;
   expectedOwnershipImages?: number;
   expectedPosterImages?: number;
+  expectedAiProductionProofFiles?: number;
   completed: boolean;
   skippedExisting: boolean;
 };

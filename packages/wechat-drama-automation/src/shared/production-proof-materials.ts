@@ -22,6 +22,7 @@ export const wechatOwnershipRequirements = {
 } as const;
 
 const contractImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp"]);
+const mingxingshuoMaximumOwnershipFiles = 8;
 
 async function isValidContractImage(file: string) {
   if (!contractImageExtensions.has(path.extname(file).toLowerCase())) return false;
@@ -63,9 +64,14 @@ function isMingxingshuoContractSubject(contractSubject?: string) {
   );
 }
 
-export function selectRandomOwnershipFiles(files: string[], maximumCount = 4) {
+export function selectRandomOwnershipFiles(
+  files: string[],
+  maximumCount = mingxingshuoMaximumOwnershipFiles,
+) {
   const shuffled = [...files];
   const selectedCount = Math.min(Math.max(0, maximumCount), shuffled.length);
+  if (selectedCount >= shuffled.length) return shuffled;
+
   for (let index = 0; index < selectedCount; index += 1) {
     const selectedIndex = randomInt(index, shuffled.length);
     [shuffled[index], shuffled[selectedIndex]] = [shuffled[selectedIndex], shuffled[index]];

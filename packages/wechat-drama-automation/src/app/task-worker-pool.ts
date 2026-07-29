@@ -24,6 +24,10 @@ import {
   wechatOwnershipRequirements,
 } from "../shared/production-proof-materials.js";
 import { prepareWechatPosterMaterials } from "../shared/poster-materials.js";
+import {
+  prepareWechatAiProductionProofMaterials,
+  wechatAiProductionProofRequirements,
+} from "../shared/ai-production-proof-materials.js";
 
 const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
@@ -36,6 +40,7 @@ const nonRetryableBaiduNetdiskErrorPatterns = [
   "重新登陆",
   "百度网盘权属材料数量不足",
   "百度网盘海报封面数量不足",
+  "百度网盘AI制作证明数量不足",
 ];
 
 function sleep(ms: number): Promise<void> {
@@ -184,10 +189,24 @@ export class TaskWorkerPool {
               logger.info("skip claim, login required", {
                 videoAccountId,
                 videoAccountName: videoAccount.name,
-                retryDelayMs: loginRequiredDelayMs,
+                loginWaitTimeoutMs: loginRequiredDelayMs,
               });
               reservation.release();
-              await sleep(loginRequiredDelayMs);
+              const loginCompleted = await this.browserContexts.waitForAuthenticatedSession(
+                videoAccountId,
+                loginRequiredDelayMs,
+              );
+              if (loginCompleted) {
+                logger.info("login detected, retry claim immediately", {
+                  videoAccountId,
+                  videoAccountName: videoAccount.name,
+                });
+              } else {
+                logger.info("login wait timed out, retry login check", {
+                  videoAccountId,
+                  videoAccountName: videoAccount.name,
+                });
+              }
               continue;
             }
             nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
@@ -240,9 +259,16 @@ export class TaskWorkerPool {
                 },
               );
             }
+            await prepareWechatAiProductionProofMaterials(playletConfig, { allowMissing: true });
             await this.ensureBaiduNetdiskResourceReady(videoAccount, claimedAccountTask, playletConfig);
             await validateLocalEpisodeVideos(playletConfig);
             await prepareWechatPosterMaterials(playletConfig);
+            const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(playletConfig);
+            logger.info("AI production proof materials ready", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              enabled: playletConfig.playlet.aiContent ?? true,
+              files: aiProductionProofFiles,
+            });
             const productionProofFiles = await prepareWechatProductionProofMaterials(
               playletConfig,
               videoAccount.contractSubject,
@@ -288,6 +314,17 @@ export class TaskWorkerPool {
             });
           } catch (error) {
             const errorInfo = classifyError(error, ErrorType.TaskExecution);
+            if (errorInfo.type === ErrorType.Interrupted) {
+              logger.warn("task interrupted, skip failure callback", {
+                accountTaskId: claimedAccountTask.accountTaskId,
+                videoAccountId,
+                errorType: errorInfo.type,
+                errorMessage: errorInfo.message,
+                runtimeStopping: this.stopped,
+                workerStopping: worker.stopped,
+              });
+              continue;
+            }
             const taskErrorMessage = errorInfo.message;
             await reportClaimedTaskErrorApi({
               accountTaskId: claimedAccountTask.accountTaskId,
@@ -390,6 +427,11 @@ export class TaskWorkerPool {
           episodeCount: playletConfig.playlet.episodeCount,
           requiredOwnership: wechatOwnershipRequirements,
           requiredPosterImages: 1,
+          requiredAiProductionProofFiles:
+            (playletConfig.playlet.aiContent ?? true)
+            && !(playletConfig.playlet.aiProductionProofFiles?.length)
+              ? wechatAiProductionProofRequirements.minimumFiles
+              : 0,
           mergeOwnershipMaterials: !isMingxingshuo && !["false", "0", "no", "off"].includes(
             String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
           ),

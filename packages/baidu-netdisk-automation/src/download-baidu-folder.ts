@@ -26,6 +26,7 @@ import type {
   BaiduNetdiskDownloadTaskStatus,
   BaiduNetdiskRemoteOwnershipListing,
   BaiduNetdiskRemotePosterListing,
+  BaiduNetdiskRemoteAiProductionProofListing,
   BaiduNetdiskRemoteVideoListing,
   BaiduNetdiskShareDownloadOptions,
   BaiduNetdiskShareDownloadResult,
@@ -637,9 +638,12 @@ type SavedShareResult = {
   resourceRootFsId: number | string;
   alreadySaved: boolean;
   locateSource: string;
+  shareStructure: "wrapped" | "flat";
+  transferredItemCount: number;
   remoteVideos: BaiduNetdiskRemoteVideoListing;
   remoteOwnership: BaiduNetdiskRemoteOwnershipListing;
   remotePosters: BaiduNetdiskRemotePosterListing;
+  remoteAiProductionProofs: BaiduNetdiskRemoteAiProductionProofListing;
 };
 
 async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
@@ -792,6 +796,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   const blockShareId = (item) => pickString(item?.shareid, item?.share_id);
   const blockShareUk = (item) => pickString(item?.share_uk, item?.shareuk, item?.uk);
   const blockToken = (item) => pickString(item?.bdstoken, item?.bdstoken_value);
+  const normalizeDir = (dir) => "/" + String(dir || "").split("/").filter(Boolean).join("/");
   const isExpectedFile = (item) => {
     const name = fileNameOf(item);
     return name === expectedName || Boolean(name && (name.includes(expectedName) || expectedName.includes(name)));
@@ -829,7 +834,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     throw new Error("分享页 HTML 没有解析到 shareid/share_uk，无法保存到我的网盘。");
   }
   const shareListAttempts = [];
-  const fetchShareFileList = async () => {
+  const fetchShareFileList = async (dir = "/") => {
     const results = [];
     const pageSize = 1000;
     for (let page = 1; page <= SHARE_LIST_MAX_PAGES; page += 1) {
@@ -842,7 +847,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
         web: "1",
         page: String(page),
         num: String(pageSize),
-        dir: "/",
+        dir: normalizeDir(dir),
         t: String(Date.now()),
         channel: "chunlei",
         app_id: "250528",
@@ -896,70 +901,69 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   const itemName = (item) => String(item?.server_filename || item?.path?.split("/")?.pop() || "");
   const itemPath = (item) => String(item?.path || "");
   const itemFsId = (item) => String(item?.fs_id || item?.fsid || item?.id || "");
-  const normalizeDir = (dir) => "/" + String(dir || "").split("/").filter(Boolean).join("/");
   const joinPath = (dir, name) => normalizeDir(normalizeDir(dir) + "/" + name);
-  const rootListResponse = await jsonFetch(
-    "/api/list?dir=%2F&order=time&desc=1&num=1000&page=1&" + baseQuery,
-  );
-  if (rootListResponse.errno !== 0) {
-    throw new Error("读取我的网盘根目录失败：" + compactJson(rootListResponse));
-  }
-  const rootNames = new Set(
-    (Array.isArray(rootListResponse.list) ? rootListResponse.list : []).map(itemName),
-  );
+  const itemIsDir = (item) => Number(item?.isdir ?? item?.is_dir ?? 0) === 1;
+  const itemSize = (item) => Number(item?.size ?? 0);
+  const compatibleItem = (source, target) => {
+    if (itemIsDir(source) !== itemIsDir(target)) return false;
+    if (itemIsDir(source)) return true;
+    const sourceSize = itemSize(source);
+    const targetSize = itemSize(target);
+    return sourceSize <= 0 || targetSize <= 0 || sourceSize === targetSize;
+  };
+  const listOwnDir = async (dir) => {
+    const normalizedDir = normalizeDir(dir);
+    const results = [];
+    const pageSize = 1000;
+    for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
+      const data = await jsonFetch(
+        "/api/list?dir=" +
+          encodeURIComponent(normalizedDir) +
+          "&order=name&desc=0&num=" +
+          pageSize +
+          "&page=" +
+          page +
+          "&" +
+          baseQuery,
+      );
+      if (data.errno !== 0) {
+        throw new Error("读取我的网盘目录失败：" + normalizedDir + "；" + compactJson(data));
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      results.push(...list);
+      if (list.length < pageSize && !data.has_more) break;
+    }
+    return results;
+  };
   const safeExpectedName = String(expectedName || sourceName || "百度网盘资源")
     .replace(/[\\\\/:*?"<>|]/g, "_")
     .slice(0, 180);
-  const now = new Date();
-  const timestamp = [
-    now.getFullYear(),
-    String(now.getMonth() + 1).padStart(2, "0"),
-    String(now.getDate()).padStart(2, "0"),
-    "-",
-    String(now.getHours()).padStart(2, "0"),
-    String(now.getMinutes()).padStart(2, "0"),
-    String(now.getSeconds()).padStart(2, "0"),
-  ].join("");
-  let finalFileName = safeExpectedName;
-  if (rootNames.has(finalFileName)) finalFileName = safeExpectedName + "（自动转存-" + timestamp + "）";
-  let savedPath = joinPath("/", finalFileName);
-
-  const createParams = new URLSearchParams({
-    a: "commit",
-    channel: "chunlei",
-    web: "1",
-    app_id: "250528",
-    bdstoken: token,
-    clienttype: "0",
-  });
-  const createBody = new URLSearchParams({
-    path: savedPath,
-    isdir: "1",
-    block_list: "[]",
-    method: "post",
-  });
-  const created = await jsonFetch("/api/create?" + createParams.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: createBody,
-  });
-  if (created.errno !== 0) {
+  const materialDirectoryPattern = /^(成片|成品|视频|正片|工程|工程文件|权属|权属文件|版权|海报|封面|AI制作证明)$/i;
+  const topLevelDirectories = transferableFiles.filter(itemIsDir);
+  const wrapperCandidate = transferableFiles.length === 1 && topLevelDirectories.length === 1
+    ? topLevelDirectories[0]
+    : undefined;
+  const wrapperName = wrapperCandidate ? fileNameOf(wrapperCandidate) : "";
+  const shareHasDramaWrapper = Boolean(
+    wrapperCandidate &&
+      (
+        wrapperName === expectedName ||
+        wrapperName.includes(expectedName) ||
+        expectedName.includes(wrapperName) ||
+        !materialDirectoryPattern.test(wrapperName.replace(/\\s+/g, ""))
+      ),
+  );
+  let desiredItems = shareHasDramaWrapper
+    ? await fetchShareFileList(itemPath(wrapperCandidate))
+    : transferableFiles;
+  desiredItems = desiredItems.filter((item) => Boolean(fileFsIdOf(item)));
+  if (desiredItems.length === 0) {
     throw new Error(
-      "创建网盘剧目录失败：" +
-        String(created.show_msg || created.errmsg || created.message || "百度接口返回异常") +
-        "；errno=" +
-        String(created.errno),
+      shareHasDramaWrapper
+        ? "分享中的剧名目录为空或无法读取：" + itemPath(wrapperCandidate)
+        : "分享根目录没有可转存素材。",
     );
   }
-  savedPath = normalizeDir(created.path || savedPath);
-  finalFileName = itemName(created) || savedPath.split("/").filter(Boolean).pop() || finalFileName;
-  const ownRoot = {
-    server_filename: finalFileName,
-    path: savedPath,
-    fs_id: itemFsId(created),
-  };
-  const locateSource = "created-transfer";
-  const alreadySaved = false;
 
   const sekey =
     localStorage.getItem(surl + "_bdclnd") ||
@@ -977,45 +981,299 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     bdstoken: token,
     clienttype: "0",
   });
-  const transferBody = new URLSearchParams({
-    fsidlist: JSON.stringify(transferableFiles.map(fileFsIdOf)),
-    path: savedPath,
-  });
-  const transferred = await jsonFetch("/share/transfer?" + transferParams.toString(), {
-    method: "POST",
-    headers: { "Content-Type": "application/x-www-form-urlencoded" },
-    body: transferBody,
-  });
-  if (transferred.errno !== 0) {
+
+  const findOwnItem = async (dir, name) =>
+    (await listOwnDir(dir)).find((item) => itemName(item) === name);
+  const searchOwnItems = async (name) => {
+    const results = [];
+    const pageSize = 1000;
+    for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
+      const params = new URLSearchParams({
+        key: String(name),
+        recursion: "1",
+        order: "name",
+        desc: "0",
+        num: String(pageSize),
+        page: String(page),
+        channel: "chunlei",
+        web: "1",
+        app_id: "250528",
+        bdstoken: token,
+        clienttype: "0",
+      });
+      const data = await jsonFetch("/api/search?" + params.toString());
+      if (data.errno !== 0) {
+        attempts.push("search own item errno=" + data.errno + " name=" + name);
+        break;
+      }
+      const list = Array.isArray(data.list) ? data.list : [];
+      results.push(...list.filter((item) => itemName(item) === name));
+      if (!data.has_more || list.length < pageSize) break;
+    }
+    return results;
+  };
+  const createOwnDirectory = async (name) => {
+    const targetPath = joinPath("/", name);
+    const existing = await findOwnItem("/", name);
+    if (existing) {
+      if (!itemIsDir(existing)) {
+        throw new Error("我的网盘存在同名文件，不能作为剧目目录：" + targetPath);
+      }
+      return existing;
+    }
+
+    const createParams = new URLSearchParams({
+      a: "commit",
+      channel: "chunlei",
+      web: "1",
+      app_id: "250528",
+      bdstoken: token,
+      clienttype: "0",
+    });
+    const createBody = new URLSearchParams({
+      path: targetPath,
+      isdir: "1",
+      block_list: "[]",
+      method: "post",
+    });
+    const created = await jsonFetch("/api/create?" + createParams.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: createBody,
+    });
+    if (created.errno === 0) return created;
+    if (created.errno === 2) {
+      const collided = await findOwnItem("/", name);
+      if (collided && itemIsDir(collided)) return collided;
+    } else {
+      throw new Error(
+        "创建网盘剧目录失败：" +
+          String(created.show_msg || created.errmsg || created.message || "百度接口返回异常") +
+          "；errno=" +
+          String(created.errno),
+      );
+    }
+    throw new Error(
+      "创建网盘剧目录发生冲突但未找到可复用目录：" + targetPath + "；" + compactJson(created),
+    );
+  };
+  const transferOne = async (source, destinationDir) => {
+    const name = fileNameOf(source);
+    const existing = await findOwnItem(destinationDir, name);
+    if (existing) {
+      if (!compatibleItem(source, existing)) {
+        const conflict = new Error("目标目录存在不兼容的同名素材：" + joinPath(destinationDir, name));
+        conflict.code = "TARGET_CONFLICT";
+        throw conflict;
+      }
+      return { item: existing, transferred: false };
+    }
+
+    const transferBody = new URLSearchParams({
+      fsidlist: JSON.stringify([fileFsIdOf(source)]),
+      path: normalizeDir(destinationDir),
+    });
+    const transferred = await jsonFetch("/share/transfer?" + transferParams.toString(), {
+      method: "POST",
+      headers: { "Content-Type": "application/x-www-form-urlencoded" },
+      body: transferBody,
+    });
     const message = String(transferred.show_msg || transferred.errmsg || transferred.message || "");
     if (transferred.errno === -6 || message.includes("账户已过期") || message.includes("重新登陆")) {
       throw new Error("百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。");
     }
+    if (transferred.errno !== 0 && transferred.errno !== 2) {
+      throw new Error(
+        "保存分享到网盘失败：" +
+          (message || "百度接口返回异常") +
+          "；errno=" +
+          String(transferred.errno) +
+          (transferred.request_id ? "；request_id=" + String(transferred.request_id) : ""),
+      );
+    }
+    if (transferred.errno === 2) {
+      const existingElsewhere = (await searchOwnItems(name))
+        .filter((item) => compatibleItem(source, item))
+        .map(itemPath)
+        .filter(Boolean);
+      if (existingElsewhere.length > 0) {
+        const duplicate = new Error(
+          "素材已存在于网盘其他目录，当前剧目目录无法继续补传：" +
+            name +
+            "；现有路径=" +
+            existingElsewhere.slice(0, 5).join("、"),
+        );
+        duplicate.code = "SOURCE_ALREADY_SAVED_ELSEWHERE";
+        throw duplicate;
+      }
+    }
+
+    const transferStarted = Date.now();
+    while (Date.now() - transferStarted < 70000) {
+      const located = await findOwnItem(destinationDir, name);
+      if (located) {
+        if (!compatibleItem(source, located)) {
+          const conflict = new Error("转存后出现不兼容的同名素材：" + joinPath(destinationDir, name));
+          conflict.code = "TARGET_CONFLICT";
+          throw conflict;
+        }
+        return { item: located, transferred: transferred.errno === 0 };
+      }
+      await sleep(1000);
+    }
     throw new Error(
-      "保存分享到网盘失败：" +
-        (message || "百度接口返回异常") +
-        "；errno=" +
-        String(transferred.errno) +
-        (transferred.request_id ? "；request_id=" + String(transferred.request_id) : "")
+      (transferred.errno === 2 ? "文件已存在但目标目录未找到对应素材：" : "转存后未找到目标素材：") +
+        joinPath(destinationDir, name),
     );
+  };
+  const itemsConflict = async (source, target) => {
+    if (!compatibleItem(source, target)) return true;
+    if (!itemIsDir(source)) return false;
+
+    const sourceChildren = await fetchShareFileList(itemPath(source));
+    const targetChildrenByName = new Map(
+      (await listOwnDir(itemPath(target))).map((item) => [itemName(item), item]),
+    );
+    for (const sourceChild of sourceChildren) {
+      const targetChild = targetChildrenByName.get(fileNameOf(sourceChild));
+      if (targetChild && await itemsConflict(sourceChild, targetChild)) return true;
+    }
+    return false;
+  };
+  const destinationHasConflict = async (destinationDir, sources) => {
+    const existingByName = new Map(
+      (await listOwnDir(destinationDir)).map((item) => [itemName(item), item]),
+    );
+    for (const source of sources) {
+      const existing = existingByName.get(fileNameOf(source));
+      if (existing && await itemsConflict(source, existing)) return true;
+    }
+    return false;
+  };
+  const inspectReusableDirectory = async (sources, destinationDir) => {
+    const existingByName = new Map(
+      (await listOwnDir(destinationDir)).map((item) => [itemName(item), item]),
+    );
+    let matched = 0;
+    let total = 0;
+    for (const source of sources) {
+      total += 1;
+      const existing = existingByName.get(fileNameOf(source));
+      if (!existing) continue;
+      if (!compatibleItem(source, existing)) {
+        return { matched, total, conflict: true };
+      }
+      matched += 1;
+      if (itemIsDir(source)) {
+        const sourceChildren = await fetchShareFileList(itemPath(source));
+        const nested = await inspectReusableDirectory(sourceChildren, itemPath(existing));
+        matched += nested.matched;
+        total += nested.total;
+        if (nested.conflict) return { matched, total, conflict: true };
+      }
+    }
+    return { matched, total, conflict: false };
+  };
+  const syncItems = async (sources, destinationDir) => {
+    let transferredCount = 0;
+    for (const source of sources) {
+      const existing = await findOwnItem(destinationDir, fileNameOf(source));
+      if (existing && itemIsDir(source) && itemIsDir(existing)) {
+        const sourceChildren = await fetchShareFileList(itemPath(source));
+        transferredCount += await syncItems(sourceChildren, itemPath(existing));
+        continue;
+      }
+      const result = await transferOne(source, destinationDir);
+      if (result.transferred) transferredCount += 1;
+    }
+    return transferredCount;
+  };
+
+  let finalFileName = String(shareHasDramaWrapper ? wrapperName : safeExpectedName)
+    .replace(/[\\\\/:*?"<>|]/g, "_")
+    .slice(0, 180);
+  const rootCandidate = await findOwnItem("/", finalFileName);
+  const searchedCandidates = (await searchOwnItems(finalFileName))
+    .filter((item) => itemIsDir(item) && itemName(item) === finalFileName);
+  const candidateByPath = new Map();
+  for (const candidate of [rootCandidate, ...searchedCandidates].filter(Boolean)) {
+    if (!itemIsDir(candidate)) continue;
+    candidateByPath.set(normalizeDir(itemPath(candidate)), candidate);
+  }
+  const rankedCandidates = [];
+  for (const candidate of candidateByPath.values()) {
+    const inspected = await inspectReusableDirectory(desiredItems, itemPath(candidate));
+    if (!inspected.conflict) rankedCandidates.push({ item: candidate, ...inspected });
+  }
+  rankedCandidates.sort((left, right) => {
+    const leftComplete = left.matched === left.total && left.total > 0 ? 1 : 0;
+    const rightComplete = right.matched === right.total && right.total > 0 ? 1 : 0;
+    if (leftComplete !== rightComplete) return rightComplete - leftComplete;
+    if (left.matched !== right.matched) return right.matched - left.matched;
+    const leftIsRoot = normalizeDir(itemPath(left.item)) === joinPath("/", finalFileName) ? 1 : 0;
+    const rightIsRoot = normalizeDir(itemPath(right.item)) === joinPath("/", finalFileName) ? 1 : 0;
+    return rightIsRoot - leftIsRoot;
+  });
+  const bestReusableCandidate = rankedCandidates[0];
+  let ownRoot =
+    bestReusableCandidate && bestReusableCandidate.matched > 0
+      ? bestReusableCandidate.item
+      : rootCandidate;
+  let locateSource = ownRoot
+    ? normalizeDir(itemPath(ownRoot)) === joinPath("/", finalFileName)
+      ? "existing-root"
+      : "existing-search"
+    : "";
+  let transferredCount = 0;
+  let createdTarget = false;
+  let directWrapperTransfer = false;
+
+  if (ownRoot && !itemIsDir(ownRoot)) {
+    ownRoot = undefined;
+    locateSource = "root-name-conflict";
+  }
+  if (
+    ownRoot &&
+    await destinationHasConflict(itemPath(ownRoot), desiredItems)
+  ) {
+    ownRoot = undefined;
+    locateSource = "root-content-conflict";
   }
 
-  const expectedTransferredNames = new Set(sourceNames);
-  let missingTransferredNames = [...expectedTransferredNames];
-  const transferStarted = Date.now();
-  while (Date.now() - transferStarted < 70000) {
-    const data = await jsonFetch(
-      "/api/list?dir=" + encodeURIComponent(savedPath) + "&order=name&desc=0&num=1000&page=1&" + baseQuery,
-    );
-    if (data.errno === 0) {
-      const actualNames = new Set((Array.isArray(data.list) ? data.list : []).map(itemName));
-      missingTransferredNames = [...expectedTransferredNames].filter((name) => !actualNames.has(name));
-      if (missingTransferredNames.length === 0) break;
-    } else {
-      attempts.push("list transferred dir errno=" + data.errno + " " + compactJson(data));
-    }
-    await sleep(1000);
+  if (!ownRoot && shareHasDramaWrapper && !locateSource) {
+    const directResult = await transferOne(wrapperCandidate, "/");
+    ownRoot = directResult.item;
+    transferredCount += directResult.transferred ? 1 : 0;
+    directWrapperTransfer = true;
+    locateSource = directResult.transferred ? "transferred-wrapper" : "existing-wrapper";
   }
+
+  if (!ownRoot) {
+    const stableSuffix = String(surl || shareId).replace(/[^a-zA-Z0-9]/g, "").slice(-10) || "share";
+    if (locateSource) finalFileName = (safeExpectedName + "__" + stableSuffix).slice(0, 180);
+    ownRoot = await findOwnItem("/", finalFileName);
+    if (ownRoot && !itemIsDir(ownRoot)) {
+      throw new Error("稳定网盘中转路径被同名文件占用：" + joinPath("/", finalFileName));
+    }
+    if (!ownRoot) {
+      ownRoot = await createOwnDirectory(finalFileName);
+      createdTarget = true;
+    }
+    locateSource = locateSource
+      ? createdTarget ? "created-conflict-wrapper" : "existing-conflict-wrapper"
+      : createdTarget ? "created-flat-wrapper" : "existing-flat-wrapper";
+  }
+
+  let savedPath = normalizeDir(itemPath(ownRoot) || joinPath("/", finalFileName));
+  finalFileName = itemName(ownRoot) || savedPath.split("/").filter(Boolean).pop() || finalFileName;
+  if (!directWrapperTransfer) {
+    transferredCount += await syncItems(desiredItems, savedPath);
+  }
+  const expectedTransferredNames = new Set(desiredItems.map(fileNameOf).filter(Boolean));
+  const actualTransferredNames = new Set((await listOwnDir(savedPath)).map(itemName));
+  const missingTransferredNames = [...expectedTransferredNames].filter(
+    (name) => !actualTransferredNames.has(name),
+  );
   if (missingTransferredNames.length > 0) {
     throw new Error(
       "分享资源转存不完整：目标目录=" +
@@ -1025,6 +1283,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
         (missingTransferredNames.length > 10 ? "等" + missingTransferredNames.length + "项" : ""),
     );
   }
+  const alreadySaved = !createdTarget && transferredCount === 0;
   const escapeRegExp = (value) => String(value).replace(/[\\\\^$.*+?()[\\]{}|]/g, "\\\\$&");
   const episodeBaseNames = [...new Set([expectedName, sourceName, ...sourceNames, finalFileName].filter(Boolean))];
   const episodePatterns = episodeBaseNames.flatMap((baseName) => {
@@ -1117,19 +1376,24 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   const scannedDirs = [];
   const scannedDirPaths = new Set();
   const rootIsOwnership = /工程|权属/.test(String(finalFileName).replace(/\s+/g, ""));
+  const rootIsAiProductionProof = /ai制作证明/i.test(String(finalFileName).replace(/\s+/g, ""));
   const queue = [{
     path: normalizeDir(savedPath),
     name: finalFileName,
     fsId: itemFsId(ownRoot),
     depth: 0,
     ownershipScope: rootIsOwnership,
+    aiProductionProofScope: rootIsAiProductionProof,
   }];
   const allEntriesByPath = new Map();
   const ownershipFiles = new Map();
   const ownershipRoots = new Map();
   const namedPosterFiles = new Map();
   const directoryPosterFiles = new Map();
+  const aiProductionProofFiles = new Map();
+  const aiProductionProofRoots = new Map();
   if (rootIsOwnership) ownershipRoots.set(normalizeDir(savedPath), itemFsId(ownRoot));
+  if (rootIsAiProductionProof) aiProductionProofRoots.set(normalizeDir(savedPath), itemFsId(ownRoot));
   const candidateDirs = [];
 
   while (queue.length > 0 && scannedDirs.length < REMOTE_VIDEO_SCAN_MAX_DIRS) {
@@ -1160,18 +1424,37 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       if (entry?.isdir === 1 || entry?.isdir === true) {
         if (current.depth < REMOTE_VIDEO_SCAN_MAX_DEPTH) {
           const entersOwnershipScope = !current.ownershipScope && /工程|权属/.test(String(name).replace(/\s+/g, ""));
+          const entersAiProductionProofScope = !current.aiProductionProofScope && /ai制作证明/i.test(String(name).replace(/\s+/g, ""));
           if (entersOwnershipScope) ownershipRoots.set(normalizeDir(entryPath), itemFsId(entry));
+          if (entersAiProductionProofScope) aiProductionProofRoots.set(normalizeDir(entryPath), itemFsId(entry));
           queue.push({
             path: normalizeDir(entryPath),
             name,
             fsId: itemFsId(entry),
             depth: current.depth + 1,
             ownershipScope: current.ownershipScope || entersOwnershipScope,
+            aiProductionProofScope: current.aiProductionProofScope || entersAiProductionProofScope,
           });
         }
         continue;
       }
       const lowerName = name.toLowerCase();
+      if (
+        /\.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)
+        && (current.aiProductionProofScope || /ai制作证明/i.test(name.replace(/\s+/g, "")))
+      ) {
+        aiProductionProofFiles.set(entryPath, {
+          name,
+          path: entryPath,
+          fsId: itemFsId(entry),
+          size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+          rootPath: current.path,
+          rootFsId: current.fsId,
+        });
+        if (!aiProductionProofRoots.has(current.path)) {
+          aiProductionProofRoots.set(current.path, current.fsId);
+        }
+      }
       if (/\.(?:png|jpe?g|bmp|webp)$/i.test(lowerName)) {
         if (selectedPosterPaths.has(entryPath)) {
           const posterFile = {
@@ -1278,6 +1561,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     resourceRootFsId: itemFsId(ownRoot),
     alreadySaved,
     locateSource,
+    shareStructure: shareHasDramaWrapper ? "wrapped" : "flat",
+    transferredItemCount: transferredCount,
     remoteVideos: {
       rootPath: selectedVideoDir.path || savedPath,
       files,
@@ -1304,10 +1589,15 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
         ? { files: [selected], roots: [{ path: selected.rootPath, fsId: selected.rootFsId }] }
         : { files: [], roots: [] };
     })(),
+    remoteAiProductionProofs: {
+      files: [...aiProductionProofFiles.values()]
+        .sort((left, right) => left.path.localeCompare(right.path)),
+      roots: [...aiProductionProofRoots.entries()].map(([path, fsId]) => ({ path, fsId })),
+    },
   };
 })()
 `,
-      90000,
+      10 * 60_000,
     );
 
     if (!result.savedPath) throw new Error("没有拿到保存后的网盘路径。");
@@ -1816,10 +2106,15 @@ export async function getBaiduNetdiskDownloadTaskStatus(options: {
   };
 }
 
-export async function controlBaiduNetdiskDownloadTask(options: { port?: number; targetName: string; action: "pause" | "resume" | "delete" }) {
+export async function controlBaiduNetdiskDownloadTask(options: {
+  port?: number;
+  targetName: string;
+  action: "pause" | "resume" | "delete";
+  expectedDownloadRoot?: string;
+}) {
   const target = findUsableCoreTarget(await getTargets(options.port ?? 9337));
   if (!target) throw new Error("百度网盘 CDP 页面不可用。");
-  return withPage(target, (page) => page.evaluate(`(async()=>{const app=require("@electron/remote").app;const wanted=${JSON.stringify(options.targetName)};const action=${JSON.stringify(options.action)};const d=app.$downloader;let payload;d.getDownloadTasks((e,f,i)=>payload=i,0,1000,"0");for(let n=0;!payload&&n<20;n++)await new Promise(r=>setTimeout(r,100));const list=Array.isArray(payload?.tasks)?payload.tasks:[];const t=list.find(x=>String(x?.name||x?.server_path||"").includes(wanted));if(!t)throw new Error("未找到下载任务");const id=t.id;const names=action==="pause"?["pauseTask","pauseDownloadTask","pause"]:action==="resume"?["resumeTask","resumeDownloadTask","startTask"]:["deleteTask","removeTask","deleteDownloadTask"];const fn=names.find(k=>typeof d[k]==="function");if(!fn)throw new Error("百度网盘当前版本不支持该操作");await Promise.resolve(d[fn](id));return true;})()`));
+  return withPage(target, (page) => page.evaluate(`(async()=>{const app=require("@electron/remote").app;const wanted=${JSON.stringify(options.targetName)};const action=${JSON.stringify(options.action)};const expectedRoot=${JSON.stringify(options.expectedDownloadRoot ?? "")};const normalizePath=v=>String(v||"").replace(/\\//g,"\\\\").replace(/\\\\+$/g,"").toLowerCase();const root=normalizePath(expectedRoot);const d=app.$downloader;let payload;d.getDownloadTasks((e,f,i)=>payload=i,0,1000,"0");for(let n=0;!payload&&n<20;n++)await new Promise(r=>setTimeout(r,100));const list=Array.isArray(payload?.tasks)?payload.tasks:[];const t=list.find(x=>{const name=String(x?.name||x?.server_path||"");if(!name.includes(wanted))return false;if(!root)return true;const localPath=normalizePath(x?.local_path);return localPath===root||localPath.startsWith(root+"\\\\");});if(!t)throw new Error("未找到匹配下载目录的下载任务");const id=t.id;const names=action==="pause"?["pauseTask","pauseDownloadTask","pause"]:action==="resume"?["resumeTask","resumeDownloadTask","startTask"]:["deleteTask","removeTask","deleteDownloadTask"];const fn=names.find(k=>typeof d[k]==="function");if(!fn)throw new Error("百度网盘当前版本不支持该操作");await Promise.resolve(d[fn](id));return true;})()`));
 }
 
 async function submitNativeDownloadTask(port: number, task: SavedDownloadTask) {
@@ -2029,12 +2324,20 @@ async function submitSavedDownload(
   expectedEpisodeCount?: number,
   expectedOwnershipCounts?: BaiduNetdiskShareDownloadOptions["expectedOwnershipCounts"],
   expectedPosterImages?: number,
+  expectedAiProductionProofFiles?: number,
 ) {
   const saved = await saveShareToOwnNetdisk(shareTarget, share);
   log(
+    saved.shareStructure === "wrapped"
+      ? "分享结构：最外层为剧名目录，直接转存或复用该目录"
+      : "分享结构：最外层为素材目录，使用剧名目录归档并增量转存",
+  );
+  log(
     saved.alreadySaved
-      ? `网盘中已存在目录：${saved.savedPath} (${saved.locateSource})`
-      : `已保存到网盘：${saved.savedPath} (${saved.locateSource})`,
+      ? `网盘中已存在目录：${saved.resourceRootPath} (${saved.locateSource})`
+      : saved.locateSource.startsWith("existing")
+        ? `已复用并补齐网盘目录：${saved.resourceRootPath}，新增=${saved.transferredItemCount} (${saved.locateSource})`
+        : `已保存到网盘：${saved.resourceRootPath}，新增=${saved.transferredItemCount} (${saved.locateSource})`,
   );
 
   const targetName = saved.fileName || share.name;
@@ -2042,6 +2345,7 @@ async function submitSavedDownload(
   const remoteVideos = saved.remoteVideos;
   const remoteOwnership = saved.remoteOwnership;
   const remotePosters = saved.remotePosters;
+  const remoteAiProductionProofs = saved.remoteAiProductionProofs;
   const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
     (left, right) => left - right,
   );
@@ -2141,6 +2445,15 @@ async function submitSavedDownload(
         `请在分享资源中添加“海报”或“封面”目录及对应图片。`,
     );
   }
+  const requiredAiProductionProofFiles = Math.max(0, expectedAiProductionProofFiles ?? 0);
+  log(`网盘AI制作证明清单：文件=${remoteAiProductionProofs.files.length}/${requiredAiProductionProofFiles}`);
+  if (remoteAiProductionProofs.files.length < requiredAiProductionProofFiles) {
+    throw new Error(
+      `百度网盘AI制作证明数量不足。` +
+        `至少需要${requiredAiProductionProofFiles}个文件，实际找到${remoteAiProductionProofs.files.length}个。` +
+        `请在分享资源中添加文件名或目录名包含“AI制作证明”的图片/PDF。`,
+    );
+  }
   // Keep the large video download scoped to the selected episode directory. Every matched
   // ownership root is submitted separately as a complete directory below.
   const downloadTargetName = targetName;
@@ -2222,12 +2535,34 @@ async function submitSavedDownload(
     if (!posterSubmitted) throw new Error(`百度网盘海报封面目录下载任务提交失败：${posterTaskName}`);
   }
 
+  if (requiredAiProductionProofFiles > 0) {
+    for (const proofRoot of remoteAiProductionProofs.roots) {
+      if (!proofRoot.path || !proofRoot.fsId || submittedAssetRoots.has(proofRoot.path)) continue;
+      const proofTaskName = proofRoot.path.split("/").filter(Boolean).pop() || "AI制作证明";
+      const proofSubmitted = await submitNativeDownloadTask(port, {
+        targetName: proofTaskName,
+        savedPath: proofRoot.path,
+        fsId: proofRoot.fsId,
+        downloadRoot: downloadDir,
+      });
+      if (!proofSubmitted) throw new Error(`百度网盘AI制作证明下载任务提交失败：${proofTaskName}`);
+      submittedAssetRoots.add(proofRoot.path);
+    }
+  }
+
   if (!videoSubmitted) {
     await downloadSavedFolderFromClientSearch(port, downloadTargetName);
     downloadRoot = await confirmDownloadSetting(port, downloadDir);
     await waitForDownloadSubmitted(port, { ...task, downloadRoot });
   }
-  return { downloadRoot, targetName: downloadTargetName, remoteVideos, remoteOwnership, remotePosters };
+  return {
+    downloadRoot,
+    targetName: downloadTargetName,
+    remoteVideos,
+    remoteOwnership,
+    remotePosters,
+    remoteAiProductionProofs,
+  };
 }
 
 export async function downloadBaiduNetdiskShare(
@@ -2274,7 +2609,14 @@ export async function downloadBaiduNetdiskShare(
   const shareTarget = await openSharePage(port, share);
   await enterShareCode(shareTarget, share);
   const listTarget = await waitForShareList(port, share, [shareTarget]);
-  const { downloadRoot, targetName, remoteVideos, remoteOwnership, remotePosters } = await submitSavedDownload(
+  const {
+    downloadRoot,
+    targetName,
+    remoteVideos,
+    remoteOwnership,
+    remotePosters,
+    remoteAiProductionProofs,
+  } = await submitSavedDownload(
     port,
     listTarget,
     share,
@@ -2282,6 +2624,7 @@ export async function downloadBaiduNetdiskShare(
     options.expectedEpisodeCount,
     options.expectedOwnershipCounts,
     options.expectedPosterImages,
+    options.expectedAiProductionProofFiles,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
@@ -2297,8 +2640,10 @@ export async function downloadBaiduNetdiskShare(
     remoteVideos,
     remoteOwnership,
     remotePosters,
+    remoteAiProductionProofs,
     expectedOwnershipImages: remoteOwnership.files.length,
     expectedPosterImages: remotePosters.files.length,
+    expectedAiProductionProofFiles: remoteAiProductionProofs.files.length,
     completed: false,
     skippedExisting: false,
   };

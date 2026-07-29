@@ -14,10 +14,7 @@ import {
 import {
   findVisibleLabeledGroup,
   prepareUploadFiles,
-  setInputFilesByLocator,
   uploadInGroup,
-  uploadBySelector,
-  waitForUploadedFiles,
 } from "../upload/upload-helpers.js";
 
 async function fillFirstMatchingField(
@@ -275,13 +272,7 @@ async function uploadByLabeledGroupFileInput(
       })
       .first();
     if (await exactGroup.count()) {
-      await setInputFilesByLocator(
-        exactGroup.locator('input[type="file"]').first(),
-        files,
-        label,
-        10000,
-      );
-      await waitForUploadedFiles(page, files, label);
+      await uploadInGroup(exactGroup, files, label, (filePath) => filePath, remoteDirectoryName);
       return;
     }
   }
@@ -295,13 +286,7 @@ async function uploadByLabeledGroupFileInput(
       })
       .first();
     if (await fuzzyGroup.count()) {
-      await setInputFilesByLocator(
-        fuzzyGroup.locator('input[type="file"]').first(),
-        files,
-        label,
-        10000,
-      );
-      await waitForUploadedFiles(page, files, label);
+      await uploadInGroup(fuzzyGroup, files, label, (filePath) => filePath, remoteDirectoryName);
       return;
     }
   }
@@ -313,13 +298,13 @@ async function uploadByLabeledGroupFileInput(
       .filter({ hasText: prefix })
       .first();
     if (await textMatchedGroup.count()) {
-      await setInputFilesByLocator(
-        textMatchedGroup.locator('input[type="file"]').first(),
+      await uploadInGroup(
+        textMatchedGroup,
         files,
         label,
-        10000,
+        (filePath) => filePath,
+        remoteDirectoryName,
       );
-      await waitForUploadedFiles(page, files, label);
       return;
     }
   }
@@ -455,29 +440,36 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     `变现类型: ${monetization}`,
   );
 
+  // oxlint-disable-next-line no-debugger
+  debugger;
   if (playlet.aiContent ?? true) {
     // AI内容声明
     await page.locator(".weui-desktop-switch__box").first().click();
+    await page
+      .getByText(/^\s*AI\s*制作证明\s*$/i)
+      .first()
+      .waitFor({ state: "visible", timeout: 10000 });
+    await uploadByLabeledGroupFileInput(
+      page,
+      ["AI制作证明", "AI 制作证明"],
+      playlet.aiProductionProofFiles ?? [],
+      "AI制作证明",
+      remoteAssetDirectoryName,
+    );
   }
 
-  await uploadBySelector(
+  await uploadByLabeledGroupFileInput(
     page,
-    `${formGroup(9)} input[type="file"]`,
+    ["剧目海报"],
     [playlet.posters.main],
     "剧目海报",
-    resolveFromRoot,
-    0,
-    undefined,
     remoteAssetDirectoryName,
   );
-  await uploadBySelector(
+  await uploadByLabeledGroupFileInput(
     page,
-    `${formGroup(10)} input[type="file"]`,
+    ["推广海报"],
     [playlet.posters.promotion],
     "推广海报",
-    resolveFromRoot,
-    0,
-    undefined,
     remoteAssetDirectoryName,
   );
 

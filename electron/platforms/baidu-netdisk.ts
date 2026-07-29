@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { createHash } from "node:crypto";
+import { rm } from "node:fs/promises";
 import path from "node:path";
 import {
   BaiduNetdiskDownloadRecordsRepository,
@@ -85,6 +86,7 @@ type BaiduNetdiskShareDownloadResult = {
   localPath?: string;
   expectedOwnershipImages?: number;
   expectedPosterImages?: number;
+  expectedAiProductionProofFiles?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   completed: boolean;
   skippedExisting: boolean;
@@ -106,6 +108,7 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
     minimumImages?: number;
   };
   requiredPosterImages?: number;
+  requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
 };
 
@@ -265,6 +268,61 @@ function uniqueBaiduDownloadDir(resourceName: string, shareKey: string) {
   return path.join(defaultBaiduNetdiskDownloadDir, `${safeName}__${suffix}`);
 }
 
+function assertDisposableBaiduDownloadDir(downloadDir: string) {
+  const root = path.resolve(defaultBaiduNetdiskDownloadDir);
+  const target = path.resolve(downloadDir);
+  const relative = path.relative(root, target);
+
+  if (
+    !relative
+    || relative.startsWith("..")
+    || path.isAbsolute(relative)
+    || !/__[\da-f]{10}$/i.test(path.basename(target))
+  ) {
+    throw new Error(`拒绝清理非独立百度下载目录：${target}`);
+  }
+}
+
+async function cleanupBaiduNetdiskDownloadArtifacts(options: {
+  downloadDir: string;
+  targetName: string;
+  port: number;
+}) {
+  try {
+    assertDisposableBaiduDownloadDir(options.downloadDir);
+  } catch (error) {
+    console.warn(`[baidu] 跳过不安全的临时目录清理：${readableError(error)}`);
+    return;
+  }
+
+  try {
+    const { controlBaiduNetdiskDownloadTask } = await importBaiduNetdiskDownloadRuntimePackage();
+    await runBaiduCdpOperationExclusive(`清理百度下载任务：${options.targetName}`, () =>
+      controlBaiduNetdiskDownloadTask({
+        port: options.port,
+        targetName: options.targetName,
+        action: "delete",
+        expectedDownloadRoot: options.downloadDir,
+      }),
+    );
+    console.log(`[baidu] 已删除百度客户端下载任务：${options.targetName}`);
+  } catch (error) {
+    console.warn(`[baidu] 删除百度客户端下载任务失败或任务已不存在：${readableError(error)}`);
+  }
+
+  try {
+    await rm(options.downloadDir, {
+      recursive: true,
+      force: true,
+      maxRetries: 3,
+      retryDelay: 500,
+    });
+    console.log(`[baidu] 已清理临时下载目录：${options.downloadDir}`);
+  } catch (error) {
+    console.warn(`[baidu] 清理临时下载目录失败：${options.downloadDir}；${readableError(error)}`);
+  }
+}
+
 function normalizeEnsureDownloadRequest(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): BaiduNetdiskEnsureDownloadedRequest {
@@ -293,6 +351,7 @@ function normalizeEnsureDownloadRequest(
     episodeCount,
     requiredOwnership: request.requiredOwnership,
     requiredPosterImages: request.requiredPosterImages,
+    requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
   };
 }
@@ -329,6 +388,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
         minimumImages?: number;
       };
       expectedPosterImages?: number;
+      expectedAiProductionProofFiles?: number;
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -343,7 +403,12 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       completed: boolean;
       tasks: string[];
     }>;
-    controlBaiduNetdiskDownloadTask: (options: { port: number; targetName: string; action: "pause" | "resume" | "delete" }) => Promise<boolean>;
+    controlBaiduNetdiskDownloadTask: (options: {
+      port: number;
+      targetName: string;
+      action: "pause" | "resume" | "delete";
+      expectedDownloadRoot?: string;
+    }) => Promise<boolean>;
   }>;
 }
 
@@ -499,6 +564,8 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): Promise<BaiduNetdiskDownloadRecord> {
   const uniqueDownloadDir = uniqueBaiduDownloadDir(request.resourceName, shareKey);
+  const config = readConfig();
+  const port = cdpPort(config);
   const existingRecord = readDownloadRecords().find((record) => record.id === id);
   const localPath = playletDir(request.localEpisodeVideoRoot, request.resourceName);
   const now = new Date().toISOString();
@@ -530,12 +597,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
   });
 
   try {
-    const config = readConfig();
     const {
       downloadBaiduNetdiskShare,
       getBaiduNetdiskDownloadTaskStatus,
     } = await importBaiduNetdiskDownloadRuntimePackage();
-    const port = cdpPort(config);
     const result = await ensureBaiduNetdiskEpisodeVideos({
       shareText: request.shareText,
       resourceName: request.resourceName,
@@ -543,6 +608,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       episodeCount: request.episodeCount,
       requiredOwnership: request.requiredOwnership,
       requiredPosterImages: request.requiredPosterImages,
+      requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
       mergeOwnershipMaterials: request.mergeOwnershipMaterials,
       downloadDir: uniqueDownloadDir,
       sourceLocalPath: existingRecord?.localPath,
@@ -555,6 +621,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
             expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
             expectedPosterImages: downloadRequest.expectedPosterImages,
+            expectedAiProductionProofFiles: downloadRequest.expectedAiProductionProofFiles,
             port,
             downloadDir: downloadRequest.downloadDir,
           }),
@@ -602,6 +669,12 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       error: message,
     });
     throw Object.assign(new Error(message), { cause: error });
+  } finally {
+    await cleanupBaiduNetdiskDownloadArtifacts({
+      downloadDir: uniqueDownloadDir,
+      targetName: request.resourceName,
+      port,
+    });
   }
 }
 

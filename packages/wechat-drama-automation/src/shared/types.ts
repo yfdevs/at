@@ -25,6 +25,7 @@ export interface Config {
     previewEpisodeCount: number;
     dramaType: DramaType;
     aiContent?: boolean;
+    aiProductionProofFiles?: string[];
     posters: {
       main: string;
       promotion?: string;
@@ -135,7 +136,7 @@ export interface VodUploadReport {
   failures: VodUploadFailure[];
 }
 
-export type TaskStatus = "queued" | "running" | "succeeded" | "failed";
+export type TaskStatus = "queued" | "running" | "succeeded" | "failed" | "interrupted";
 
 export interface TaskRecord {
   mode: TaskRunOptions["mode"];

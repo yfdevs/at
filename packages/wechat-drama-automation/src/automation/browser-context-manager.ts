@@ -257,6 +257,39 @@ export class BrowserContextManager {
     }).catch(() => undefined);
   }
 
+  async waitForAuthenticatedSession(channelId: string, timeoutMs: number): Promise<boolean> {
+    const context = await this.getOrLaunch(channelId);
+    const deadline = Date.now() + Math.max(0, timeoutMs);
+    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
+
+    console.log(`[login] waiting for authenticated session ${accountLabel} timeoutMs=${timeoutMs}`);
+    while (Date.now() < deadline) {
+      if (this.channels.get(channelId)?.context !== context) return false;
+
+      const remainingMs = deadline - Date.now();
+      const pages = context.pages().filter((candidate) =>
+        !candidate.isClosed() && candidate.url() !== "about:blank"
+      );
+      for (const page of pages) {
+        const loggedIn = await this.hasAuthenticatedPlatformSession(
+          page,
+          Math.min(3000, remainingMs),
+        );
+        if (!loggedIn) continue;
+
+        this.loginRequiredNotifiedChannelIds.delete(channelId);
+        await this.save(channelId);
+        console.log(`[login] authenticated session detected ${accountLabel}`);
+        return true;
+      }
+
+      await this.waitForAuthenticationActivity(context, Math.min(1000, remainingMs));
+    }
+
+    console.warn(`[login] authenticated session wait timed out ${accountLabel}`);
+    return false;
+  }
+
   async refreshLoginStateInTemporaryPage(channelId: string, timeoutMs: number): Promise<boolean> {
     const context = await this.getOrLaunch(channelId);
     const existingPages = context.pages().filter((candidate) => !candidate.isClosed());
@@ -330,6 +363,30 @@ export class BrowserContextManager {
       url: nativeDramaListUrl,
       requestTimeoutMs: probeTimeoutMs,
     }).catch(() => false);
+  }
+
+  private async waitForAuthenticationActivity(
+    context: BrowserContext,
+    timeoutMs: number,
+  ): Promise<void> {
+    if (timeoutMs <= 0) return;
+
+    const activityWaiters: Promise<unknown>[] = [
+      new Promise((resolve) => setTimeout(resolve, timeoutMs)),
+      context.waitForEvent("page", { timeout: timeoutMs }).catch(() => undefined),
+      context.waitForEvent("close", { timeout: timeoutMs }).catch(() => undefined),
+    ];
+    for (const page of context.pages()) {
+      if (page.isClosed()) continue;
+      activityWaiters.push(
+        page.waitForEvent("framenavigated", {
+          predicate: (frame) => frame === page.mainFrame(),
+          timeout: timeoutMs,
+        }).catch(() => undefined),
+      );
+    }
+
+    await Promise.race(activityWaiters);
   }
 
   async close(): Promise<void> {
