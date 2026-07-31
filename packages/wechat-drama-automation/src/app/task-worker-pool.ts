@@ -1,7 +1,15 @@
 import {
+  findLocalEpisodeVideos,
+  prepareEpisodeVideos,
+  VideoTranscodeQueue,
+  type VideoSizePolicy,
+} from "@drama/drama-media-assets";
+import PQueue from "p-queue";
+import {
   mingxingshuoContractSubject,
   normalizeClaimedTaskConfig,
   normalizeContractSubject,
+  resolveRunDataPath,
   type ServiceConfig,
 } from "../shared/config.js";
 import { createLogger, runWithLogContext } from "../shared/logger.js";
@@ -20,6 +28,7 @@ import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { integerSetting } from "../shared/settings-value.js";
 import type { EnsureBaiduNetdiskResource } from "./runtime.js";
 import {
+  cleanupWechatProductionProofMaterials,
   prepareWechatProductionProofMaterials,
   wechatOwnershipRequirements,
 } from "../shared/production-proof-materials.js";
@@ -47,15 +56,49 @@ function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
 }
 
+function episodeVideoSizePolicy(
+  settings = getWechatVideoRuntimeSettings(),
+): VideoSizePolicy {
+  return {
+    maxFileBytes:
+      Math.max(1, integerSetting(settings.episodeVideoMaxFileMegabytes, 490)) * 1_000_000,
+    targetFileBytes:
+      Math.max(1, integerSetting(settings.episodeVideoTargetFileMegabytes, 480)) * 1_000_000,
+    audioBitrateKbps: 128,
+    threadsPerJob: Math.max(1, integerSetting(settings.videoTranscodeThreadsPerJob, 2)),
+  };
+}
+
 interface AccountWorkerControl {
   videoAccount: VideoAccount;
   stopped: boolean;
   promise: Promise<void>;
+  abortController: AbortController;
+  activeAccountTaskIds: Set<number>;
 }
+
+type ClaimedTask = NonNullable<Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>>;
+
+type PreparedClaimedTask = {
+  playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>;
+  episodeVideos: Array<{
+    index: number;
+    title: string;
+    file: string;
+    sourceFile: string;
+    originalSize: number;
+    outputSize: number;
+    transcoded: boolean;
+    cacheKey: string;
+  }>;
+};
 
 export class TaskWorkerPool {
   private stopped = true;
   private readonly accountWorkersByVideoAccountId = new Map<string, AccountWorkerControl>();
+  private readonly publishQueuesByVideoAccountId = new Map<string, PQueue>();
+  private readonly materialPreparationQueue: PQueue;
+  private readonly videoTranscodeQueue: VideoTranscodeQueue;
 
   constructor(
     private readonly serviceConfig: ServiceConfig,
@@ -63,7 +106,16 @@ export class TaskWorkerPool {
     private readonly taskService: TaskService,
     private readonly notifier = new FeishuNotifier(),
     private readonly ensureBaiduNetdiskResource?: EnsureBaiduNetdiskResource,
-  ) {}
+  ) {
+    const settings = getWechatVideoRuntimeSettings();
+    this.materialPreparationQueue = new PQueue({
+      concurrency: Math.max(1, integerSetting(settings.materialPreparationConcurrency, 3)),
+    });
+    this.videoTranscodeQueue = new VideoTranscodeQueue({
+      concurrency: Math.max(1, integerSetting(settings.videoTranscodeConcurrency, 2)),
+      onLog: (message) => logger.info(message),
+    });
+  }
 
   start(): void {
     if (!this.stopped) return;
@@ -79,6 +131,7 @@ export class TaskWorkerPool {
     this.stopped = true;
     for (const worker of this.accountWorkersByVideoAccountId.values()) {
       worker.stopped = true;
+      worker.abortController.abort();
     }
   }
 
@@ -88,6 +141,7 @@ export class TaskWorkerPool {
     for (const [videoAccountId, worker] of this.accountWorkersByVideoAccountId) {
       if (!nextAccountIds.has(videoAccountId)) {
         worker.stopped = true;
+        worker.abortController.abort();
         logger.info("stopping removed worker", {
           videoAccountId,
           videoAccountName: worker.videoAccount.name,
@@ -105,10 +159,14 @@ export class TaskWorkerPool {
     if (existingWorker) {
       existingWorker.videoAccount = videoAccount;
       if (existingWorker.stopped && !this.stopped) {
-        existingWorker.stopped = false;
-        logger.info("resuming worker", {
+        logger.info("waiting for stopped worker before restarting", {
           videoAccountId: videoAccount.id,
           videoAccountName: videoAccount.name,
+        });
+        void existingWorker.promise.finally(() => {
+          if (!this.stopped && !this.accountWorkersByVideoAccountId.has(videoAccount.id)) {
+            this.addAccountWorker(videoAccount);
+          }
         });
       }
       return;
@@ -120,6 +178,8 @@ export class TaskWorkerPool {
       videoAccount,
       stopped: false,
       promise: Promise.resolve(),
+      abortController: new AbortController(),
+      activeAccountTaskIds: new Set(),
     };
     worker.promise = this.runAccountWorker(worker).finally(() => {
       if (this.accountWorkersByVideoAccountId.get(videoAccount.id) === worker) {
@@ -134,50 +194,28 @@ export class TaskWorkerPool {
       videoAccountId: worker.videoAccount.id,
       videoAccountName: worker.videoAccount.name,
     }, async () => {
-    const videoAccountId = worker.videoAccount.id;
-    let consecutiveEmptyClaims = 0;
-    let nextLoginCheckAt = 0;
-    let lastBusyLogKey = "";
-    let lastBusyLoggedAt = 0;
-    logger.info("worker started", { videoAccountId });
+      const videoAccountId = worker.videoAccount.id;
+      const inFlightTasks = new Set<Promise<void>>();
+      const prefetchLimit = Math.max(
+        1,
+        integerSetting(getWechatVideoRuntimeSettings().taskPrefetchPerAccount, 2),
+      );
+      let consecutiveEmptyClaims = 0;
+      let nextLoginCheckAt = 0;
+      logger.info("worker started", { videoAccountId, prefetchLimit });
 
-    while (!this.stopped && !worker.stopped) {
-      const videoAccount = worker.videoAccount;
-      try {
+      while (!this.stopped && !worker.stopped) {
+        if (inFlightTasks.size >= prefetchLimit) {
+          await Promise.race(inFlightTasks);
+          continue;
+        }
+
+        const videoAccount = worker.videoAccount;
         const reservation = this.taskService.tryReserveChannel(videoAccountId, "worker-claim");
         if (!reservation) {
-          const busyState = this.taskService.getChannelBusyState(videoAccountId);
-          const busyLogKey = busyState
-            ? `${busyState.kind}:${busyState.label}:${
-                busyState.kind === "task" ? busyState.accountTaskId ?? "-" : "-"
-              }`
-            : "unknown";
-          if (busyLogKey !== lastBusyLogKey || Date.now() - lastBusyLoggedAt >= 30_000) {
-            logger.info("skip claim, channel busy", {
-              videoAccountId,
-              videoAccountName: videoAccount.name,
-              busyKind: busyState?.kind ?? "unknown",
-              busyLabel: busyState?.label ?? "unknown",
-              busySince: busyState?.busySince,
-              busyDurationMs: busyState?.busyDurationMs,
-              busyAccountTaskId: busyState?.kind === "task"
-                ? busyState.accountTaskId
-                : undefined,
-              busyOriginalTitle: busyState?.kind === "task"
-                ? busyState.originalTitle
-                : undefined,
-              busyTaskStatus: busyState?.kind === "task"
-                ? busyState.status
-                : undefined,
-            });
-            lastBusyLogKey = busyLogKey;
-            lastBusyLoggedAt = Date.now();
-          }
           await sleep(1000);
           continue;
         }
-        lastBusyLogKey = "";
-        lastBusyLoggedAt = 0;
 
         try {
           if (Date.now() >= nextLoginCheckAt) {
@@ -186,27 +224,16 @@ export class TaskWorkerPool {
               this.serviceConfig.idlePageRefresh.timeoutMs,
             );
             if (!loggedIn) {
+              reservation.release();
               logger.info("skip claim, login required", {
                 videoAccountId,
                 videoAccountName: videoAccount.name,
                 loginWaitTimeoutMs: loginRequiredDelayMs,
               });
-              reservation.release();
-              const loginCompleted = await this.browserContexts.waitForAuthenticatedSession(
+              await this.browserContexts.waitForAuthenticatedSession(
                 videoAccountId,
                 loginRequiredDelayMs,
               );
-              if (loginCompleted) {
-                logger.info("login detected, retry claim immediately", {
-                  videoAccountId,
-                  videoAccountName: videoAccount.name,
-                });
-              } else {
-                logger.info("login wait timed out, retry login check", {
-                  videoAccountId,
-                  videoAccountName: videoAccount.name,
-                });
-              }
               continue;
             }
             nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
@@ -215,170 +242,268 @@ export class TaskWorkerPool {
           logger.info("claiming task", {
             videoAccountId,
             videoAccountName: videoAccount.name,
+            inFlightCount: inFlightTasks.size,
+            prefetchLimit,
           });
-          try {
-            const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount);
-          // debugger
+          const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount, {
+            excludedAccountTaskIds: worker.activeAccountTaskIds,
+          });
           if (!claimedAccountTask) {
             consecutiveEmptyClaims += 1;
             const retryDelayMs = consecutiveEmptyClaims >= this.serviceConfig.worker.slowEmptyClaimThreshold
               ? this.serviceConfig.worker.slowEmptyClaimDelayMs
               : this.serviceConfig.worker.emptyClaimDelayMs;
-            logger.info("no task, retry later", {
-              videoAccountId,
-              emptyClaimCount: consecutiveEmptyClaims,
-              retryDelayMs,
-            });
             reservation.release();
             await sleep(retryDelayMs);
             continue;
           }
 
           consecutiveEmptyClaims = 0;
-
-          try {
-            const playletConfig = normalizeClaimedTaskConfig(
-              claimedAccountTask,
-              videoAccount.contractSubject,
-            );
-            logger.info("verify login before task execution", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              videoAccountId,
-            });
-            const stillLoggedIn = await this.browserContexts.refreshLoginStateInTemporaryPage(
-              videoAccountId,
-              this.serviceConfig.idlePageRefresh.timeoutMs,
-            );
-            if (!stillLoggedIn) {
-              nextLoginCheckAt = 0;
-              throw Object.assign(
-                new Error(`微信视频号账号未登录，停止执行任务：${videoAccount.name}`),
-                {
-                  errorType: ErrorType.Authentication,
-                  failStage: "LOGIN" as const,
-                },
-              );
-            }
-            await prepareWechatAiProductionProofMaterials(playletConfig, { allowMissing: true });
-            await this.ensureBaiduNetdiskResourceReady(videoAccount, claimedAccountTask, playletConfig);
-            await validateLocalEpisodeVideos(playletConfig);
-            await prepareWechatPosterMaterials(playletConfig);
-            const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(playletConfig);
-            logger.info("AI production proof materials ready", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              enabled: playletConfig.playlet.aiContent ?? true,
-              files: aiProductionProofFiles,
-            });
-            const productionProofFiles = await prepareWechatProductionProofMaterials(
-              playletConfig,
-              videoAccount.contractSubject,
-            );
-            logger.info("production proof materials ready", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              contractSubject: videoAccount.contractSubject,
-              strategy: videoAccount.contractSubject
-                && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject
-                ? "mingxingshuo-random-ownership"
-                : "contract-and-ownership",
-              files: productionProofFiles,
-            });
-
-            const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
-              videoAccountId,
-              claimedAccountTask,
-              playletConfig,
-              reservation,
-            );
-            reservation.release();
-            logger.info("claimed task record created", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              dramaId: claimedAccountTask.dramaId,
-              videoAccountId: taskRecord.channelId,
-              originalTitle: claimedAccountTask.originalTitle,
-            });
-
-            await taskFinished;
-            await reportClaimedTaskSuccessApi({
-              accountTaskId: claimedAccountTask.accountTaskId,
-            });
-            await this.notifier.notifyTaskSucceeded({
-              accountTaskId: claimedAccountTask.accountTaskId,
-              dramaId: claimedAccountTask.dramaId,
-              originalTitle: claimedAccountTask.originalTitle,
-              videoAccountId,
-              videoAccountName: videoAccount.name,
-            });
-            logger.info("task finished, continue claim loop", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              videoAccountId,
-            });
-          } catch (error) {
-            const errorInfo = classifyError(error, ErrorType.TaskExecution);
-            if (errorInfo.type === ErrorType.Interrupted) {
-              logger.warn("task interrupted, skip failure callback", {
-                accountTaskId: claimedAccountTask.accountTaskId,
-                videoAccountId,
-                errorType: errorInfo.type,
-                errorMessage: errorInfo.message,
-                runtimeStopping: this.stopped,
-                workerStopping: worker.stopped,
-              });
-              continue;
-            }
-            const taskErrorMessage = errorInfo.message;
-            await reportClaimedTaskErrorApi({
-              accountTaskId: claimedAccountTask.accountTaskId,
-              dramaId: claimedAccountTask.dramaId,
-              failStage: inferRpaFailStage(errorInfo.type, errorInfo.failStage),
-              resultJson: {
-                errorType: errorInfo.type,
-              },
-              videoAccountId,
-              errorMessage: taskErrorMessage,
-            });
-            await this.notifier.notifyTaskFailed({
-              accountTaskId: claimedAccountTask.accountTaskId,
-              dramaId: claimedAccountTask.dramaId,
-              originalTitle: claimedAccountTask.originalTitle,
-              videoAccountId,
-              videoAccountName: videoAccount.name,
-              errorMessage: taskErrorMessage,
-              errorType: errorInfo.type,
-            }).catch((notificationError) => {
-              logger.error("task failure notification failed after backend callback", {
-                accountTaskId: claimedAccountTask.accountTaskId,
-                videoAccountId,
-                errorMessage:
-                  notificationError instanceof Error
-                    ? notificationError.message
-                    : String(notificationError),
-              });
-            });
-            logger.error("task failed, continue claim loop", {
-              accountTaskId: claimedAccountTask.accountTaskId,
-              videoAccountId,
-              errorType: errorInfo.type,
-              errorMessage: errorInfo.message,
-            });
-          }
-          } finally {
-            reservation.release();
-          }
-        } finally {
           reservation.release();
+          if (worker.activeAccountTaskIds.has(claimedAccountTask.accountTaskId)) {
+            logger.warn("skip duplicate claimed account task", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              videoAccountId,
+              videoAccountName: videoAccount.name,
+              activeAccountTaskIds: Array.from(worker.activeAccountTaskIds),
+            });
+            await sleep(1000);
+            continue;
+          }
+          worker.activeAccountTaskIds.add(claimedAccountTask.accountTaskId);
+          logger.info("registered active account task", {
+            accountTaskId: claimedAccountTask.accountTaskId,
+            videoAccountId,
+            activeAccountTaskCount: worker.activeAccountTaskIds.size,
+          });
+          const releaseActiveAccountTask = () => {
+            worker.activeAccountTaskIds.delete(claimedAccountTask.accountTaskId);
+            logger.info("released active account task", {
+              accountTaskId: claimedAccountTask.accountTaskId,
+              videoAccountId,
+              activeAccountTaskCount: worker.activeAccountTaskIds.size,
+            });
+          };
+          let lifecycle: Promise<void>;
+          try {
+            lifecycle = this.enqueueClaimedTask(worker, claimedAccountTask);
+          } catch (error) {
+            releaseActiveAccountTask();
+            throw error;
+          }
+          inFlightTasks.add(lifecycle);
+          void lifecycle.then(
+            () => {
+              inFlightTasks.delete(lifecycle);
+              releaseActiveAccountTask();
+            },
+            () => {
+              inFlightTasks.delete(lifecycle);
+              releaseActiveAccountTask();
+            },
+          );
+        } catch (error) {
+          reservation.release();
+          const errorInfo = classifyError(error, ErrorType.TaskClaim);
+          logger.error("claim loop error", {
+            videoAccountId,
+            errorType: errorInfo.type,
+            errorMessage: errorInfo.message,
+          });
+          await sleep(claimErrorDelayMs);
         }
-      } catch (error) {
-        const errorInfo = classifyError(error, ErrorType.TaskClaim);
-        logger.error("claim loop error", {
-          videoAccountId,
-          errorType: errorInfo.type,
-          errorMessage: errorInfo.message,
-        });
-        await sleep(claimErrorDelayMs);
       }
+
+      await Promise.allSettled(inFlightTasks);
+      logger.info("worker stopped", { videoAccountId });
+    });
+  }
+
+  private getPublishQueue(videoAccountId: string) {
+    let queue = this.publishQueuesByVideoAccountId.get(videoAccountId);
+    if (!queue) {
+      queue = new PQueue({ concurrency: 1 });
+      this.publishQueuesByVideoAccountId.set(videoAccountId, queue);
+    }
+    return queue;
+  }
+
+  private enqueueClaimedTask(worker: AccountWorkerControl, claimedAccountTask: ClaimedTask) {
+    const videoAccount = worker.videoAccount;
+    const videoAccountId = videoAccount.id;
+    let playletConfigForCleanup: ReturnType<typeof normalizeClaimedTaskConfig> | undefined;
+    const preparation = this.materialPreparationQueue.add(
+      async () => {
+        const playletConfig = normalizeClaimedTaskConfig(
+          claimedAccountTask,
+          videoAccount.contractSubject,
+        );
+        playletConfigForCleanup = playletConfig;
+        await prepareWechatAiProductionProofMaterials(playletConfig, { allowMissing: true });
+        await this.ensureBaiduNetdiskResourceReady(
+          videoAccount,
+          claimedAccountTask,
+          playletConfig,
+          worker.abortController.signal,
+        );
+        await validateLocalEpisodeVideos(playletConfig);
+        await prepareWechatPosterMaterials(playletConfig);
+        const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(playletConfig);
+        const productionProofFiles = await prepareWechatProductionProofMaterials(
+          playletConfig,
+          videoAccount.contractSubject,
+        );
+        logger.info("all task materials ready", {
+          accountTaskId: claimedAccountTask.accountTaskId,
+          videoAccountId,
+          aiProductionProofFiles,
+          productionProofFiles,
+        });
+        return playletConfig;
+      },
+      {
+        id: `materials:${claimedAccountTask.accountTaskId}`,
+        signal: worker.abortController.signal,
+      },
+    ).then(async (playletConfig): Promise<PreparedClaimedTask> => {
+      const settings = getWechatVideoRuntimeSettings();
+      const policy = episodeVideoSizePolicy(settings);
+      const cacheRootDir = resolveRunDataPath("media-cache", "video-transcodes");
+      const episodes = await findLocalEpisodeVideos({
+        localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
+        resourceName: playletConfig.originalTitle,
+      });
+      const episodeVideos = await prepareEpisodeVideos({
+        episodes,
+        queue: this.videoTranscodeQueue,
+        cacheRootDir,
+        policy,
+        replaceSource: true,
+        signal: worker.abortController.signal,
+        onLog: (message) => logger.info(message, {
+          accountTaskId: claimedAccountTask.accountTaskId,
+          videoAccountId,
+        }),
+      });
+      logger.info("episode videos prepared", {
+        accountTaskId: claimedAccountTask.accountTaskId,
+        videoAccountId,
+        episodeCount: episodeVideos.length,
+        transcodedCount: episodeVideos.filter((episode) => episode.transcoded).length,
+      });
+      return { playletConfig, episodeVideos };
+    });
+
+    const lifecycle = this.getPublishQueue(videoAccountId).add(
+      async () => {
+        const prepared = await preparation;
+        await this.publishPreparedTask(worker, claimedAccountTask, prepared);
+      },
+      {
+        id: `publish:${claimedAccountTask.accountTaskId}`,
+        signal: worker.abortController.signal,
+      },
+    ) as Promise<void>;
+
+    return lifecycle.catch(async (error) => {
+      if (playletConfigForCleanup) {
+        await cleanupWechatProductionProofMaterials(playletConfigForCleanup).catch(() => undefined);
+      }
+      await this.handleClaimedTaskFailure(worker, claimedAccountTask, error);
+    });
+  }
+
+  private async reserveChannelForPublish(worker: AccountWorkerControl) {
+    while (!this.stopped && !worker.stopped && !worker.abortController.signal.aborted) {
+      const reservation = this.taskService.tryReserveChannel(worker.videoAccount.id, "worker-publish");
+      if (reservation) return reservation;
+      await sleep(1000);
+    }
+    throw Object.assign(new Error("微信任务准备完成后服务已停止。"), {
+      errorType: ErrorType.Interrupted,
+    });
+  }
+
+  private async publishPreparedTask(
+    worker: AccountWorkerControl,
+    claimedAccountTask: ClaimedTask,
+    prepared: PreparedClaimedTask,
+  ) {
+    const videoAccount = worker.videoAccount;
+    const reservation = await this.reserveChannelForPublish(worker);
+    try {
+      const { taskRecord, taskFinished } = await this.taskService.createTaskFromClaim(
+        videoAccount.id,
+        claimedAccountTask,
+        prepared.playletConfig,
+        reservation,
+        prepared.episodeVideos,
+      );
+      reservation.release();
+      logger.info("prepared task entered publish stage", {
+        accountTaskId: claimedAccountTask.accountTaskId,
+        videoAccountId: taskRecord.channelId,
+        originalTitle: claimedAccountTask.originalTitle,
+      });
+      await taskFinished;
+      await reportClaimedTaskSuccessApi({
+        accountTaskId: claimedAccountTask.accountTaskId,
+      });
+      await this.notifier.notifyTaskSucceeded({
+        accountTaskId: claimedAccountTask.accountTaskId,
+        dramaId: claimedAccountTask.dramaId,
+        originalTitle: claimedAccountTask.originalTitle,
+        videoAccountId: videoAccount.id,
+        videoAccountName: videoAccount.name,
+      });
+    } finally {
+      reservation.release();
+    }
+  }
+
+  private async handleClaimedTaskFailure(
+    worker: AccountWorkerControl,
+    claimedAccountTask: ClaimedTask,
+    error: unknown,
+  ) {
+    const errorInfo = classifyError(error, ErrorType.TaskExecution);
+    const videoAccount = worker.videoAccount;
+    if (
+      errorInfo.type === ErrorType.Interrupted
+      || this.stopped
+      || worker.stopped
+      || worker.abortController.signal.aborted
+    ) {
+      logger.warn("task interrupted, skip failure callback", {
+        accountTaskId: claimedAccountTask.accountTaskId,
+        videoAccountId: videoAccount.id,
+        errorMessage: errorInfo.message,
+      });
+      return;
     }
 
-    logger.info("worker stopped", { videoAccountId });
+    await reportClaimedTaskErrorApi({
+      accountTaskId: claimedAccountTask.accountTaskId,
+      dramaId: claimedAccountTask.dramaId,
+      failStage: inferRpaFailStage(errorInfo.type, errorInfo.failStage),
+      resultJson: { errorType: errorInfo.type },
+      videoAccountId: videoAccount.id,
+      errorMessage: errorInfo.message,
+    });
+    await this.notifier.notifyTaskFailed({
+      accountTaskId: claimedAccountTask.accountTaskId,
+      dramaId: claimedAccountTask.dramaId,
+      originalTitle: claimedAccountTask.originalTitle,
+      videoAccountId: videoAccount.id,
+      videoAccountName: videoAccount.name,
+      errorMessage: errorInfo.message,
+      errorType: errorInfo.type,
+    }).catch(() => undefined);
+    logger.error("task failed, pipeline continues", {
+      accountTaskId: claimedAccountTask.accountTaskId,
+      videoAccountId: videoAccount.id,
+      errorType: errorInfo.type,
+      errorMessage: errorInfo.message,
     });
   }
 
@@ -386,6 +511,7 @@ export class TaskWorkerPool {
     videoAccount: VideoAccount,
     claimedAccountTask: Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>,
     playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>,
+    signal: AbortSignal,
   ): Promise<void> {
     if (!claimedAccountTask) return;
 
@@ -405,6 +531,8 @@ export class TaskWorkerPool {
     const settings = getWechatVideoRuntimeSettings();
     const retryAttempts = integerSetting(settings.baiduNetdiskDownloadRetryAttempts, 3);
     const maxAttempts = retryAttempts + 1;
+    const videoPolicy = episodeVideoSizePolicy(settings);
+    const videoTranscodeCacheRootDir = resolveRunDataPath("media-cache", "video-transcodes");
     const isMingxingshuo = Boolean(
       videoAccount.contractSubject
       && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject,
@@ -435,6 +563,38 @@ export class TaskWorkerPool {
           mergeOwnershipMaterials: !isMingxingshuo && !["false", "0", "no", "off"].includes(
             String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
           ),
+          onStableEpisodeFiles: (files) => {
+            for (const file of files) {
+              if (file.size <= videoPolicy.maxFileBytes) continue;
+              logger.info("download scan queued oversized episode video", {
+                accountTaskId: claimedAccountTask.accountTaskId,
+                videoAccountId: videoAccount.id,
+                episodeIndex: file.index,
+                file: file.file,
+                size: file.size,
+                maxFileBytes: videoPolicy.maxFileBytes,
+              });
+              void this.videoTranscodeQueue.add({
+                inputFile: file.file,
+                cacheRootDir: videoTranscodeCacheRootDir,
+                policy: videoPolicy,
+                replaceSource: true,
+                signal,
+                onLog: (message) => logger.info(message, {
+                  accountTaskId: claimedAccountTask.accountTaskId,
+                  videoAccountId: videoAccount.id,
+                  episodeIndex: file.index,
+                }),
+              }).catch((error) => {
+                logger.error("download-time episode transcode failed; final preparation will retry", {
+                  accountTaskId: claimedAccountTask.accountTaskId,
+                  videoAccountId: videoAccount.id,
+                  episodeIndex: file.index,
+                  errorMessage: error instanceof Error ? error.message : String(error),
+                });
+              });
+            }
+          },
         });
 
         logger.info("baidu netdisk resource ready", {

@@ -54,6 +54,12 @@ const emptyConfig: WechatVideoConfig = {
   remoteFileDownloadTimeoutSeconds: "120",
   baiduNetdiskDownloadRetryAttempts: "3",
   mergeOwnershipMaterials: "true",
+  materialPreparationConcurrency: "3",
+  taskPrefetchPerAccount: "2",
+  videoTranscodeConcurrency: "2",
+  videoTranscodeThreadsPerJob: "2",
+  episodeVideoMaxFileMegabytes: "490",
+  episodeVideoTargetFileMegabytes: "480",
   episodeUploadWaitTimeoutSeconds: "7200",
   episodeUploadFailedRetryAttempts: "3",
   feishuBotWebhookUrl: "",
@@ -190,6 +196,18 @@ const sections: Array<{
         description: "定时同步视频号账号状态。",
         suffix: "秒",
       },
+      {
+        key: "materialPreparationConcurrency",
+        label: "素材准备并发",
+        type: "number",
+        description: "同时执行网盘下载、文件校验和材料整理的任务数。",
+      },
+      {
+        key: "taskPrefetchPerAccount",
+        label: "单账号预取任务",
+        type: "number",
+        description: "每个视频号最多提前领取并准备的任务数。",
+      },
     ],
   },
   {
@@ -250,8 +268,34 @@ const sections: Array<{
   },
   {
     title: "上传与通知",
-    description: "上传等待、失败重试和飞书通知。",
+    description: "视频压缩、上传等待、失败重试和飞书通知。",
     fields: [
+      {
+        key: "episodeVideoMaxFileMegabytes",
+        label: "单集视频上限",
+        type: "number",
+        description: "超过该体积的视频会在百度下载扫描时提前进入转码队列。",
+        suffix: "MB",
+      },
+      {
+        key: "episodeVideoTargetFileMegabytes",
+        label: "压缩目标体积",
+        type: "number",
+        description: "为容器开销预留余量，必须小于单集视频上限。",
+        suffix: "MB",
+      },
+      {
+        key: "videoTranscodeConcurrency",
+        label: "视频转码并发",
+        type: "number",
+        description: "同时运行的 FFmpeg 进程数量。",
+      },
+      {
+        key: "videoTranscodeThreadsPerJob",
+        label: "单任务转码线程",
+        type: "number",
+        description: "每个 FFmpeg 转码任务使用的线程数。",
+      },
       {
         key: "episodeUploadWaitTimeoutSeconds",
         label: "剧集上传等待",

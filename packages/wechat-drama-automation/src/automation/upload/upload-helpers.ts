@@ -225,7 +225,7 @@ async function setInputFilesAndWaitForUi(
   files: string[],
   label: string,
   inputTimeout = 10000,
-  uiTimeout = 30000,
+  uiTimeout = 60000,
 ): Promise<void> {
   const fileNames = uploadFileNames(files);
   const before = await readUploadUiState(container);
@@ -273,7 +273,7 @@ export async function waitForUploadedFiles(
   page: Page,
   files: string[],
   label: string,
-  timeout = 30000,
+  timeout = 60000,
 ): Promise<void> {
   const fileNames = uploadFileNames(files);
   if (!fileNames.length) return;
@@ -385,6 +385,7 @@ export async function uploadInGroup(
   label: string,
   resolveFromRoot: (filePath: string) => string,
   remoteDirectoryName?: string,
+  uiTimeout = 60000,
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
@@ -398,7 +399,7 @@ export async function uploadInGroup(
     return;
   }
 
-  await setInputFilesAndWaitForUi(group, input, files, label);
+  await setInputFilesAndWaitForUi(group, input, files, label, 10000, uiTimeout);
   console.log(`[upload] ${label}: ${files.length} file(s)`);
 }
 

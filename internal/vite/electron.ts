@@ -9,6 +9,7 @@ const electronRequireBanner = [
 
 const electronMainExternalPatterns = [
   /^better-sqlite3(?:\/.*)?$/,
+  /^ffmpeg-static(?:\/.*)?$/,
   /^playwright(?:\/.*)?$/,
   /^playwright-core(?:\/.*)?$/,
   /^chromium-bidi(?:\/.*)?$/,
@@ -18,7 +19,7 @@ const electronMainExternalPatterns = [
 
 const electronMainExternals = (id: string) =>
   electronMainExternalPatterns.some((pattern) => pattern.test(id))
-  || /[\\/]node_modules[\\/](?:sharp|@img)(?:[\\/]|$)/.test(id);
+  || /[\\/]node_modules[\\/](?:ffmpeg-static|sharp|@img)(?:[\\/]|$)/.test(id);
 
 export function createElectronPlugin(rootDir: string) {
   return electron({

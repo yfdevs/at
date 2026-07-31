@@ -58,6 +58,12 @@ export type WechatVideoConfig = {
   remoteFileDownloadTimeoutSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
   mergeOwnershipMaterials: string
+  materialPreparationConcurrency: string
+  taskPrefetchPerAccount: string
+  videoTranscodeConcurrency: string
+  videoTranscodeThreadsPerJob: string
+  episodeVideoMaxFileMegabytes: string
+  episodeVideoTargetFileMegabytes: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string
@@ -91,6 +97,12 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   remoteFileDownloadTimeoutSeconds: '120',
   baiduNetdiskDownloadRetryAttempts: '3',
   mergeOwnershipMaterials: 'true',
+  materialPreparationConcurrency: '3',
+  taskPrefetchPerAccount: '2',
+  videoTranscodeConcurrency: '2',
+  videoTranscodeThreadsPerJob: '2',
+  episodeVideoMaxFileMegabytes: '490',
+  episodeVideoTargetFileMegabytes: '480',
   episodeUploadWaitTimeoutSeconds: '7200',
   episodeUploadFailedRetryAttempts: '3',
   feishuBotWebhookUrl: '',
@@ -266,6 +278,15 @@ function normalizeConfig(
     remoteFileDownloadTimeoutSeconds: config.remoteFileDownloadTimeoutSeconds ?? defaultWechatVideoConfig.remoteFileDownloadTimeoutSeconds,
     baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts ?? defaultWechatVideoConfig.baiduNetdiskDownloadRetryAttempts,
     mergeOwnershipMaterials: config.mergeOwnershipMaterials ?? defaultWechatVideoConfig.mergeOwnershipMaterials,
+    materialPreparationConcurrency: config.materialPreparationConcurrency ?? defaultWechatVideoConfig.materialPreparationConcurrency,
+    taskPrefetchPerAccount: config.taskPrefetchPerAccount ?? defaultWechatVideoConfig.taskPrefetchPerAccount,
+    videoTranscodeConcurrency: config.videoTranscodeConcurrency ?? defaultWechatVideoConfig.videoTranscodeConcurrency,
+    videoTranscodeThreadsPerJob: config.videoTranscodeThreadsPerJob ?? defaultWechatVideoConfig.videoTranscodeThreadsPerJob,
+    episodeVideoMaxFileMegabytes:
+      !config.episodeVideoMaxFileMegabytes || config.episodeVideoMaxFileMegabytes === '500'
+        ? defaultWechatVideoConfig.episodeVideoMaxFileMegabytes
+        : config.episodeVideoMaxFileMegabytes,
+    episodeVideoTargetFileMegabytes: config.episodeVideoTargetFileMegabytes ?? defaultWechatVideoConfig.episodeVideoTargetFileMegabytes,
     episodeUploadWaitTimeoutSeconds: config.episodeUploadWaitTimeoutSeconds ?? defaultWechatVideoConfig.episodeUploadWaitTimeoutSeconds,
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatVideoConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatVideoConfig.feishuBotWebhookUrl,
@@ -312,6 +333,17 @@ function findLatestVideoAccountLogFile(videoAccountId: string) {
 function assertWechatVideoConfigReady(config = readConfig()) {
   if (!config.localEpisodeVideoRoot.trim()) {
     throw new Error('WECHAT_LOCAL_VIDEO_ROOT_REQUIRED')
+  }
+  const maxVideoMegabytes = Number(config.episodeVideoMaxFileMegabytes)
+  const targetVideoMegabytes = Number(config.episodeVideoTargetFileMegabytes)
+  if (
+    !Number.isFinite(maxVideoMegabytes)
+    || !Number.isFinite(targetVideoMegabytes)
+    || maxVideoMegabytes <= 0
+    || targetVideoMegabytes <= 0
+    || targetVideoMegabytes >= maxVideoMegabytes
+  ) {
+    throw new Error('视频压缩目标体积必须大于 0 且小于单集视频上限。')
   }
 }
 

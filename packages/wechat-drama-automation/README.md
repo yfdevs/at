@@ -125,6 +125,12 @@
 - `remoteFileDownloadTimeoutSeconds=120`：远程素材单文件下载超时，默认 120 秒。
 - `episodeUploadWaitTimeoutSeconds=14400`：剧集文件上传最长等待时间，默认 14400 秒。
 - `episodeUploadFailedRetryAttempts=3`：单个剧集文件提示“未能上传”后的最大重试次数，默认 3 次。
+- `materialPreparationConcurrency=3`：全局并行准备网盘资源、权属、海报和 AI 材料的任务数。
+- `taskPrefetchPerAccount=2`：每个视频号最多提前领取并准备的任务数；同一视频号仍按领取顺序串行发布。
+- `videoTranscodeConcurrency=2`：全局同时运行的 FFmpeg 转码进程数。
+- `videoTranscodeThreadsPerJob=2`：每个 FFmpeg 转码进程使用的线程数。
+- `episodeVideoMaxFileMegabytes=490`：单集视频体积上限，按十进制 MB 计算；百度下载扫描确认文件稳定后，超过上限的视频会提前进入转码队列。
+- `episodeVideoTargetFileMegabytes=480`：自动转码目标体积，必须小于上限以预留 MP4 容器开销。
 - `feishuBotWebhookUrl=`：飞书自定义机器人 webhook。配置后会推送需要登录的视频号、任务成功、任务失败消息。
 
 如果日志出现 `[skip] file not found`，说明任务配置里的本地文件路径不存在，该材料不会上传。项目内 `assets/...` 路径会被直接跳过；材料建议使用远程 URL。

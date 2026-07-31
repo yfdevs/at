@@ -8,6 +8,14 @@ export type CdpTarget = {
 
 export type CdpMessage = {
   id?: number;
+  method?: string;
+  params?: {
+    type?: string;
+    args?: Array<{
+      value?: unknown;
+      description?: string;
+    }>;
+  };
   result?: unknown;
   error?: unknown;
 };

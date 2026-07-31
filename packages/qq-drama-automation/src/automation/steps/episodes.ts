@@ -247,9 +247,7 @@ export async function uploadEpisodeVideosStep(
   try {
     preparedEpisodes = await uploadEpisodeVideosIfPresent(page, task, options);
 
-    if (task.playlet.submit) {
-      await clickNextStep(page, options);
-    }
+    await clickNextStep(page, options);
   } finally {
     if (preparedEpisodes) {
       await cleanupEpisodeUploadFiles(preparedEpisodes);

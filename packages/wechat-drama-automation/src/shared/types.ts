@@ -72,11 +72,22 @@ export interface ClaimedAccountTask {
 
 export interface TaskRunOptions {
   playletConfig?: Config;
+  preparedEpisodeVideos?: PreparedEpisodeVideo[];
   dramaAiRpaId?: string;
   mode: "run" | "login";
   interactive: boolean;
   channelId?: string;
   videoAccountName?: string;
+}
+
+export interface PreparedEpisodeVideo {
+  index: number;
+  title: string;
+  file: string;
+  sourceFile?: string;
+  originalSize?: number;
+  outputSize?: number;
+  transcoded?: boolean;
 }
 
 export interface BrowserCredentialCookie {

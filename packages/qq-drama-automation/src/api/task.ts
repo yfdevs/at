@@ -254,76 +254,11 @@ async function claimTask(
   accountTaskId: number,
   listedTask?: ReadyAccountTask,
 ) {
-  // const taskPayload = await taskClient(options).post(taskEndpoints(options).claimTask, {
-  //   accountTaskId,
-  // });
+  const response = await taskClient(options).post(taskEndpoints(options).claimTask, {
+    accountTaskId,
+  });
 
-  // 测试代码
-  const taskPayload = {
-    code: 0,
-    msg: "操作成功",
-    data: {
-      accountTaskId: 3,
-      originalTitle: "修鞋摊前的状元测试",
-      accountId: "662687870288924672",
-      rpaProfileKey: null,
-      accountConfigJson: null,
-      payloadJson: {
-        name: "修鞋摊前的状元测试",
-        posters: {
-          main: "",
-          promotion: "",
-        },
-        summary: "修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ",
-        platform: "qq",
-        copyright: {
-          licenseProofFiles: [],
-          productionProofFiles: [],
-        },
-        qqPlaylet: {
-          roles: [],
-          title: "修鞋摊前的状元测试",
-          submit: false,
-          summary:
-            "修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ修鞋摊前的状元测试QQ",
-          isSeries: "否",
-          comicType: "漫剧",
-          directors: ["明星说（北京）科技有限公司"],
-          producers: ["明星说（北京）科技有限公司"],
-          audienceType: "男频",
-          contractName: "【明星说漫剧】QQ漫剧协议（665599744810680320）",
-          episodeCount: 12,
-          updateStatus: "已完结",
-          isAiGenerated: "是",
-          screenwriters: ["明星说（北京）科技有限公司"],
-          productionYear: 2026,
-          primaryCategory: "都市",
-          productionCostWan: 1,
-          secondaryCategory: "都市日常",
-          productionCostRange: "< 30 万",
-          baiduPanResourceLink:
-            "通过网盘分享的文件：修鞋摊前的状元测试\n链接: https://pan.baidu.com/s/1yTNaXlMXErFI48dBF5RVUQ?pwd=19r9 提取码: 19r9 \n--来自百度网盘超级会员v2的分享",
-          productionOrganization: "明星说（北京）科技有限公司",
-        },
-        episodeCount: 64,
-        producerName: "明星说（北京）科技有限公司",
-        qualification: {
-          type: "其他微短剧",
-          proofFiles: [],
-        },
-        productionCost: {
-          amountWan: 1,
-          proofFiles: [
-            "https://misu-launch-lianshan-beijing-final.tos-cn-beijing.volces.com/drama-ai-rpa/contracts/20260726/account-task-688-3d67f0a319af43ae942f579c2e32d7b4.png",
-          ],
-        },
-        baiduPanResourceLink:
-          "通过网盘分享的文件：修鞋摊前的状元测试\n链接: https://pan.baidu.com/s/1yTNaXlMXErFI48dBF5RVUQ?pwd=19r9 提取码: 19r9 \n--来自百度网盘超级会员v2的分享",
-      },
-    },
-  };
-
-  const payload = claimResponseSchema.parse(taskPayload);
+  const payload = claimResponseSchema.parse(response);
   assertApiSuccess(payload, "QQ_DRAMA_ACCOUNT_TASK_CLAIM_FAILED");
   if (!payload.data) return null;
 

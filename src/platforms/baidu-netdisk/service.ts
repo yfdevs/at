@@ -101,6 +101,13 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   };
   requiredPosterImages?: number;
   mergeOwnershipMaterials?: boolean;
+  videoTranscode?: {
+    runDataDir: string;
+    maxFileMegabytes: number;
+    targetFileMegabytes: number;
+    concurrency: number;
+    threadsPerJob: number;
+  };
 };
 
 export type BaiduNetdiskDownloadRecordResult = {

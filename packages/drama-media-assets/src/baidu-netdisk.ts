@@ -91,6 +91,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   getDownloadTaskStatus?: (request: {
     targetName: string;
   }) => Promise<BaiduNetdiskDownloadTaskStatus | undefined>;
+  onStableEpisodeFiles?: (files: LocalEpisodeFile[]) => void;
   onProgress?: (progress: BaiduNetdiskEpisodeVideoProgress) => void | Promise<void>;
   onLog?: (message: string) => void;
 };
@@ -425,11 +426,17 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   pollIntervalMs: number;
   stableCompletePolls: number;
   getDownloadTaskStatus?: EnsureBaiduNetdiskEpisodeVideosOptions["getDownloadTaskStatus"];
+  onStableEpisodeFiles?: EnsureBaiduNetdiskEpisodeVideosOptions["onStableEpisodeFiles"];
   onProgress?: EnsureBaiduNetdiskEpisodeVideosOptions["onProgress"];
   onLog?: EnsureBaiduNetdiskEpisodeVideosOptions["onLog"];
 }) {
   const startedAt = Date.now();
   const stableSignatures = new Map<string, { signature: string; count: number }>();
+  const stableEpisodeFiles = new Map<string, {
+    signature: string;
+    count: number;
+    dispatchedSignature?: string;
+  }>();
   let lastProgressLogAt = 0;
 
   while (Date.now() - startedAt < options.timeoutMs) {
@@ -443,6 +450,28 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.targetRoot,
       options.resourceName,
     );
+    const newlyStableFiles: LocalEpisodeFile[] = [];
+    for (const file of files) {
+      const key = path.resolve(file.file).toLowerCase();
+      const signature = `${file.size}:${file.modifiedAtMs}`;
+      const previous = stableEpisodeFiles.get(key);
+      const current = {
+        signature,
+        count: previous?.signature === signature ? previous.count + 1 : 1,
+        dispatchedSignature: previous?.dispatchedSignature,
+      };
+      if (
+        current.count >= options.stableCompletePolls
+        && current.dispatchedSignature !== signature
+      ) {
+        current.dispatchedSignature = signature;
+        newlyStableFiles.push(file);
+      }
+      stableEpisodeFiles.set(key, current);
+    }
+    if (newlyStableFiles.length > 0) {
+      options.onStableEpisodeFiles?.(newlyStableFiles);
+    }
     let complete = isCompleteEpisodeFileSet(files, options.episodeCount);
     let ownership = await listCurrentOwnershipMaterials(
       localPaths,
@@ -723,6 +752,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     pollIntervalMs,
     stableCompletePolls,
     getDownloadTaskStatus: options.getDownloadTaskStatus,
+    onStableEpisodeFiles: options.onStableEpisodeFiles,
     onProgress: options.onProgress,
     onLog: options.onLog,
   });

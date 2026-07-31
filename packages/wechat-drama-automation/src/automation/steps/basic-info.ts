@@ -252,6 +252,7 @@ async function uploadByLabeledGroupFileInput(
   filePaths: Array<string | undefined>,
   label = Array.isArray(labelPrefixes) ? labelPrefixes[0] : labelPrefixes,
   remoteDirectoryName?: string,
+  uiTimeout = 60000,
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
@@ -272,7 +273,14 @@ async function uploadByLabeledGroupFileInput(
       })
       .first();
     if (await exactGroup.count()) {
-      await uploadInGroup(exactGroup, files, label, (filePath) => filePath, remoteDirectoryName);
+      await uploadInGroup(
+        exactGroup,
+        files,
+        label,
+        (filePath) => filePath,
+        remoteDirectoryName,
+        uiTimeout,
+      );
       return;
     }
   }
@@ -286,7 +294,14 @@ async function uploadByLabeledGroupFileInput(
       })
       .first();
     if (await fuzzyGroup.count()) {
-      await uploadInGroup(fuzzyGroup, files, label, (filePath) => filePath, remoteDirectoryName);
+      await uploadInGroup(
+        fuzzyGroup,
+        files,
+        label,
+        (filePath) => filePath,
+        remoteDirectoryName,
+        uiTimeout,
+      );
       return;
     }
   }
@@ -304,6 +319,7 @@ async function uploadByLabeledGroupFileInput(
         label,
         (filePath) => filePath,
         remoteDirectoryName,
+        uiTimeout,
       );
       return;
     }
@@ -464,6 +480,7 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     [playlet.posters.main],
     "剧目海报",
     remoteAssetDirectoryName,
+    60000,
   );
   await uploadByLabeledGroupFileInput(
     page,
@@ -471,6 +488,7 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     [playlet.posters.promotion],
     "推广海报",
     remoteAssetDirectoryName,
+    60000,
   );
 
   if (!(await clickExactText(page, playlet.submissionIdentity, "提审身份"))) {

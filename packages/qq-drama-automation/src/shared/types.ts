@@ -254,7 +254,6 @@ export type QqDramaRuntimeOptions = {
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
-  taskPollingEnabled?: boolean;
   config?: {
     browser?: {
       headless?: boolean;

@@ -19,6 +19,7 @@
     "@drama/axios": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "@drama/feishu-notifier": "workspace:*",
+    "p-queue": "^9.3.3",
     "playwright": "1.61.1"
   },
   "devDependencies": {

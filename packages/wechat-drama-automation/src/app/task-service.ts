@@ -1,6 +1,12 @@
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import { runPlayletTask } from "../automation/playlet-runner.js";
-import type { ClaimedAccountTask, Config, TaskRecord, TaskRunOptions } from "../shared/types.js";
+import type {
+  ClaimedAccountTask,
+  Config,
+  PreparedEpisodeVideo,
+  TaskRecord,
+  TaskRunOptions,
+} from "../shared/types.js";
 import { createLogger, type LogContext, runWithLogContext } from "../shared/logger.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
 import { classifyError, ErrorType } from "../shared/errors.js";
@@ -178,6 +184,7 @@ export class TaskService {
     claimedAccountTask: ClaimedAccountTask,
     playletConfig: Config,
     reservation?: ChannelReservation,
+    preparedEpisodeVideos?: PreparedEpisodeVideo[],
   ): Promise<{ taskRecord: TaskRecord; taskFinished: Promise<void> }> {
     this.assertChannelAvailable(channelId, reservation);
 
@@ -196,7 +203,10 @@ export class TaskService {
     runWithLogContext(this.createLogContext(taskRecord), () => {
       this.enqueueTaskRecord(taskRecord, "queued claimed task");
     });
-    return { taskRecord, taskFinished: this.runTaskRecord(taskRecord, playletConfig) };
+    return {
+      taskRecord,
+      taskFinished: this.runTaskRecord(taskRecord, playletConfig, preparedEpisodeVideos),
+    };
   }
 
   private assertChannelAvailable(channelId: string, reservation?: ChannelReservation): void {
@@ -250,7 +260,11 @@ export class TaskService {
       : `manual:${taskRecord.mode}:${taskRecord.channelId}`;
   }
 
-  private async runTaskRecord(taskRecord: TaskRecord, playletConfig?: Config): Promise<void> {
+  private async runTaskRecord(
+    taskRecord: TaskRecord,
+    playletConfig?: Config,
+    preparedEpisodeVideos?: PreparedEpisodeVideo[],
+  ): Promise<void> {
     return runWithLogContext(this.createLogContext(taskRecord), async () => {
       taskRecord.status = "running";
       taskRecord.startedAt = new Date().toISOString();
@@ -269,6 +283,7 @@ export class TaskService {
         const browserContext = await this.browserContexts.getOrLaunch(taskRecord.channelId);
         await runPlayletTask({
           playletConfig,
+          preparedEpisodeVideos,
           dramaAiRpaId: taskRecord.dramaAiRpaId,
           mode: taskRecord.mode,
           interactive: false,

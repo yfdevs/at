@@ -431,7 +431,6 @@ async function startRuntime() {
         baiduNetdiskDownloadRetryAttempts,
         episodeUploadFailedRetryAttempts,
         taskPollIntervalMs,
-        taskPollingEnabled: true,
         ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
         apiConfig: {
           baseUrl: config.apiBaseUrl,

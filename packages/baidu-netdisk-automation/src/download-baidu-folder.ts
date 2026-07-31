@@ -50,30 +50,61 @@ export type {
   BaiduNetdiskShareInfo,
 } from "./types.js";
 
-async function copyToClipboard(text: string) {
-  if (process.platform !== "win32") {
-    log("当前不是 Windows，跳过 Set-Clipboard。");
-    return;
-  }
-
-  await new Promise<void>((resolve, reject) => {
+async function copyToClipboardOnce(text: string) {
+  return new Promise<void>((resolve, reject) => {
     const child = spawn(
       "powershell.exe",
-      ["-NoProfile", "-Command", "Set-Clipboard -Value ([Console]::In.ReadToEnd())"],
-      { stdio: ["pipe", "ignore", "pipe"] },
+      [
+        "-NoProfile",
+        "-NonInteractive",
+        "-Command",
+        [
+          "$ErrorActionPreference = 'Stop'",
+          "$utf8 = [Text.UTF8Encoding]::new($false)",
+          "[Console]::InputEncoding = $utf8",
+          "[Console]::OutputEncoding = $utf8",
+          "$OutputEncoding = $utf8",
+          "Set-Clipboard -Value ([Console]::In.ReadToEnd())",
+        ].join("; "),
+      ],
+      { stdio: ["pipe", "ignore", "pipe"], windowsHide: true },
     );
 
     let errorOutput = "";
-    child.stderr.on("data", (chunk: Buffer) => {
-      errorOutput += chunk.toString("utf8");
+    child.stderr.setEncoding("utf8");
+    child.stderr.on("data", (chunk: string) => {
+      errorOutput += chunk;
     });
     child.on("error", reject);
     child.on("exit", (code) => {
       if (code === 0) resolve();
-      else reject(new Error(errorOutput || `Set-Clipboard exited with ${code}`));
+      else reject(new Error(errorOutput.trim() || `Set-Clipboard exited with ${code}`));
     });
-    child.stdin.end(text);
+    child.stdin.end(text, "utf8");
   });
+}
+
+async function copyToClipboard(text: string) {
+  if (process.platform !== "win32") {
+    log("当前不是 Windows，跳过 Set-Clipboard。");
+    return { copied: false, error: "当前不是 Windows。" };
+  }
+
+  const retryDelays = [0, 150, 400, 800, 1500];
+  let lastError: unknown;
+  for (const retryDelay of retryDelays) {
+    if (retryDelay > 0) await sleep(retryDelay);
+    try {
+      await copyToClipboardOnce(text);
+      return { copied: true };
+    } catch (error) {
+      lastError = error;
+    }
+  }
+  return {
+    copied: false,
+    error: lastError instanceof Error ? lastError.message : String(lastError),
+  };
 }
 
 function shareId(link: string) {
@@ -649,7 +680,12 @@ type SavedShareResult = {
 async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   return withPage(target, async (page) => {
     log("保存分享目录到我的网盘");
-    const result = await page.evaluate<SavedShareResult>(
+    const stopConsoleForwarding = page.onConsole((message) => {
+      const prefix = "[baidu-transfer] ";
+      if (message.startsWith(prefix)) log(message.slice(prefix.length));
+    });
+    try {
+      const result = await page.evaluate<SavedShareResult>(
       `
 (async () => {
   const SHARE_LIST_MAX_PAGES = ${SHARE_LIST_MAX_PAGES};
@@ -911,8 +947,12 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     const targetSize = itemSize(target);
     return sourceSize <= 0 || targetSize <= 0 || sourceSize === targetSize;
   };
-  const listOwnDir = async (dir) => {
+  const ownDirListCache = new Map();
+  const listOwnDir = async (dir, forceRefresh = false) => {
     const normalizedDir = normalizeDir(dir);
+    if (!forceRefresh && ownDirListCache.has(normalizedDir)) {
+      return ownDirListCache.get(normalizedDir);
+    }
     const results = [];
     const pageSize = 1000;
     for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
@@ -933,6 +973,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       results.push(...list);
       if (list.length < pageSize && !data.has_more) break;
     }
+    ownDirListCache.set(normalizedDir, results);
     return results;
   };
   const safeExpectedName = String(expectedName || sourceName || "百度网盘资源")
@@ -982,8 +1023,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     clienttype: "0",
   });
 
-  const findOwnItem = async (dir, name) =>
-    (await listOwnDir(dir)).find((item) => itemName(item) === name);
+  const findOwnItem = async (dir, name, forceRefresh = false) =>
+    (await listOwnDir(dir, forceRefresh)).find((item) => itemName(item) === name);
   const searchOwnItems = async (name) => {
     const results = [];
     const pageSize = 1000;
@@ -1041,7 +1082,10 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       headers: { "Content-Type": "application/x-www-form-urlencoded" },
       body: createBody,
     });
-    if (created.errno === 0) return created;
+    if (created.errno === 0) {
+      ownDirListCache.delete("/");
+      return created;
+    }
     if (created.errno === 2) {
       const collided = await findOwnItem("/", name);
       if (collided && itemIsDir(collided)) return collided;
@@ -1056,6 +1100,23 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     throw new Error(
       "创建网盘剧目录发生冲突但未找到可复用目录：" + targetPath + "；" + compactJson(created),
     );
+  };
+  const waitForOwnItem = async (source, destinationDir, timeoutMs) => {
+    const name = fileNameOf(source);
+    const startedAt = Date.now();
+    while (Date.now() - startedAt < timeoutMs) {
+      const located = await findOwnItem(destinationDir, name, true);
+      if (located) {
+        if (!compatibleItem(source, located)) {
+          const conflict = new Error("转存后出现不兼容的同名素材：" + joinPath(destinationDir, name));
+          conflict.code = "TARGET_CONFLICT";
+          throw conflict;
+        }
+        return located;
+      }
+      await sleep(1500);
+    }
+    return undefined;
   };
   const transferOne = async (source, destinationDir) => {
     const name = fileNameOf(source);
@@ -1073,58 +1134,91 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       fsidlist: JSON.stringify([fileFsIdOf(source)]),
       path: normalizeDir(destinationDir),
     });
-    const transferred = await jsonFetch("/share/transfer?" + transferParams.toString(), {
-      method: "POST",
-      headers: { "Content-Type": "application/x-www-form-urlencoded" },
-      body: transferBody,
-    });
-    const message = String(transferred.show_msg || transferred.errmsg || transferred.message || "");
-    if (transferred.errno === -6 || message.includes("账户已过期") || message.includes("重新登陆")) {
-      throw new Error("百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。");
-    }
-    if (transferred.errno !== 0 && transferred.errno !== 2) {
+    const timeoutRequestIds = [];
+    for (let transferAttempt = 1; transferAttempt <= 2; transferAttempt += 1) {
+      console.log(
+        "[baidu-transfer] 提交网盘转存：" +
+          name +
+          (transferAttempt > 1 ? "（第" + transferAttempt + "次尝试）" : ""),
+      );
+      const transferred = await jsonFetch("/share/transfer?" + transferParams.toString(), {
+        method: "POST",
+        headers: { "Content-Type": "application/x-www-form-urlencoded" },
+        body: transferBody,
+      });
+      const message = String(transferred.show_msg || transferred.errmsg || transferred.message || "");
+      if (transferred.errno === -6 || message.includes("账户已过期") || message.includes("重新登陆")) {
+        throw new Error("百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。");
+      }
+      if (transferred.errno === 4) {
+        if (transferred.request_id) timeoutRequestIds.push(String(transferred.request_id));
+        console.log(
+          "[baidu-transfer] 百度转存接口超时，正在回查后台结果：" +
+            name +
+            (transferred.request_id ? "，request_id=" + String(transferred.request_id) : ""),
+        );
+        const locatedAfterTimeout = await waitForOwnItem(source, destinationDir, 20000);
+        if (locatedAfterTimeout) {
+          console.log("[baidu-transfer] 已确认后台转存完成：" + name);
+          return { item: locatedAfterTimeout, transferred: true };
+        }
+        if (transferAttempt < 2) {
+          console.log("[baidu-transfer] 后台暂未发现素材，准备安全重试：" + name);
+          await sleep(5000);
+          const locatedBeforeRetry = await findOwnItem(destinationDir, name, true);
+          if (locatedBeforeRetry) {
+            if (!compatibleItem(source, locatedBeforeRetry)) {
+              const conflict = new Error("重试前发现不兼容的同名素材：" + joinPath(destinationDir, name));
+              conflict.code = "TARGET_CONFLICT";
+              throw conflict;
+            }
+            return { item: locatedBeforeRetry, transferred: true };
+          }
+          continue;
+        }
+        throw new Error(
+          "保存分享到网盘失败：百度接口连续超时，且目标目录未发现素材；errno=4" +
+            (timeoutRequestIds.length > 0 ? "；request_id=" + timeoutRequestIds.join(",") : "") +
+            "；目标=" +
+            joinPath(destinationDir, name),
+        );
+      }
+      if (transferred.errno !== 0 && transferred.errno !== 2) {
+        throw new Error(
+          "保存分享到网盘失败：" +
+            (message || "百度接口返回异常") +
+            "；errno=" +
+            String(transferred.errno) +
+            (transferred.request_id ? "；request_id=" + String(transferred.request_id) : ""),
+        );
+      }
+      if (transferred.errno === 2) {
+        const locatedDuplicate = await waitForOwnItem(source, destinationDir, 5000);
+        if (locatedDuplicate) return { item: locatedDuplicate, transferred: false };
+        const existingElsewhere = (await searchOwnItems(name))
+          .filter((item) => compatibleItem(source, item))
+          .map(itemPath)
+          .filter(Boolean);
+        if (existingElsewhere.length > 0) {
+          const duplicate = new Error(
+            "素材已存在于网盘其他目录，当前剧目目录无法继续补传：" +
+              name +
+              "；现有路径=" +
+              existingElsewhere.slice(0, 5).join("、"),
+          );
+          duplicate.code = "SOURCE_ALREADY_SAVED_ELSEWHERE";
+          throw duplicate;
+        }
+      }
+
+      const located = await waitForOwnItem(source, destinationDir, 70000);
+      if (located) return { item: located, transferred: transferred.errno === 0 };
       throw new Error(
-        "保存分享到网盘失败：" +
-          (message || "百度接口返回异常") +
-          "；errno=" +
-          String(transferred.errno) +
-          (transferred.request_id ? "；request_id=" + String(transferred.request_id) : ""),
+        (transferred.errno === 2 ? "文件已存在但目标目录未找到对应素材：" : "转存后未找到目标素材：") +
+          joinPath(destinationDir, name),
       );
     }
-    if (transferred.errno === 2) {
-      const existingElsewhere = (await searchOwnItems(name))
-        .filter((item) => compatibleItem(source, item))
-        .map(itemPath)
-        .filter(Boolean);
-      if (existingElsewhere.length > 0) {
-        const duplicate = new Error(
-          "素材已存在于网盘其他目录，当前剧目目录无法继续补传：" +
-            name +
-            "；现有路径=" +
-            existingElsewhere.slice(0, 5).join("、"),
-        );
-        duplicate.code = "SOURCE_ALREADY_SAVED_ELSEWHERE";
-        throw duplicate;
-      }
-    }
-
-    const transferStarted = Date.now();
-    while (Date.now() - transferStarted < 70000) {
-      const located = await findOwnItem(destinationDir, name);
-      if (located) {
-        if (!compatibleItem(source, located)) {
-          const conflict = new Error("转存后出现不兼容的同名素材：" + joinPath(destinationDir, name));
-          conflict.code = "TARGET_CONFLICT";
-          throw conflict;
-        }
-        return { item: located, transferred: transferred.errno === 0 };
-      }
-      await sleep(1000);
-    }
-    throw new Error(
-      (transferred.errno === 2 ? "文件已存在但目标目录未找到对应素材：" : "转存后未找到目标素材：") +
-        joinPath(destinationDir, name),
-    );
+    throw new Error("保存分享到网盘失败：转存重试流程异常结束；目标=" + joinPath(destinationDir, name));
   };
   const itemsConflict = async (source, target) => {
     if (!compatibleItem(source, target)) return true;
@@ -1176,12 +1270,29 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   };
   const syncItems = async (sources, destinationDir) => {
     let transferredCount = 0;
-    for (const source of sources) {
+    console.log(
+      "[baidu-transfer] 检查增量转存目录：" +
+        normalizeDir(destinationDir) +
+        "，项目数=" +
+        sources.length,
+    );
+    for (let sourceIndex = 0; sourceIndex < sources.length; sourceIndex += 1) {
+      const source = sources[sourceIndex];
       const existing = await findOwnItem(destinationDir, fileNameOf(source));
       if (existing && itemIsDir(source) && itemIsDir(existing)) {
         const sourceChildren = await fetchShareFileList(itemPath(source));
         transferredCount += await syncItems(sourceChildren, itemPath(existing));
         continue;
+      }
+      if (!existing) {
+        console.log(
+          "[baidu-transfer] 增量补传 " +
+            (sourceIndex + 1) +
+            "/" +
+            sources.length +
+            "：" +
+            fileNameOf(source),
+        );
       }
       const result = await transferOne(source, destinationDir);
       if (result.transferred) transferredCount += 1;
@@ -1600,8 +1711,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       10 * 60_000,
     );
 
-    if (!result.savedPath) throw new Error("没有拿到保存后的网盘路径。");
-    return result;
+      if (!result.savedPath) throw new Error("没有拿到保存后的网盘路径。");
+      return result;
+    } finally {
+      stopConsoleForwarding();
+    }
   });
 }
 
@@ -2600,8 +2714,12 @@ export async function downloadBaiduNetdiskShare(
   log(`读取分享：${share.name}`);
   log(`默认下载目录：${downloadDir}`);
 
-  await copyToClipboard(content);
-  log("已复制分享内容到剪贴板");
+  const clipboardResult = await copyToClipboard(content);
+  if (clipboardResult.copied) {
+    log("已复制分享内容到剪贴板");
+  } else {
+    log(`复制分享内容到剪贴板失败，继续使用已解析的分享链接：${clipboardResult.error}`);
+  }
 
   await ensureBaiduCdpPort(port);
   log(`使用百度网盘 CDP 端口：${port}`);

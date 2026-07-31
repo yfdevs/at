@@ -37,6 +37,12 @@ export type WechatVideoConfig = {
   remoteFileDownloadTimeoutSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
   mergeOwnershipMaterials: string
+  materialPreparationConcurrency: string
+  taskPrefetchPerAccount: string
+  videoTranscodeConcurrency: string
+  videoTranscodeThreadsPerJob: string
+  episodeVideoMaxFileMegabytes: string
+  episodeVideoTargetFileMegabytes: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string

@@ -73,11 +73,13 @@ async function reportWithRetry(
 }
 
 async function setFixedPageTitle(page: Page, title: string) {
-  await page.evaluate((value) => {
-    const windowState = window as unknown as { __qqDramaAccountFixedTitle?: string };
-    windowState.__qqDramaAccountFixedTitle = value;
-    document.title = value;
-  }, title).catch(() => undefined);
+  await page
+    .evaluate((value) => {
+      const windowState = window as unknown as { __qqDramaAccountFixedTitle?: string };
+      windowState.__qqDramaAccountFixedTitle = value;
+      document.title = value;
+    }, title)
+    .catch(() => undefined);
 }
 
 async function installFixedPageTitle(context: BrowserContext, title: string) {
@@ -136,8 +138,9 @@ function classifyFailStage(error: unknown, fallback: QqDramaTaskFailStage): QqDr
   const message = errorMessage(error);
   if (message.includes("LOGIN")) return "LOGIN";
   if (
-    /\[local-video-invalid\]|\[poster-material-invalid\]|\[copyright-proof-invalid\]|local episode videos|剧集视频|本地剧集视频|封面|海报|权属|FILE|UPLOAD/i
-      .test(message)
+    /\[local-video-invalid\]|\[poster-material-invalid\]|\[copyright-proof-invalid\]|local episode videos|剧集视频|本地剧集视频|封面|海报|权属|FILE|UPLOAD/i.test(
+      message,
+    )
   ) {
     return "UPLOAD_FILE";
   }
@@ -324,7 +327,7 @@ export async function startQqDramaRuntime(
   let page: Page | null = null;
   let context: BrowserContext | null = null;
 
-  // 任务轮询相关状态；测试阶段可以通过 taskPollingEnabled=false 只打开页面不领取任务。
+  // 任务轮询相关状态。
   let taskLoopPromise: Promise<void> | null = null;
   let taskLoopTimer: ReturnType<typeof setTimeout> | null = null;
   let wakeTaskLoop: (() => void) | null = null;
@@ -397,15 +400,11 @@ export async function startQqDramaRuntime(
   });
 
   page = context.pages()[0] ?? (await context.newPage());
-  // 账号浏览器全部创建完成后，各自后台等待登录；未启用任务轮询时只保持登录页/上剧页常驻。
   taskLoopPromise = (async () => {
     await openQqDramaAddPage(page!, context!, options).catch((error) => {
       errorLog(options, `[qq-drama] failed to open add page: ${errorMessage(error)}`);
     });
-    if (options.taskPollingEnabled === false || !running || page!.isClosed()) {
-      log(options, "[qq-drama] account browser ready; task polling is disabled");
-      return;
-    }
+    if (!running || page!.isClosed()) return;
     await runTaskLoop(page!, context!);
   })();
 

@@ -38,12 +38,44 @@ export class CdpPage {
   private nextId = 0;
   private socket: WebSocket;
   private closed = false;
+  private consoleListeners = new Set<(message: string) => void>();
 
   constructor(url: string) {
     this.socket = new WebSocket(url);
+    this.socket.on("message", (data: unknown) => {
+      if (this.consoleListeners.size === 0) return;
+      const message = JSON.parse(websocketDataToString(data)) as CdpMessage;
+      if (message.method !== "Runtime.consoleAPICalled") return;
+      const text = (message.params?.args ?? [])
+        .map((argument) => {
+          const value = argument.value;
+          if (value === undefined) return argument.description ?? "";
+          if (
+            typeof value === "string" ||
+            typeof value === "number" ||
+            typeof value === "boolean" ||
+            typeof value === "bigint"
+          ) {
+            return String(value);
+          }
+          if (value === null) return "null";
+          try {
+            return JSON.stringify(value);
+          } catch {
+            return argument.description ?? "";
+          }
+        })
+        .join(" ");
+      for (const listener of this.consoleListeners) listener(text);
+    });
     this.socket.on("close", () => {
       this.closed = true;
     });
+  }
+
+  onConsole(listener: (message: string) => void) {
+    this.consoleListeners.add(listener);
+    return () => this.consoleListeners.delete(listener);
   }
 
   async open() {

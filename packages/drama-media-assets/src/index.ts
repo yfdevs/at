@@ -13,6 +13,7 @@ export type LocalEpisodeFile = {
   index: number;
   file: string;
   size: number;
+  modifiedAtMs: number;
 };
 
 export type LocalOwnershipMaterialFile = {
@@ -42,6 +43,15 @@ export type PreparedEpisodeUploadFiles = {
   uploadDir: string;
   files: string[];
 };
+
+export {
+  prepareEpisodeVideos,
+  VideoTranscodeQueue,
+  type PreparedVideoFile,
+  type VideoSizePolicy,
+  type VideoTranscodeQueueOptions,
+  type VideoTranscodeRequest,
+} from "./video-transcode.js";
 
 export type EpisodeDirectorySummary = {
   dir: string;
@@ -130,7 +140,7 @@ export async function listDirectLocalEpisodeFiles(
     const fileStat = await stat(file).catch(() => undefined);
     if (!fileStat?.isFile() || fileStat.size <= 0) continue;
 
-    files.push({ index, file, size: fileStat.size });
+    files.push({ index, file, size: fileStat.size, modifiedAtMs: fileStat.mtimeMs });
   }
 
   return files.sort((left, right) => left.index - right.index);
@@ -793,13 +803,14 @@ export async function prepareEpisodeUploadFiles(options: {
   resourceName: string;
   uploadRootDir: string;
   uploadBaseName?: string;
+  episodes?: LocalEpisodeVideo[];
 }): Promise<PreparedEpisodeUploadFiles> {
   const uploadDir = path.join(options.uploadRootDir, `episode-upload-${Date.now()}`);
   await mkdir(uploadDir, { recursive: true });
 
   const playletName = safeEpisodeFileBaseName(options.uploadBaseName ?? options.resourceName);
   const files: string[] = [];
-  for (const episode of await findLocalEpisodeVideos(options)) {
+  for (const episode of options.episodes ?? await findLocalEpisodeVideos(options)) {
     const extension = path.extname(episode.file) || ".mp4";
     const target = path.join(uploadDir, `${playletName}-第${episode.index}集${extension}`);
     await createEpisodeUploadHardLink(episode.file, target);

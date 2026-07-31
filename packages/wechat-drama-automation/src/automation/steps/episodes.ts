@@ -1,91 +1,30 @@
-import { access, link, mkdir, rm } from "node:fs/promises";
-import path from "node:path";
 import type { Locator, Page } from "playwright";
 import { resolveRunDataPath } from "../../shared/config.js";
-import { findLocalEpisodeVideos } from "../../shared/local-episode-videos.js";
 import { createLogger } from "../../shared/logger.js";
 import { getWechatVideoRuntimeSettings } from "../../shared/runtime-settings.js";
 import { integerSetting, secondsSettingToMs } from "../../shared/settings-value.js";
-import type { Config } from "../../shared/types.js";
+import type { Config, PreparedEpisodeVideo } from "../../shared/types.js";
+import {
+  cleanupEpisodeUploadFiles,
+  prepareEpisodeUploadFiles,
+} from "@drama/drama-media-assets";
 import {
   fileInputByLabelPrefix,
   setInputFilesByLocator
 } from "../upload/upload-helpers.js";
 
 interface EpisodeUploadStepOptions {
+  episodeVideos?: PreparedEpisodeVideo[];
   videoAccountLabel?: string;
 }
 
 const uploadLogger = createLogger("upload");
-const invalidUploadFileNameChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
-
-function safeUploadBaseName(value: string): string {
-  return Array.from(value, (char) => (
-    invalidUploadFileNameChars.has(char) || char.charCodeAt(0) <= 0x1f ? " " : char
-  )).join("").replace(/\s+/g, " ").trim();
-}
-
-interface PreparedEpisodeUploadFiles {
-  uploadDir: string;
-  files: string[];
-}
-
 async function cleanupEpisodeUploadDir(uploadDir: string, videoAccountLabel?: string): Promise<void> {
   const accountLogPrefix = formatAccountLogPrefix(videoAccountLabel);
-  await rm(uploadDir, { recursive: true, force: true }).catch((error: unknown) => {
+  await cleanupEpisodeUploadFiles({ uploadDir, files: [] }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
     uploadLogger.warn(`[cleanup] ${accountLogPrefix}临时剧集目录清理失败: ${uploadDir} ${message}`);
   });
-}
-
-async function prepareEpisodeUploadFiles(config: Config): Promise<PreparedEpisodeUploadFiles> {
-  const uploadDir = resolveRunDataPath(`episode-upload-${Date.now()}`);
-  await mkdir(uploadDir, { recursive: true });
-
-  const playletName = safeUploadBaseName(config.playlet.name);
-  if (playletName !== config.playlet.name) {
-    console.warn(`[warn] 剧目名包含文件名非法字符，上传文件名已改为: ${playletName}`);
-  }
-
-  const files: string[] = [];
-  for (const episode of await findLocalEpisodeVideos(config)) {
-    const source = episode.file;
-    if (!await fileExists(source)) {
-      console.warn(`[skip] file not found: ${source}`);
-      continue;
-    }
-
-    const extension = path.extname(source) || ".mp4";
-    const uploadName = `${playletName}-第${episode.index}集${extension}`;
-    const target = path.join(uploadDir, uploadName);
-
-    await createEpisodeUploadHardLink(source, target);
-
-    files.push(target);
-  }
-
-  return { uploadDir, files };
-}
-
-async function createEpisodeUploadHardLink(source: string, target: string): Promise<void> {
-  try {
-    await link(source, target);
-  } catch (error: unknown) {
-    const nodeError = error as NodeJS.ErrnoException;
-    if (nodeError.code === "EXDEV") {
-      throw Object.assign(new Error(
-        `[local-video-invalid] 无法为剧集视频创建硬链接，源文件和临时上传目录不在同一磁盘分区: ${source} -> ${target}; cause=${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      ), { cause: error });
-    }
-
-    throw error;
-  }
-}
-
-async function fileExists(filePath: string): Promise<boolean> {
-  return access(filePath).then(() => true, () => false);
 }
 
 function normalizeUiText(value: string | null | undefined): string {
@@ -310,7 +249,13 @@ export async function uploadEpisodeFilesStep(
     .filter({ hasText: /^请选择要上传的视频文件$/ })
     .first()
     .waitFor({ state: "visible", timeout: 30000 });
-  const prepared = await prepareEpisodeUploadFiles(config);
+  const prepared = await prepareEpisodeUploadFiles({
+    localEpisodeVideoRoot: getWechatVideoRuntimeSettings().localEpisodeVideoRoot,
+    resourceName: config.originalTitle,
+    uploadRootDir: resolveRunDataPath(),
+    uploadBaseName: config.playlet.name,
+    episodes: options.episodeVideos,
+  });
   try {
     const videoFiles = prepared.files;
     if (!videoFiles.length) {

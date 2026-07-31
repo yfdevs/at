@@ -23,6 +23,12 @@ export type EnsureBaiduNetdiskResourceRequest = {
   requiredPosterImages?: number;
   requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
+  onStableEpisodeFiles?: (files: Array<{
+    index: number;
+    file: string;
+    size: number;
+    modifiedAtMs: number;
+  }>) => void;
 };
 
 export type EnsureBaiduNetdiskResource = (

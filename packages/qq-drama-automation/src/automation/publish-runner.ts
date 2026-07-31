@@ -8,7 +8,7 @@ import {
   waitForLoginIfNeeded,
 } from "./browser-session.js";
 import { fillBasicInfoStep } from "./steps/basic-info.js";
-import { confirmAndMaybeSubmitStep } from "./steps/confirm.js";
+import { confirmAndSubmitStep } from "./steps/confirm.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
 import { qqPageMessageErrorLocator } from "./steps/form-controls.js";
 
@@ -72,7 +72,7 @@ export async function runQqDramaPublishTask(
     await uploadEpisodeVideosStep(page, task, options);
 
     log(options, `[qq-drama] start confirm step: accountTaskId=${task.accountTaskId}`);
-    await confirmAndMaybeSubmitStep(page, task, options);
+    await confirmAndSubmitStep(page, task, options);
 
     await saveCredentialState(context, options).catch(() => undefined);
   } finally {

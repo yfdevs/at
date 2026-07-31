@@ -135,6 +135,7 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
     console.log("[task] start uploadEpisodeFilesStep");
     try {
       await uploadEpisodeFilesStep(page, playletConfig, {
+        episodeVideos: runOptions.preparedEpisodeVideos,
         videoAccountLabel: runOptions.channelId
           ? `videoAccountId=${runOptions.channelId} name=${runOptions.videoAccountName ?? runOptions.channelId}`
           : undefined,

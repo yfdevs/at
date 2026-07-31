@@ -41,6 +41,13 @@ type PlatformDownloadTarget = {
   platformTitle: string;
   rootLabel: string;
   rootPath: string;
+  videoTranscode?: {
+    runDataDir: string;
+    maxFileMegabytes: number;
+    targetFileMegabytes: number;
+    concurrency: number;
+    threadsPerJob: number;
+  };
 };
 
 function errorMessage(error: unknown) {
@@ -121,6 +128,13 @@ async function loadPlatformDownloadTarget(
         platformTitle,
         rootLabel: "微信视频号剧集视频根目录",
         rootPath: result.config.localEpisodeVideoRoot.trim(),
+        videoTranscode: {
+          runDataDir: result.config.runDataDir,
+          maxFileMegabytes: Number(result.config.episodeVideoMaxFileMegabytes) || 490,
+          targetFileMegabytes: Number(result.config.episodeVideoTargetFileMegabytes) || 480,
+          concurrency: Number(result.config.videoTranscodeConcurrency) || 2,
+          threadsPerJob: Number(result.config.videoTranscodeThreadsPerJob) || 2,
+        },
       };
     }
     case "meituan-drama": {
@@ -362,6 +376,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
           localEpisodeVideoRoot: platformDownloadTarget.rootPath,
           episodeCount: parsedEpisodeCount,
           mergeOwnershipMaterials,
+          videoTranscode: platformDownloadTarget.videoTranscode,
           ...(platformDownloadTarget.platformId === "wechat-drama"
             ? { requiredOwnership: { minimumImages: 1 } }
             : {}),

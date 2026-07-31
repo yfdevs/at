@@ -1,5 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
+import { VideoTranscodeQueue } from "@drama/drama-media-assets";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { createHash } from "node:crypto";
 import { rm } from "node:fs/promises";
@@ -9,6 +10,7 @@ import {
   type BaiduNetdiskDownloadRecord,
   type BaiduNetdiskDownloadState,
 } from "../storage/baidu-netdisk";
+import { resolveFromAppRoot } from "./shared";
 
 export type BaiduNetdiskConfig = {
   debugPort: string;
@@ -110,6 +112,19 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   requiredPosterImages?: number;
   requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
+  videoTranscode?: {
+    runDataDir: string;
+    maxFileMegabytes: number;
+    targetFileMegabytes: number;
+    concurrency: number;
+    threadsPerJob: number;
+  };
+  onStableEpisodeFiles?: (files: Array<{
+    index: number;
+    file: string;
+    size: number;
+    modifiedAtMs: number;
+  }>) => void;
 };
 
 export type BaiduNetdiskDownloadRecordResult = {
@@ -126,7 +141,17 @@ const defaultBaiduNetdiskDownloadDir = "D:\\BaiduNetdiskDownload";
 
 let store: Store<BaiduNetdiskStore> | null = null;
 let downloadRecordsRepository: BaiduNetdiskDownloadRecordsRepository | null = null;
-const activeDownloadPromises = new Map<string, Promise<BaiduNetdiskDownloadRecord>>();
+type StableEpisodeFilesListener = NonNullable<
+  BaiduNetdiskEnsureDownloadedRequest["onStableEpisodeFiles"]
+>;
+
+type ActiveDownloadOperation = {
+  promise: Promise<BaiduNetdiskDownloadRecord>;
+  stableEpisodeFilesListeners: Set<StableEpisodeFilesListener>;
+};
+
+const activeDownloadOperations = new Map<string, ActiveDownloadOperation>();
+const appVideoTranscodeQueues = new Map<number, VideoTranscodeQueue>();
 let baiduCdpOperationTail: Promise<void> = Promise.resolve();
 let queuedBaiduCdpOperations = 0;
 
@@ -353,6 +378,69 @@ function normalizeEnsureDownloadRequest(
     requiredPosterImages: request.requiredPosterImages,
     requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
+    videoTranscode: request.videoTranscode,
+    onStableEpisodeFiles: request.onStableEpisodeFiles,
+  };
+}
+
+function appVideoTranscodeQueue(concurrency: number) {
+  const normalizedConcurrency = Math.max(1, Math.floor(concurrency) || 2);
+  let queue = appVideoTranscodeQueues.get(normalizedConcurrency);
+  if (!queue) {
+    queue = new VideoTranscodeQueue({
+      concurrency: normalizedConcurrency,
+      onLog: (message) => console.log(`[baidu] ${message}`),
+    });
+    appVideoTranscodeQueues.set(normalizedConcurrency, queue);
+  }
+  return queue;
+}
+
+function withAppVideoTranscode(
+  request: BaiduNetdiskEnsureDownloadedRequest,
+): BaiduNetdiskEnsureDownloadedRequest {
+  const settings = request.videoTranscode;
+  if (!settings) return request;
+
+  const maxFileBytes = Math.max(1, settings.maxFileMegabytes) * 1_000_000;
+  const targetFileBytes = Math.max(1, settings.targetFileMegabytes) * 1_000_000;
+  if (targetFileBytes >= maxFileBytes) {
+    throw new Error("百度应用测试转码目标体积必须小于触发体积。");
+  }
+  const queue = appVideoTranscodeQueue(settings.concurrency);
+  const cacheRootDir = path.join(
+    resolveFromAppRoot(settings.runDataDir),
+    "media-cache",
+    "video-transcodes",
+  );
+  return {
+    ...request,
+    onStableEpisodeFiles: (files) => {
+      for (const file of files) {
+        if (file.size <= maxFileBytes) continue;
+        console.log(
+          `[baidu] 下载扫描发现超限视频，加入转码队列：第${file.index}集 ` +
+            `${file.size} > ${maxFileBytes}`,
+        );
+        void queue.add({
+          inputFile: file.file,
+          cacheRootDir,
+          policy: {
+            maxFileBytes,
+            targetFileBytes,
+            audioBitrateKbps: 128,
+            threadsPerJob: Math.max(1, Math.floor(settings.threadsPerJob) || 2),
+          },
+          replaceSource: true,
+        }).catch((error) => {
+          console.error(
+            `[baidu] 下载期视频转码失败：第${file.index}集；${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        });
+      }
+    },
   };
 }
 
@@ -542,18 +630,51 @@ export async function ensureBaiduNetdiskShareDownloaded(
   const normalizedRequest = normalizeEnsureDownloadRequest(request);
   const shareKey = shareKeyFromText(normalizedRequest.shareText);
   const id = createRecordId(shareKey, normalizedRequest.resourceName);
-  const activePromise = activeDownloadPromises.get(id);
+  const activeOperation = activeDownloadOperations.get(id);
 
-  if (activePromise) {
-    return activePromise;
+  if (activeOperation) {
+    if (normalizedRequest.onStableEpisodeFiles) {
+      activeOperation.stableEpisodeFilesListeners.add(normalizedRequest.onStableEpisodeFiles);
+      console.log(
+        `[baidu] 已将素材处理器附加到正在下载的任务：${normalizedRequest.resourceName}`,
+      );
+    }
+    return activeOperation.promise;
   }
 
-  const promise = ensureBaiduNetdiskShareDownloadedOnce(id, shareKey, normalizedRequest).finally(
-    () => {
-      activeDownloadPromises.delete(id);
+  const stableEpisodeFilesListeners = new Set<StableEpisodeFilesListener>();
+  if (normalizedRequest.onStableEpisodeFiles) {
+    stableEpisodeFilesListeners.add(normalizedRequest.onStableEpisodeFiles);
+  }
+  const requestWithListenerBroadcast: BaiduNetdiskEnsureDownloadedRequest = {
+    ...normalizedRequest,
+    onStableEpisodeFiles: (files) => {
+      if (stableEpisodeFilesListeners.size > 0) {
+        console.log(
+          `[baidu] 通知素材处理器：稳定剧集=${files.map((file) => file.index).join(",")}`,
+        );
+      }
+      for (const listener of stableEpisodeFilesListeners) {
+        try {
+          listener(files);
+        } catch (error) {
+          console.warn(
+            `[baidu] 素材处理器接收稳定剧集失败：${
+              error instanceof Error ? error.message : String(error)
+            }`,
+          );
+        }
+      }
     },
-  );
-  activeDownloadPromises.set(id, promise);
+  };
+  const promise = ensureBaiduNetdiskShareDownloadedOnce(
+    id,
+    shareKey,
+    requestWithListenerBroadcast,
+  ).finally(() => {
+    activeDownloadOperations.delete(id);
+  });
+  activeDownloadOperations.set(id, { promise, stableEpisodeFilesListeners });
 
   return promise;
 }
@@ -631,6 +752,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           port,
           targetName: statusRequest.targetName,
         }),
+      onStableEpisodeFiles: request.onStableEpisodeFiles,
       onLog: (message) => console.log(message.replace("[video-assets]", "[baidu]")),
       onProgress: (progress) => {
         record = upsertDownloadRecord({
@@ -776,6 +898,8 @@ export function registerBaiduNetdiskPlatformHandlers() {
     downloadShare(request as BaiduNetdiskShareDownloadRequest | undefined),
   );
   ipcMain.handle("baidu-netdisk:share:ensure-downloaded", (_event, request) =>
-    ensureBaiduNetdiskShareDownloaded(request as BaiduNetdiskEnsureDownloadedRequest),
+    ensureBaiduNetdiskShareDownloaded(
+      withAppVideoTranscode(request as BaiduNetdiskEnsureDownloadedRequest),
+    ),
   );
 }
