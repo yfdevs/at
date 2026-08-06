@@ -26,11 +26,15 @@ function errorMessage(error: unknown) {
 }
 
 function reportableErrorMessage(error: unknown) {
-  const message = errorMessage(error)
+  const sanitizedMessage = errorMessage(error)
     .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
     .replace(/\r\n/g, "\n")
-    .replace(/\nCall log:[\s\S]*$/i, "")
     .trim();
+  const locatorDescription = sanitizedMessage
+    .match(/\n\s*-\s*waiting for (.+?)(?:\n|$)/i)?.[1]
+    ?.trim()
+    .slice(0, 300);
+  const message = sanitizedMessage.replace(/\nCall log:[\s\S]*$/i, "").trim();
 
   if (/Target page, context or browser has been closed/i.test(message)) {
     return "美团页面或浏览器已关闭，无法继续执行页面操作";
@@ -48,7 +52,9 @@ function reportableErrorMessage(error: unknown) {
       setinputfiles: "选择上传文件",
     };
     const action = actionLabels[locatorTimeout[1].toLowerCase()] ?? "执行页面操作";
-    return `${action}超时（等待 ${locatorTimeout[2]} 毫秒）`;
+    return `${action}超时（等待 ${locatorTimeout[2]} 毫秒${
+      locatorDescription ? `，定位：${locatorDescription}` : ""
+    }）`;
   }
 
   return message || "美团任务执行失败，未获取到具体错误信息";
@@ -206,6 +212,10 @@ export async function runMeituanAccountTaskWorker(options: {
           `[meituan-drama] task failed: accountTaskId=${claimed.accountTaskId} ` +
             `failStage=${failStage} error=${message}`,
         );
+
+        //
+        // oxlint-disable-next-line no-debugger
+        debugger;
 
         await reportWithRetry(
           runtimeOptions,

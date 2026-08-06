@@ -1,5 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
-import { QQ_DRAMA_ADD_URL, QQ_DRAMA_LOGIN_URL } from "../shared/constants.js";
+import { QQ_DRAMA_ADD_URL } from "../shared/constants.js";
 import { log } from "../shared/logger.js";
 import type { ClaimedQqDramaTask, QqDramaRuntimeOptions } from "../shared/types.js";
 import {
@@ -26,15 +26,41 @@ export async function openQqDramaAddPage(
     await page.waitForTimeout(1_000);
   }
 
+  async function waitForBasicInfoPageReady() {
+    let deadline = Date.now() + 60_000;
+    const titleInput = page
+      .locator("input[placeholder*='审核通过后不支持修改'],input[placeholder*='作品名称']")
+      .filter({ visible: true })
+      .first();
+
+    while (Date.now() < deadline) {
+      if (await titleInput.count() > 0) return;
+
+      if (qqDramaLoginStateFromUrl(page.url()) === "login-required") {
+        await waitForLoginIfNeeded(page, context, options);
+        await gotoAddPage();
+        deadline = Date.now() + 60_000;
+        continue;
+      }
+
+      await page.waitForTimeout(500);
+    }
+
+    const pageText = (await page.locator("body").innerText().catch(() => ""))
+      .replace(/\s+/g, " ")
+      .trim()
+      .slice(0, 300);
+    throw new Error(
+      `QQ_DRAMA_BASIC_INFO_NOT_READY: 等待作品名称输入框显示超时；url=${page.url()}; pageText=${pageText || "空"}`,
+    );
+  }
+
   await gotoAddPage();
   if (qqDramaLoginStateFromUrl(page.url()) === "login-required") {
-    await page.goto(QQ_DRAMA_LOGIN_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
     await waitForLoginIfNeeded(page, context, options);
     await gotoAddPage();
   }
+  await waitForBasicInfoPageReady();
 
   await saveCredentialState(context, options).catch(() => undefined);
 }

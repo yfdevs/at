@@ -15,6 +15,7 @@ import {
   DEFAULT_BAIDU_NETDISK_SHARE_NAME,
   DOWNLOAD_SETTING_MAX_ATTEMPTS,
   OWN_NETDISK_DIR_LIST_MAX_PAGES,
+  OWN_NETDISK_DIR_LIST_PAGE_SIZE,
   REMOTE_DIR_ENTRY_SAMPLE_LIMIT,
   REMOTE_VIDEO_SCAN_MAX_DEPTH,
   REMOTE_VIDEO_SCAN_MAX_DIRS,
@@ -677,9 +678,14 @@ type SavedShareResult = {
   remoteAiProductionProofs: BaiduNetdiskRemoteAiProductionProofListing;
 };
 
-async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
+type SaveShareOptions = {
+  isolatedRoot?: boolean;
+  isolatedRootUnique?: boolean;
+};
+
+async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, options: SaveShareOptions = {}) {
   return withPage(target, async (page) => {
-    log("保存分享目录到我的网盘");
+    log(options.isolatedRoot ? "保存分享目录到干净的网盘中转目录" : "保存分享目录到我的网盘");
     const stopConsoleForwarding = page.onConsole((message) => {
       const prefix = "[baidu-transfer] ";
       if (message.startsWith(prefix)) log(message.slice(prefix.length));
@@ -690,6 +696,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
 (async () => {
   const SHARE_LIST_MAX_PAGES = ${SHARE_LIST_MAX_PAGES};
   const OWN_NETDISK_DIR_LIST_MAX_PAGES = ${OWN_NETDISK_DIR_LIST_MAX_PAGES};
+  const OWN_NETDISK_DIR_LIST_PAGE_SIZE = ${OWN_NETDISK_DIR_LIST_PAGE_SIZE};
   const REMOTE_DIR_ENTRY_SAMPLE_LIMIT = ${REMOTE_DIR_ENTRY_SAMPLE_LIMIT};
   const REMOTE_VIDEO_SCAN_MAX_DEPTH = ${REMOTE_VIDEO_SCAN_MAX_DEPTH};
   const REMOTE_VIDEO_SCAN_MAX_DIRS = ${REMOTE_VIDEO_SCAN_MAX_DIRS};
@@ -703,6 +710,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   const shareLink = ${JSON.stringify(share.link)};
   const pwd = ${JSON.stringify(share.pwd)};
   let expectedName = ${JSON.stringify(share.name)};
+  const isolateRoot = ${JSON.stringify(options.isolatedRoot ?? false)};
+  const isolateRootUnique = ${JSON.stringify(options.isolatedRootUnique ?? false)};
   const shouldUseSourceName = ${JSON.stringify(share.name === DEFAULT_BAIDU_NETDISK_SHARE_NAME)};
   const shareUrl = new URL(shareLink);
   const surl = shareUrl.pathname.split("/s/")[1]?.replace(/^1/, "") || "";
@@ -927,11 +936,6 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   if (shouldUseSourceName && sourceNames.length === 1 && sourceName) {
     expectedName = sourceName;
   }
-  const baseQuery =
-    "channel=chunlei&web=1&app_id=250528&bdstoken=" +
-    encodeURIComponent(token) +
-    "&clienttype=0";
-
   const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
   const attempts = [];
   const itemName = (item) => String(item?.server_filename || item?.path?.split("/")?.pop() || "");
@@ -948,30 +952,72 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     return sourceSize <= 0 || targetSize <= 0 || sourceSize === targetSize;
   };
   const ownDirListCache = new Map();
+  const ownDirListFailureMessage = (dir, data) => {
+    const apiMessage = String(data?.show_msg || data?.errmsg || data?.message || "");
+    const hint =
+      data?.errno === 1 || data?.errno === 4
+        ? "。通常是百度网盘客户端登录态、bdstoken 或接口临时风控异常；请先确认客户端已登录，必要时重启为 CDP 模式后重试"
+        : "";
+    return (
+      "读取我的网盘目录失败：" +
+      dir +
+      "；" +
+      (apiMessage ? apiMessage + "；" : "") +
+      "errno=" +
+      String(data?.errno ?? "-") +
+      (data?.request_id ? "；request_id=" + String(data.request_id) : "") +
+      hint +
+      "；" +
+      compactJson(data)
+    );
+  };
+  const fetchOwnDirPage = async (normalizedDir, page) => {
+    const params = new URLSearchParams({
+      dir: normalizedDir,
+      order: "name",
+      desc: "0",
+      showempty: "0",
+      num: String(OWN_NETDISK_DIR_LIST_PAGE_SIZE),
+      page: String(page),
+      t: String(Date.now()),
+      channel: "chunlei",
+      web: "1",
+      app_id: "250528",
+      bdstoken: token,
+      clienttype: "0",
+    });
+    let lastData;
+    for (const retryDelay of [0, 800, 1800]) {
+      if (retryDelay > 0) await sleep(retryDelay);
+      const data = await jsonFetch("/api/list?" + params.toString());
+      lastData = data;
+      if (data.errno === 0 || (data.errno !== 1 && data.errno !== 4)) return data;
+      console.log(
+        "[baidu-transfer] 读取我的网盘目录临时失败，准备重试：" +
+          normalizedDir +
+          " page=" +
+          page +
+          " errno=" +
+          data.errno +
+          (data.request_id ? " request_id=" + String(data.request_id) : ""),
+      );
+    }
+    return lastData;
+  };
   const listOwnDir = async (dir, forceRefresh = false) => {
     const normalizedDir = normalizeDir(dir);
     if (!forceRefresh && ownDirListCache.has(normalizedDir)) {
       return ownDirListCache.get(normalizedDir);
     }
     const results = [];
-    const pageSize = 1000;
     for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
-      const data = await jsonFetch(
-        "/api/list?dir=" +
-          encodeURIComponent(normalizedDir) +
-          "&order=name&desc=0&num=" +
-          pageSize +
-          "&page=" +
-          page +
-          "&" +
-          baseQuery,
-      );
+      const data = await fetchOwnDirPage(normalizedDir, page);
       if (data.errno !== 0) {
-        throw new Error("读取我的网盘目录失败：" + normalizedDir + "；" + compactJson(data));
+        throw new Error(ownDirListFailureMessage(normalizedDir, data));
       }
       const list = Array.isArray(data.list) ? data.list : [];
       results.push(...list);
-      if (list.length < pageSize && !data.has_more) break;
+      if (list.length < OWN_NETDISK_DIR_LIST_PAGE_SIZE && !data.has_more) break;
     }
     ownDirListCache.set(normalizedDir, results);
     return results;
@@ -1300,11 +1346,17 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     return transferredCount;
   };
 
+  const stableSuffix = String(surl || shareId).replace(/[^a-zA-Z0-9]/g, "").slice(-10) || "share";
   let finalFileName = String(shareHasDramaWrapper ? wrapperName : safeExpectedName)
     .replace(/[\\\\/:*?"<>|]/g, "_")
     .slice(0, 180);
-  const rootCandidate = await findOwnItem("/", finalFileName);
-  const searchedCandidates = (await searchOwnItems(finalFileName))
+  if (isolateRoot) {
+    const isolatedBase = (safeExpectedName + "__" + stableSuffix).slice(0, 170);
+    const uniqueSuffix = isolateRootUnique ? "__" + Date.now().toString(36).slice(-8) : "";
+    finalFileName = (isolatedBase + uniqueSuffix).slice(0, 180);
+  }
+  const rootCandidate = isolateRoot ? undefined : await findOwnItem("/", finalFileName);
+  const searchedCandidates = isolateRoot ? [] : (await searchOwnItems(finalFileName))
     .filter((item) => itemIsDir(item) && itemName(item) === finalFileName);
   const candidateByPath = new Map();
   for (const candidate of [rootCandidate, ...searchedCandidates].filter(Boolean)) {
@@ -1339,6 +1391,12 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   let createdTarget = false;
   let directWrapperTransfer = false;
 
+  if (!ownRoot && isolateRoot) {
+    ownRoot = await createOwnDirectory(finalFileName);
+    createdTarget = true;
+    locateSource = "created-isolated-root";
+  }
+
   if (ownRoot && !itemIsDir(ownRoot)) {
     ownRoot = undefined;
     locateSource = "root-name-conflict";
@@ -1351,7 +1409,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
     locateSource = "root-content-conflict";
   }
 
-  if (!ownRoot && shareHasDramaWrapper && !locateSource) {
+  if (!ownRoot && !isolateRoot && shareHasDramaWrapper && !locateSource) {
     const directResult = await transferOne(wrapperCandidate, "/");
     ownRoot = directResult.item;
     transferredCount += directResult.transferred ? 1 : 0;
@@ -1360,7 +1418,6 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
   }
 
   if (!ownRoot) {
-    const stableSuffix = String(surl || shareId).replace(/[^a-zA-Z0-9]/g, "").slice(-10) || "share";
     if (locateSource) finalFileName = (safeExpectedName + "__" + stableSuffix).slice(0, 180);
     ownRoot = await findOwnItem("/", finalFileName);
     if (ownRoot && !itemIsDir(ownRoot)) {
@@ -1438,27 +1495,17 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo) {
       hasMore: false,
       entries: [],
     };
-    const pageSize = 1000;
     for (let page = 1; page <= OWN_NETDISK_DIR_LIST_MAX_PAGES; page += 1) {
-      const data = await jsonFetch(
-        "/api/list?dir=" +
-          encodeURIComponent(normalizedDir) +
-          "&order=name&desc=0&num=" +
-          pageSize +
-          "&page=" +
-          page +
-          "&" +
-          baseQuery,
-      );
+      const data = await fetchOwnDirPage(normalizedDir, page);
       if (data.errno !== 0) {
-        if (page === 1) attempts.push("list dir=" + normalizedDir + " errno=" + data.errno + " " + compactJson(data));
+        if (page === 1) attempts.push("list dir=" + normalizedDir + " " + ownDirListFailureMessage(normalizedDir, data));
         debug.errno = data.errno;
         break;
       }
       const list = Array.isArray(data.list) ? data.list : [];
       results.push(...list);
       debug.hasMore = Boolean(data.has_more);
-      if (list.length < pageSize && !data.has_more) break;
+      if (list.length < OWN_NETDISK_DIR_LIST_PAGE_SIZE && !data.has_more) break;
     }
     debug.count = results.length;
     const directFiles = results.filter((entry) => !(entry?.isdir === 1 || entry?.isdir === true));
@@ -2439,8 +2486,9 @@ async function submitSavedDownload(
   expectedOwnershipCounts?: BaiduNetdiskShareDownloadOptions["expectedOwnershipCounts"],
   expectedPosterImages?: number,
   expectedAiProductionProofFiles?: number,
+  saveOptions: SaveShareOptions = {},
 ) {
-  const saved = await saveShareToOwnNetdisk(shareTarget, share);
+  const saved = await saveShareToOwnNetdisk(shareTarget, share, saveOptions);
   log(
     saved.shareStructure === "wrapped"
       ? "分享结构：最外层为剧名目录，直接转存或复用该目录"
@@ -2526,6 +2574,23 @@ async function submitSavedDownload(
       missingIndexes.length > 0 ||
       remoteVideos.duplicateIndexes.length > 0
     ) {
+      if (remoteVideos.duplicateIndexes.length > 0 && !saveOptions.isolatedRoot) {
+        log(
+          `检测到复用网盘目录存在重复剧集：${formatNumberRanges(remoteVideos.duplicateIndexes)}，` +
+            "改用干净的分享专属中转目录重新转存。",
+        );
+        return submitSavedDownload(
+          port,
+          shareTarget,
+          share,
+          downloadDir,
+          expectedEpisodeCount,
+          expectedOwnershipCounts,
+          expectedPosterImages,
+          expectedAiProductionProofFiles,
+          { isolatedRoot: true, isolatedRootUnique: true },
+        );
+      }
       const problemParts = [
         missingIndexes.length > 0 ? `缺失=${formatNumberRanges(missingIndexes)}` : "",
         unexpectedIndexes.length > 0 ? `超出=${formatNumberRanges(unexpectedIndexes)}` : "",

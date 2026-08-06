@@ -45,7 +45,7 @@ export async function waitForLogin(page: Page, options: MeituanCreationRuntimeOp
       return !location.href.includes("/new/login") || bodyText.includes("发布至合集");
     },
     undefined,
-    { timeout: 10 * 60 * 1000 },
+    { timeout: 0 },
   );
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
   log(options, "[meituan-drama] login completed");

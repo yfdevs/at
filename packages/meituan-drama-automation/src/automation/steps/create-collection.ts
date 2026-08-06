@@ -54,6 +54,28 @@ function normalizeOtherPlatformPremiereDateText(value?: string) {
   return parsed.format(otherPlatformPremiereDateFormat);
 }
 
+async function closeVisibleDatePicker(page: Page) {
+  const panel = page
+    .locator(
+      ".mtd-picker-panel:visible, " +
+        ".mtd-date-picker-panel:visible, " +
+        ".mtd-picker-popper:visible, " +
+        ".mtd-date-picker-popper:visible, " +
+        ".mtd-calendar:visible",
+    )
+    .last();
+
+  if (!(await panel.isVisible({ timeout: 500 }).catch(() => false))) {
+    return;
+  }
+
+  const confirmButton = panel.getByRole("button", { name: "确定", exact: true }).last();
+  if (await confirmButton.isVisible({ timeout: 500 }).catch(() => false)) {
+    await confirmButton.click({ timeout: 5_000 });
+    await panel.waitFor({ state: "hidden", timeout: 3_000 }).catch(() => undefined);
+  }
+}
+
 async function fillAndVerifyDateTextbox(options: {
   page: Page;
   textbox: Locator;
@@ -72,6 +94,8 @@ async function fillAndVerifyDateTextbox(options: {
       `美团${options.fieldLabel}填写结果不一致：接口值=${options.value}，页面值=${actualValue || "(空)"}`,
     );
   }
+
+  await closeVisibleDatePicker(options.page);
 }
 
 async function uploadCollectionCover(
@@ -120,13 +144,17 @@ async function uploadPremiereProof(
     "remote-premiere-proof",
     "premiere proof",
   );
-  const proofArea = await proofUploadContainer(page, "首发证明材料");
+  const proofLabel =
+    taskConfig.premiereStatus === "非美团首发"
+      ? "其他平台首发证明材料"
+      : "首发证明材料";
+  const proofArea = await proofUploadContainer(page, proofLabel);
   const proofInput = proofArea.locator(".label .mtd-upload-input").first();
 
   await scrollLocatorIntoView(page, proofArea);
   await proofInput.waitFor({ state: "attached", timeout: 30_000 });
   await proofInput.setInputFiles(proofPath, { timeout: 30_000 });
-  await waitUploadDone(page, "首发证明材料");
+  await waitUploadDone(page, proofLabel);
 }
 
 async function proofUploadContainer(page: Page, labelText: string) {
@@ -324,13 +352,22 @@ async function clickCopyrightAgreement(page: Page) {
     .locator("input[type='checkbox']")
     .first();
 
+  await closeVisibleDatePicker(page);
   await scrollLocatorIntoView(page, agreementTrigger);
 
   if (await checkbox.isChecked({ timeout: 1_000 }).catch(() => false)) {
     return;
   }
 
-  await agreementTrigger.click({ timeout: 30_000 });
+  if (await checkbox.count()) {
+    await checkbox.evaluate((node) => {
+      (node as HTMLInputElement).click();
+    });
+  } else {
+    await agreementTrigger.evaluate((node) => {
+      (node as HTMLElement).click();
+    });
+  }
   await page.waitForTimeout(100);
 
   if (

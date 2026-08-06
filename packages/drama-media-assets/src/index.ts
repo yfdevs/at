@@ -217,6 +217,7 @@ export async function listLocalOwnershipMaterials(options: {
   root: string;
   resourceName: string;
   rootIsResourceDir?: boolean;
+  deduplicateByContent?: boolean;
 }): Promise<LocalOwnershipMaterialSet> {
   const resourceDir = options.rootIsResourceDir ? options.root : playletDir(options.root, options.resourceName);
   const result: LocalOwnershipMaterialSet = [];
@@ -249,7 +250,9 @@ export async function listLocalOwnershipMaterials(options: {
     (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
     || left.name.localeCompare(right.name, "zh-CN", { numeric: true })
     || left.file.localeCompare(right.file));
-  return deduplicateImagesByContent(result);
+  return options.deduplicateByContent === false
+    ? result
+    : deduplicateImagesByContent(result);
 }
 
 export async function listLocalPosterImages(options: {

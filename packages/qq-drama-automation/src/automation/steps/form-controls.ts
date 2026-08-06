@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Page } from "playwright";
 import { log } from "../../shared/logger.js";
 import type { QqDramaRuntimeOptions, QqDramaTaskField, QqDramaTaskFile } from "../../shared/types.js";
@@ -178,6 +179,17 @@ export async function fillFieldByLabel(page: Page, field: QqDramaTaskField) {
     return;
   }
 
+  if (field.placeholder) {
+    const placeholderControl = page
+      .getByPlaceholder(field.placeholder, { exact: true })
+      .filter({ visible: true })
+      .nth(field.index);
+    if (await placeholderControl.count() > 0) {
+      await placeholderControl.fill(value, { timeout: 10_000 });
+      return;
+    }
+  }
+
   await exactLabel.fill(value, { timeout: 5_000 }).catch(async () => {
     const result = await page.evaluate(
       ({ targetLabel, targetValue, placeholder, index }) => {
@@ -268,7 +280,11 @@ async function markFileInputByLabel(page: Page, label: string) {
       document
         .querySelectorAll("[data-qq-drama-upload-target='true']")
         .forEach((element) => element.removeAttribute("data-qq-drama-upload-target"));
+      document
+        .querySelectorAll("[data-qq-drama-upload-field='true']")
+        .forEach((element) => element.removeAttribute("data-qq-drama-upload-field"));
       inputElement.setAttribute("data-qq-drama-upload-target", "true");
+      root?.setAttribute("data-qq-drama-upload-field", "true");
       return true;
     };
 
@@ -317,6 +333,10 @@ export async function uploadTaskFiles(
   page: Page,
   files: QqDramaTaskFile[],
   options: QqDramaRuntimeOptions,
+  uploadOptions: {
+    waitForVisibleFileNames?: boolean;
+    uiTimeoutMs?: number;
+  } = {},
 ) {
   if (files.length === 0) return;
 
@@ -336,10 +356,54 @@ export async function uploadTaskFiles(
 
   await markFileInputByLabel(page, target.label);
   const input = page.locator("input[data-qq-drama-upload-target='true']").first();
-  await input.setInputFiles(localFilePaths, { timeout: 60_000 });
-  await input.evaluate((element) => {
-    element.removeAttribute("data-qq-drama-upload-target");
-  }).catch(() => undefined);
+  try {
+    await input.setInputFiles(localFilePaths, { timeout: 60_000 });
+    if (uploadOptions.waitForVisibleFileNames) {
+      const field = page.locator("[data-qq-drama-upload-field='true']").first();
+      const fileNames = localFilePaths.map((filePath) => path.basename(filePath));
+      const timeoutMs = uploadOptions.uiTimeoutMs ?? 120_000;
+      const startedAt = Date.now();
+
+      log(options, `[qq-drama] waiting for upload UI confirmation: ${fileNames.join(" | ")}`);
+      while (Date.now() - startedAt < timeoutMs) {
+        const fieldText = await field.innerText().catch(() => "");
+        const normalizedText = fieldText.replace(/\s+/g, "");
+        const fieldHasAllFileNames = fileNames.every((fileName) =>
+          normalizedText.includes(fileName.replace(/\s+/g, ""))
+        );
+        const pageHasAllVisibleFileNames = (await Promise.all(
+          fileNames.map(async (fileName) =>
+            await page.getByText(fileName, { exact: false }).filter({ visible: true }).count() > 0
+          ),
+        )).every(Boolean);
+        if (fieldHasAllFileNames || pageHasAllVisibleFileNames) {
+          log(options, `[qq-drama] upload UI confirmed: ${fileNames.join(" | ")}`);
+          return;
+        }
+
+        const messageTexts = await qqPageMessageErrorLocator(page).allInnerTexts().catch(() => []);
+        const uploadError = messageTexts
+          .map((text) => text.replace(/\s+/g, " ").trim())
+          .find((text) => /上传失败|文件过大|格式不支持|文件格式|重新上传/.test(text));
+        if (uploadError) {
+          throw new Error(`QQ_DRAMA_UPLOAD_FAILED: label=${target.label}; message=${uploadError}`);
+        }
+        await page.waitForTimeout(500);
+      }
+
+      throw new Error(
+        `QQ_DRAMA_UPLOAD_UI_TIMEOUT: label=${target.label}; `
+          + `等待${Math.round(timeoutMs / 1000)}秒仍未显示文件名=${fileNames.join("|")}`,
+      );
+    }
+  } finally {
+    await page.locator("[data-qq-drama-upload-target='true']").evaluateAll((elements) => {
+      elements.forEach((element) => element.removeAttribute("data-qq-drama-upload-target"));
+    }).catch(() => undefined);
+    await page.locator("[data-qq-drama-upload-field='true']").evaluateAll((elements) => {
+      elements.forEach((element) => element.removeAttribute("data-qq-drama-upload-field"));
+    }).catch(() => undefined);
+  }
 }
 
 export async function uploadLocalFilesByTarget(page: Page, options: {

@@ -217,6 +217,7 @@ async function listCurrentOwnershipMaterials(
   localPaths: string[],
   targetRoot: string,
   resourceName: string,
+  deduplicateByContent = true,
 ): Promise<LocalOwnershipMaterialSet> {
   const downloaded: LocalOwnershipMaterialSet = [];
   const seen = new Set<string>();
@@ -229,6 +230,7 @@ async function listCurrentOwnershipMaterials(
       root: localPath,
       resourceName,
       rootIsResourceDir: true,
+      deduplicateByContent,
     });
     downloaded.push(...materials);
   }
@@ -244,7 +246,11 @@ async function listCurrentOwnershipMaterials(
     ? externalDownloaded
     : downloaded.length > 0
       ? downloaded
-    : await listLocalOwnershipMaterials({ root: targetRoot, resourceName });
+    : await listLocalOwnershipMaterials({
+        root: targetRoot,
+        resourceName,
+        deduplicateByContent,
+      });
   return [...new Map(
     combined.map((file) => [path.resolve(file.file).toLowerCase(), file]),
   ).values()];
@@ -478,6 +484,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.targetRoot,
       options.resourceName,
     );
+    let rawOwnershipFiles = await listCurrentOwnershipMaterials(
+      localPaths,
+      options.targetRoot,
+      options.resourceName,
+      false,
+    );
     let ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
     let posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
     let postersComplete = posters.length >= options.requiredPosterImages;
@@ -510,7 +522,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.requiredAiProductionProofFiles,
       options.expectedAiProductionProofFiles ?? 0,
     );
-    const ownershipDirectoryComplete = ownership.length >= expectedOwnershipImages;
+    const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages;
     const posterDownloadComplete = posters.length >= expectedPosterImages;
     const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
     if (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && aiProductionProofsComplete && aiProductionProofDownloadComplete && nextStable.count >= options.stableCompletePolls) {
@@ -553,6 +565,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.targetRoot,
           options.resourceName,
         );
+        rawOwnershipFiles = await listCurrentOwnershipMaterials(
+          localPaths,
+          options.targetRoot,
+          options.resourceName,
+          false,
+        );
         ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
         posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
         postersComplete = posters.length >= options.requiredPosterImages;
@@ -592,6 +610,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
                     : "")
                 : "") +
               ` 权属图片=${ownership.length}/${options.ownershipRequirements.minimumImages ?? 0}` +
+              ` 权属原始文件=${rawOwnershipFiles.length}/${expectedOwnershipImages}` +
               ` 海报封面=${posters.length}/${options.requiredPosterImages}` +
               ` AI制作证明=${aiProductionProofs.length}/${options.requiredAiProductionProofFiles}` +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
@@ -600,7 +619,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           lastProgressLogAt = Date.now();
         }
 
-        const ownershipDirectoryComplete = ownership.length >= expectedOwnershipImages;
+        const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages;
         const posterDownloadComplete = posters.length >= expectedPosterImages;
         const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
         if (

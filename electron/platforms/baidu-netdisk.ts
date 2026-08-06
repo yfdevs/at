@@ -320,28 +320,56 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
     return;
   }
 
-  try {
-    const { controlBaiduNetdiskDownloadTask } = await importBaiduNetdiskDownloadRuntimePackage();
-    await runBaiduCdpOperationExclusive(`清理百度下载任务：${options.targetName}`, () =>
-      controlBaiduNetdiskDownloadTask({
-        port: options.port,
-        targetName: options.targetName,
-        action: "delete",
-        expectedDownloadRoot: options.downloadDir,
-      }),
-    );
-    console.log(`[baidu] 已删除百度客户端下载任务：${options.targetName}`);
-  } catch (error) {
-    console.warn(`[baidu] 删除百度客户端下载任务失败或任务已不存在：${readableError(error)}`);
+  const { controlBaiduNetdiskDownloadTask } = await importBaiduNetdiskDownloadRuntimePackage();
+  const downloadTaskNames = [
+    options.targetName,
+    "视频",
+    "权属",
+    "工程",
+    "封面",
+    "海报",
+    "AI制作证明",
+  ];
+  let cleanupAttemptCount = 0;
+  for (const targetName of downloadTaskNames) {
+    try {
+      await runBaiduCdpOperationExclusive(`清理百度下载任务：${targetName}`, () =>
+        controlBaiduNetdiskDownloadTask({
+          port: options.port,
+          targetName,
+          action: "delete",
+          expectedDownloadRoot: options.downloadDir,
+        }),
+      );
+      cleanupAttemptCount += 1;
+    } catch {
+      // A material category may not have created its own native download task.
+    }
   }
+  console.log(
+    `[baidu] 百度客户端下载任务已尝试清理：${options.targetName}，匹配调用=${cleanupAttemptCount}`,
+  );
 
   try {
-    await rm(options.downloadDir, {
-      recursive: true,
-      force: true,
-      maxRetries: 3,
-      retryDelay: 500,
-    });
+    let timeout: ReturnType<typeof setTimeout> | undefined;
+    try {
+      await Promise.race([
+        rm(options.downloadDir, {
+          recursive: true,
+          force: true,
+          maxRetries: 3,
+          retryDelay: 500,
+        }),
+        new Promise<never>((_resolve, reject) => {
+          timeout = setTimeout(
+            () => reject(new Error("清理临时下载目录等待超过 30 秒")),
+            30_000,
+          );
+        }),
+      ]);
+    } finally {
+      if (timeout) clearTimeout(timeout);
+    }
     console.log(`[baidu] 已清理临时下载目录：${options.downloadDir}`);
   } catch (error) {
     console.warn(`[baidu] 清理临时下载目录失败：${options.downloadDir}；${readableError(error)}`);
@@ -792,10 +820,14 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     });
     throw Object.assign(new Error(message), { cause: error });
   } finally {
-    await cleanupBaiduNetdiskDownloadArtifacts({
+    void cleanupBaiduNetdiskDownloadArtifacts({
       downloadDir: uniqueDownloadDir,
       targetName: request.resourceName,
       port,
+    }).catch((error) => {
+      console.warn(
+        `[baidu] 后台清理下载临时资源失败：${request.resourceName}；${readableError(error)}`,
+      );
     });
   }
 }
@@ -804,6 +836,7 @@ function readableError(error: unknown) {
   const message = error instanceof Error ? error.message : String(error);
   const normalizedMessage = message.replace(/^(Error:\s*)+/g, "");
   const transferJsonMatch = normalizedMessage.match(/保存分享到网盘失败：(\{.*\})/);
+  const ownListJsonMatch = normalizedMessage.match(/读取我的网盘目录失败：([^；]+)；(?:.*?；)?(\{.*\})/);
 
   if (transferJsonMatch) {
     try {
@@ -825,6 +858,33 @@ function readableError(error: unknown) {
       }
 
       return `保存分享到网盘失败：${apiMessage || "百度接口返回异常"}；errno=${data.errno ?? "-"}${
+        data.request_id ? `；request_id=${data.request_id}` : ""
+      }`;
+    } catch {
+      return normalizedMessage;
+    }
+  }
+
+  if (ownListJsonMatch) {
+    try {
+      const dir = ownListJsonMatch[1];
+      const data = JSON.parse(ownListJsonMatch[2]) as {
+        errno?: number;
+        errmsg?: string;
+        show_msg?: string;
+        message?: string;
+        request_id?: string | number;
+      };
+      const apiMessage = data.show_msg || data.errmsg || data.message || "";
+      if (data.errno === -6 || apiMessage.includes("账户已过期") || apiMessage.includes("重新登陆")) {
+        return "百度网盘账号登录已过期，请在百度网盘客户端重新登录后再下载。";
+      }
+      if (data.errno === 1 || data.errno === 4) {
+        return `读取我的网盘目录失败：${dir}；百度接口临时异常或登录态不可用，请确认客户端已登录并重启为 CDP 模式后重试；errno=${data.errno}${
+          data.request_id ? `；request_id=${data.request_id}` : ""
+        }`;
+      }
+      return `读取我的网盘目录失败：${dir}；${apiMessage || "百度接口返回异常"}；errno=${data.errno ?? "-"}${
         data.request_id ? `；request_id=${data.request_id}` : ""
       }`;
     } catch {

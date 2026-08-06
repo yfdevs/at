@@ -1,6 +1,6 @@
 import path from "node:path";
 import { existsSync } from "node:fs";
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import type { Locator, Page } from "playwright";
 import { resolveRunDataPath } from "../../shared/config.js";
 import { getWechatVideoRuntimeSettings } from "../../shared/runtime-settings.js";
@@ -11,6 +11,7 @@ const remoteFilePromises = new Map<string, Promise<string>>();
 const defaultRemoteFileDirectoryName = "ungrouped";
 const remoteFileDownloadTimeoutMs = readRemoteFileDownloadTimeoutMs();
 const invalidRemoteDirectoryNameChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*']);
+const nonVideoUploadFileMaxBytes = 10 * 1024 * 1024;
 
 function readRemoteFileDownloadTimeoutMs(): number {
   return secondsSettingToMs(getWechatVideoRuntimeSettings().remoteFileDownloadTimeoutSeconds, 120);
@@ -23,6 +24,33 @@ function isRemoteFile(filePath: string): boolean {
 function isProjectAssetsPath(filePath: string): boolean {
   const normalizedPath = filePath.replace(/\\/g, "/").replace(/^\.\//, "");
   return !path.isAbsolute(filePath) && normalizedPath.startsWith("assets/");
+}
+
+function isVideoUploadLabel(label: string): boolean {
+  return /视频|video/i.test(label);
+}
+
+function isVideoFile(filePath: string): boolean {
+  return /\.(?:mp4|mov|m4v|avi|mkv|flv|wmv|webm)$/i.test(filePath);
+}
+
+function formatMegabytes(bytes: number): string {
+  return `${(bytes / 1024 / 1024).toFixed(2)}MB`;
+}
+
+async function assertNonVideoUploadFilesWithinSizeLimit(files: string[], label: string): Promise<void> {
+  if (isVideoUploadLabel(label)) return;
+
+  for (const file of files) {
+    if (isVideoFile(file)) continue;
+    const fileStat = await stat(file);
+    if (fileStat.size <= nonVideoUploadFileMaxBytes) continue;
+
+    throw new Error(
+      `[upload-file-invalid] ${label}: 单个文件不能超过10MB；` +
+        `${path.basename(file)}=${formatMegabytes(fileStat.size)}`,
+    );
+  }
 }
 
 function remoteFileExtension(url: URL, contentType: string | null): string {
@@ -140,6 +168,17 @@ interface UploadUiState {
   previewCount: number;
   busyCount: number;
   inputFileCount: number;
+}
+
+class UploadUiTimeoutError extends Error {
+  constructor(
+    message: string,
+    readonly latest: UploadUiState,
+    readonly expectedFileCount: number,
+  ) {
+    super(message);
+    this.name = "UploadUiTimeoutError";
+  }
 }
 
 const uploadPreviewSelector = [
@@ -263,10 +302,20 @@ async function setInputFilesAndWaitForUi(
     await container.page().waitForTimeout(500);
   }
 
-  throw new Error(
+  throw new UploadUiTimeoutError(
     `[upload-failed] ${label}: UI在${Math.round(uiTimeout / 1000)}秒内未确认上传完成；` +
       `selected=${latest.inputFileCount}/${files.length} previews=${latest.previewCount} busy=${latest.busyCount}`,
+    latest,
+    files.length,
   );
+}
+
+function shouldRetryNoopUpload(error: unknown): boolean {
+  return error instanceof UploadUiTimeoutError
+    && error.latest.inputFileCount === 0
+    && error.latest.previewCount === 0
+    && error.latest.busyCount === 0
+    && error.expectedFileCount > 0;
 }
 
 export async function waitForUploadedFiles(
@@ -357,6 +406,7 @@ export async function uploadBySelector(
     console.warn(`[skip] ${label}: no existing file`);
     return;
   }
+  await assertNonVideoUploadFilesWithinSizeLimit(files, label);
 
   const locator = page.locator(selector).nth(index);
   if (await locator.count() === 0) {
@@ -386,12 +436,14 @@ export async function uploadInGroup(
   resolveFromRoot: (filePath: string) => string,
   remoteDirectoryName?: string,
   uiTimeout = 60000,
+  uiRetryAttempts = 2,
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
     console.warn(`[skip] ${label}: no existing file`);
     return;
   }
+  await assertNonVideoUploadFilesWithinSizeLimit(files, label);
 
   const input = group.locator('input[type="file"]').first();
   if (await input.count() === 0) {
@@ -399,8 +451,27 @@ export async function uploadInGroup(
     return;
   }
 
-  await setInputFilesAndWaitForUi(group, input, files, label, 10000, uiTimeout);
-  console.log(`[upload] ${label}: ${files.length} file(s)`);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= uiRetryAttempts + 1; attempt += 1) {
+    const attemptInput = group.locator('input[type="file"]').first();
+    try {
+      await attemptInput.waitFor({ state: "attached", timeout: 10000 });
+      await group.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
+      await setInputFilesAndWaitForUi(group, attemptInput, files, label, 10000, uiTimeout);
+      console.log(`[upload] ${label}: ${files.length} file(s)`);
+      return;
+    } catch (error) {
+      lastError = error;
+      if (!shouldRetryNoopUpload(error) || attempt > uiRetryAttempts) break;
+      console.warn(
+        `[upload-retry] ${label}: 页面未接收到文件选择，准备第 ${attempt + 1}/${uiRetryAttempts + 1} 次重新选择文件`,
+      );
+      await attemptInput.setInputFiles([], { timeout: 5000 }).catch(() => undefined);
+      await group.page().waitForTimeout(1200);
+    }
+  }
+
+  throw lastError;
 }
 
 export async function setInputFilesByLocator(
@@ -410,6 +481,7 @@ export async function setInputFilesByLocator(
   timeout = 60000,
 ): Promise<void> {
   if (!files.length) return;
+  await assertNonVideoUploadFilesWithinSizeLimit(files, label);
 
   if (await locator.count() === 0) {
     throw new Error(`[upload-failed] ${label}: input[type=file] not found`);

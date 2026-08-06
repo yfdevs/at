@@ -79,11 +79,10 @@ async function ensureBaiduNetdiskResourceReady(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
-export async function runPublishTask(
+async function openPublishPage(
   context: BrowserContext,
   page: Page,
   options: MeituanCreationRuntimeOptions,
-  task: ClaimedMeituanDramaTask | null,
 ) {
   log(options, "[meituan-drama] opening publish page");
   await page.goto(MEITUAN_CREATION_PUBLISH_VIDEO_URL, {
@@ -102,8 +101,16 @@ export async function runPublishTask(
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
   await page.getByText("发布至合集").waitFor({ state: "visible", timeout: 60_000 });
   await saveCredentialState(context, options);
+}
 
+export async function runPublishTask(
+  context: BrowserContext,
+  page: Page,
+  options: MeituanCreationRuntimeOptions,
+  task: ClaimedMeituanDramaTask | null,
+) {
   if (!task) {
+    await openPublishPage(context, page, options);
     log(options, "[meituan-drama] claimed task not provided, browser is ready");
     return;
   }
@@ -123,6 +130,8 @@ export async function runPublishTask(
   const copyrightProofMaterials = await prepareMeituanCopyrightProofMaterials(task, options);
 
   try {
+    await openPublishPage(context, page, options);
+    log(options, "[meituan-drama] clicking publish-to-collection entry");
     await clickWhenReady(page, page.getByText("发布至合集"));
     await selectPublishTargetStep(page, taskConfig, options, copyrightProofMaterials.files);
     await uploadEpisodeVideosStep(page, task, options);

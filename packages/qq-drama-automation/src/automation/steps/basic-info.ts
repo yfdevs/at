@@ -62,6 +62,10 @@ async function uploadFilesIfPresent(
   page: Page,
   options: QqDramaRuntimeOptions,
   files: QqDramaTaskFile[],
+  uploadOptions: {
+    waitForVisibleFileNames?: boolean;
+    uiTimeoutMs?: number;
+  } = {},
 ) {
   if (files.length === 0) return false;
 
@@ -69,7 +73,7 @@ async function uploadFilesIfPresent(
     options,
     `[qq-drama] uploading ${files.length} file(s): ${files[0].selector ?? files[0].label ?? "unknown"}`,
   );
-  await uploadTaskFiles(page, files, options);
+  await uploadTaskFiles(page, files, options, uploadOptions);
   return true;
 }
 
@@ -254,6 +258,7 @@ export async function fillBasicInfoStep(
       );
       return file ? [file] : [];
     }),
+    { waitForVisibleFileNames: true, uiTimeoutMs: 120_000 },
   );
 
   // 版权信息

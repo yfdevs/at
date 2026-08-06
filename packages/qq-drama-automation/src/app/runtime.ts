@@ -371,7 +371,20 @@ export async function startQqDramaRuntime(
         });
 
         if (task) {
-          await runTask(activePage, activeContext, task, options, setLastTask);
+          const taskPage = await activeContext.newPage();
+          log(
+            options,
+            `[qq-drama] opened dedicated task page: accountTaskId=${task.accountTaskId}`,
+          );
+          try {
+            await runTask(taskPage, activeContext, task, options, setLastTask);
+          } finally {
+            await taskPage.close().catch(() => undefined);
+            log(
+              options,
+              `[qq-drama] closed dedicated task page: accountTaskId=${task.accountTaskId}`,
+            );
+          }
         } else {
           log(options, "[qq-drama] no claimable task");
         }
@@ -399,7 +412,8 @@ export async function startQqDramaRuntime(
     stopTaskLoopWait();
   });
 
-  page = context.pages()[0] ?? (await context.newPage());
+  // 不复用 Chromium 恢复出来的旧标签；旧标签可能仍停留在上一任务的提交成功页。
+  page = await context.newPage();
   taskLoopPromise = (async () => {
     await openQqDramaAddPage(page!, context!, options).catch((error) => {
       errorLog(options, `[qq-drama] failed to open add page: ${errorMessage(error)}`);

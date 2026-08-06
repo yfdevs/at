@@ -19,6 +19,9 @@ export const OWN_NETDISK_ATTEMPT_LOG_LIMIT = 12;
 // 扫描“我的网盘”目录列表时最多翻页次数。
 export const OWN_NETDISK_DIR_LIST_MAX_PAGES = 30;
 
+// 百度客户端内置 /api/list 对较大的 num 偶发返回 errno=1，保持接近网页默认页量。
+export const OWN_NETDISK_DIR_LIST_PAGE_SIZE = 100;
+
 // 远程目录详情日志中最多展示的子项数量。
 export const REMOTE_DIR_ENTRY_SAMPLE_LIMIT = 10;
 
