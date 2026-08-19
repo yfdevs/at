@@ -235,7 +235,13 @@ async function waitUploadCount(
 }
 
 async function confirmCreateCollectionDrawer(page: Page) {
-  await page.getByRole("button", { name: "确定" }).click({ timeout: 30_000 });
+  // The Meituan drawer currently renders a duplicated, nested footer. Selecting the
+  // last visible footer targets the innermost footer and avoids matching both copies
+  // of the confirm button (or an unrelated confirm button in another popover).
+  const footer = page.locator(".mtd-drawer-footer:visible").last();
+  const confirmButton = footer.getByRole("button", { name: "确定", exact: true });
+
+  await confirmButton.click({ timeout: 30_000 });
   await page.waitForTimeout(300);
 
   const errorTips = page.locator(".mtd-form-item-error-tip:visible");
