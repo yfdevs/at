@@ -16,6 +16,7 @@ const emptyConfig: QqDramaConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
+  episodeUploadWaitTimeoutMinutes: "120",
   episodeUploadFailedRetryAttempts: "3",
   headless: "false",
   operationDelaySeconds: "0",
@@ -56,6 +57,14 @@ const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
         type: "number",
         suffix: "次",
         min: 0,
+      },
+      {
+        key: "episodeUploadWaitTimeoutMinutes",
+        label: "上传等待时间",
+        description: "批量视频开始上传后，等待全部剧集完成的最长时间。",
+        type: "number",
+        suffix: "分钟",
+        min: 1,
       },
       {
         key: "episodeUploadFailedRetryAttempts",

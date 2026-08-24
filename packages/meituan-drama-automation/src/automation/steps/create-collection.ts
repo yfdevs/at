@@ -27,6 +27,15 @@ const expectedPremiereTimeInputFormats = [
   "YYYY-MM-DDTHH:mm:ss",
   "YYYY-MM-DDTHH:mm",
 ];
+const visibleDrawerSelector =
+  ".mtd-drawer:visible, .mtd-drawer-wrapper:visible, .mtd-drawer-container:visible";
+const coverConfirmButtonTextPattern = /^\s*(?:确定|确认|完成|保存)\s*$/;
+const coverDialogWaitMs = 15_000;
+
+type CollectionCoverControl = {
+  container: Locator;
+  input: Locator;
+};
 
 function normalizeExpectedPremiereTimeText(value?: string) {
   if (!value?.trim()) {
@@ -102,7 +111,7 @@ async function uploadCollectionCover(
   page: Page,
   taskConfig: MeituanCreationTaskConfig,
   options: MeituanCreationRuntimeOptions,
-) {
+): Promise<CollectionCoverControl> {
   const coverPath =
     taskConfig.collectionCoverFile ??
     (taskConfig.collectionCoverUrl
@@ -111,11 +120,15 @@ async function uploadCollectionCover(
   if (!coverPath) {
     throw new Error("MEITUAN_COLLECTION_COVER_REQUIRED");
   }
-  const uploadArea = page.getByRole("button", { name: "上传封面" }).locator("..");
-  const coverInput = uploadArea.locator('input[type="file"]');
+  const uploadButton = page.getByRole("button", { name: "上传封面", exact: true }).last();
+  await uploadButton.waitFor({ state: "visible", timeout: 30_000 });
+  const uploadArea = uploadButton.locator("..");
+  const coverInput = uploadArea.locator('input[type="file"]:not([disabled])').first();
 
   await scrollLocatorIntoView(page, uploadArea);
+  await coverInput.waitFor({ state: "attached", timeout: 30_000 });
   await coverInput.setInputFiles(coverPath, { timeout: 30_000 });
+  return { container: uploadArea, input: coverInput };
 }
 
 async function uploadCopyrightProof(page: Page, proofPaths: string[]) {
@@ -238,38 +251,127 @@ async function confirmCreateCollectionDrawer(page: Page) {
   // The Meituan drawer currently renders a duplicated, nested footer. Selecting the
   // last visible footer targets the innermost footer and avoids matching both copies
   // of the confirm button (or an unrelated confirm button in another popover).
-  const footer = page.locator(".mtd-drawer-footer:visible").last();
+  const visibleDrawers = page.locator(visibleDrawerSelector);
+  const drawer = visibleDrawers.last();
+  await drawer.waitFor({ state: "visible", timeout: 30_000 });
+  const footer = drawer.locator(".mtd-drawer-footer:visible").last();
   const confirmButton = footer.getByRole("button", { name: "确定", exact: true });
 
   await confirmButton.click({ timeout: 30_000 });
-  await page.waitForTimeout(300);
+  const deadline = Date.now() + 60_000;
+  while (Date.now() < deadline) {
+    const message = await visibleMtdMessageError(page);
+    if (message) {
+      throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${message}`);
+    }
 
-  const errorTips = page.locator(".mtd-form-item-error-tip:visible, .err-tips:visible");
-  const errorTexts = (await errorTips.allInnerTexts().catch(() => []))
-    .map((text) => text.trim())
-    .filter(Boolean);
-  if (errorTexts.length > 0 || (await errorTips.count().catch(() => 0)) > 0) {
-    throw new Error(
-      `MEITUAN_CREATE_COLLECTION_FORM_INVALID: ${errorTexts.join("; ") || "visible form error"}`,
-    );
+    const errorTips = page.locator(".mtd-form-item-error-tip:visible, .err-tips:visible");
+    const errorTexts = (await errorTips.allInnerTexts().catch(() => []))
+      .map((text) => text.replace(/\s+/g, " ").trim())
+      .filter(Boolean);
+    if (errorTexts.length > 0 || (await errorTips.count().catch(() => 0)) > 0) {
+      throw new Error(
+        `MEITUAN_CREATE_COLLECTION_FORM_INVALID: ` +
+          `${errorTexts.join("; ") || "visible form error"}`,
+      );
+    }
+
+    if ((await visibleDrawers.count()) === 0) {
+      const collectionTextbox = page.getByRole("textbox", { name: "选择或创建合集" });
+      await collectionTextbox.waitFor({ state: "visible", timeout: 30_000 });
+      return;
+    }
+
+    await page.waitForTimeout(250);
   }
 
-  await page
-    .locator(".mtd-drawer:visible, .mtd-drawer-wrapper:visible, .mtd-drawer-container:visible")
-    .last()
-    .waitFor({ state: "hidden", timeout: 60_000 })
-    .catch(() => undefined);
+  const drawerTexts = (await visibleDrawers.allInnerTexts().catch(() => []))
+    .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 300))
+    .filter(Boolean);
+  throw new Error(
+    `MEITUAN_CREATE_COLLECTION_DRAWER_NOT_CLOSED: ` +
+      `visibleDrawers=${await visibleDrawers.count().catch(() => -1)} ` +
+      `text=${drawerTexts.join(" | ") || "(none)"}`,
+  );
 }
 
-async function confirmCoverUploadDialog(page: Page) {
-  const confirmButton = page
+async function confirmCoverUploadDialog(
+  page: Page,
+  coverControl: CollectionCoverControl,
+  options: MeituanCreationRuntimeOptions,
+) {
+  const { container, input } = coverControl;
+  const confirmButtonInModal = page
+    .locator(".mtd-modal:visible")
     .locator("button")
-    .filter({ hasText: /^确定$/ })
+    .filter({ hasText: coverConfirmButtonTextPattern })
+    .filter({ visible: true })
     .last();
+  const deadline = Date.now() + coverDialogWaitMs;
 
-  await confirmButton.waitFor({ state: "visible", timeout: 60_000 });
-  await confirmButton.click({ timeout: 30_000 });
-  await confirmButton.waitFor({ state: "hidden", timeout: 30_000 }).catch(() => undefined);
+  while (Date.now() < deadline) {
+    const message = await visibleMtdMessageError(page);
+    if (message) {
+      throw new Error(`MEITUAN_COLLECTION_COVER_UPLOAD_FAILED: ${message}`);
+    }
+
+    if (await confirmButtonInModal.isVisible({ timeout: 250 }).catch(() => false)) {
+      const modal = confirmButtonInModal.locator("xpath=ancestor::*[contains(@class, 'mtd-modal')][1]");
+      await confirmButtonInModal.click({ timeout: 30_000 });
+      await modal.waitFor({ state: "hidden", timeout: 30_000 }).catch(async (error) => {
+        const text = (await modal.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+        throw Object.assign(
+          new Error(`MEITUAN_COLLECTION_COVER_DIALOG_NOT_CLOSED: ${text || "visible modal"}`),
+          { cause: error },
+        );
+      });
+
+      const uploadError = await visibleMtdMessageError(page);
+      if (uploadError) {
+        throw new Error(`MEITUAN_COLLECTION_COVER_UPLOAD_FAILED: ${uploadError}`);
+      }
+      return;
+    }
+
+    // Some accounts no longer open the crop dialog when the supplied image already
+    // satisfies the cover ratio. In that branch the upload control changes directly
+    // to an image preview. Treat that as the authoritative completion signal.
+    const preview = container.locator("img:visible, .mtd-upload-list-item:visible").first();
+    if (await preview.isVisible({ timeout: 250 }).catch(() => false)) {
+      log(options, "[meituan-drama] collection cover accepted without crop dialog");
+      return;
+    }
+
+    await page.waitForTimeout(250);
+  }
+
+  const visibleModalTexts = (await page.locator(".mtd-modal:visible").allInnerTexts().catch(() => []))
+    .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 300))
+    .filter(Boolean);
+  const visibleButtonTexts = (await page.locator("button:visible").allInnerTexts().catch(() => []))
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  const assignedFileCount = await input
+    .evaluate((element: HTMLInputElement) => element.files?.length ?? 0)
+    .catch(() => -1);
+
+  // File assignment is retained by the current no-dialog uploader even before its
+  // preview finishes decoding. Do not turn that supported branch into a false
+  // 60-second timeout; the drawer's final validation remains the safety net.
+  if (assignedFileCount > 0 && visibleModalTexts.length === 0) {
+    log(
+      options,
+      `[meituan-drama] collection cover input accepted ${assignedFileCount} file(s) ` +
+        `without a confirmation dialog`,
+    );
+    return;
+  }
+
+  throw new Error(
+    `MEITUAN_COLLECTION_COVER_DIALOG_NOT_READY: assignedFiles=${assignedFileCount} ` +
+      `visibleModals=${visibleModalTexts.join(" | ") || "(none)"} ` +
+      `visibleButtons=${visibleButtonTexts.join(" | ") || "(none)"}`,
+  );
 }
 
 async function fillCollectionMetadata(
@@ -467,8 +569,8 @@ async function fillCreateCollectionDrawerFields(
   await scrollLocatorIntoView(page, titleTextbox);
   await titleTextbox.fill(taskConfig.collectionTitle, { timeout: 30_000 });
 
-  await uploadCollectionCover(page, taskConfig, options);
-  await confirmCoverUploadDialog(page);
+  const coverControl = await uploadCollectionCover(page, taskConfig, options);
+  await confirmCoverUploadDialog(page, coverControl, options);
   await fillCollectionMetadata(page, taskConfig, options);
   log(options, `[meituan-drama] uploading copyright proof: files=${copyrightProofFiles.length}`);
   await uploadCopyrightProof(page, copyrightProofFiles);

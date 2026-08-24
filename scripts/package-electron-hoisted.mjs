@@ -1,5 +1,5 @@
 import { spawn } from "node:child_process";
-import { access, cp, mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
+import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
@@ -95,6 +95,10 @@ function sourceFfmpegPath() {
   return path.join(rootDir, "node_modules", "ffmpeg-static", ffmpegExecutableName());
 }
 
+function cachedFfmpegPath() {
+  return path.join(rootDir, ".cache", "ffmpeg-static", ffmpegExecutableName());
+}
+
 function stagingFfmpegPath() {
   return path.join(stagingDir, "node_modules", "ffmpeg-static", ffmpegExecutableName());
 }
@@ -109,10 +113,60 @@ async function validateFfmpegExecutable(filePath, label) {
   console.log(`Validated ${label}: ${filePath} (${size} bytes).`);
 }
 
-async function stageValidatedFfmpeg() {
-  const sourceFile = sourceFfmpegPath();
+async function previousPackagedFfmpegPaths() {
+  const releaseDir = path.join(rootDir, "release");
+  const releases = await readdir(releaseDir, { withFileTypes: true }).catch(() => []);
+  return releases
+    .filter((entry) => entry.isDirectory())
+    .map((entry) => entry.name)
+    .sort((left, right) => right.localeCompare(left, undefined, { numeric: true }))
+    .map((version) => path.join(
+      releaseDir,
+      version,
+      "win-unpacked",
+      "resources",
+      "app.asar.unpacked",
+      "node_modules",
+      "ffmpeg-static",
+      ffmpegExecutableName(),
+    ));
+}
+
+async function resolveValidatedFfmpegSource() {
+  const candidates = [
+    cachedFfmpegPath(),
+    sourceFfmpegPath(),
+    ...await previousPackagedFfmpegPaths(),
+  ];
+  const failures = [];
+
+  for (const candidate of candidates) {
+    try {
+      await validateFfmpegExecutable(candidate, "FFmpeg candidate");
+      return candidate;
+    } catch (error) {
+      failures.push(`${candidate}: ${error instanceof Error ? error.message : String(error)}`);
+    }
+  }
+
+  throw new Error(
+    "No valid local FFmpeg executable is available. Reinstall ffmpeg-static once on a " +
+      `network that can reach its binary host. Checked:\n${failures.join("\n")}`,
+  );
+}
+
+async function cacheValidatedFfmpeg(sourceFile) {
+  const cacheFile = cachedFfmpegPath();
+  if (path.resolve(sourceFile) !== path.resolve(cacheFile)) {
+    await mkdir(path.dirname(cacheFile), { recursive: true });
+    await cp(sourceFile, cacheFile, { force: true });
+  }
+  await validateFfmpegExecutable(cacheFile, "cached FFmpeg");
+  return cacheFile;
+}
+
+async function stageValidatedFfmpeg(sourceFile) {
   const stagingFile = stagingFfmpegPath();
-  await validateFfmpegExecutable(sourceFile, "source FFmpeg");
   await cp(sourceFile, stagingFile, { force: true });
   await validateFfmpegExecutable(stagingFile, "staged FFmpeg");
 }
@@ -261,6 +315,11 @@ async function copyBuildInputs() {
 
 async function main() {
   await ensurePlaywrightBrowserInstalled();
+  // ffmpeg-static normally downloads its binary from GitHub during every clean
+  // install. Reuse a validated workspace/cache/previous-package binary through its
+  // supported FFMPEG_BIN override, then copy that exact file into the new package.
+  // This keeps the isolated hoisted install deterministic on restricted networks.
+  const sourceFfmpeg = await cacheValidatedFfmpeg(await resolveValidatedFfmpegSource());
   await copyBuildInputs();
   await Promise.all([
     writePackageJson(),
@@ -281,12 +340,13 @@ async function main() {
       npm_config_target: target,
       npm_config_disturl: "https://electronjs.org/headers",
       npm_config_arch: process.argv.includes("--arm64") ? "arm64" : "x64",
+      FFMPEG_BIN: sourceFfmpeg,
     },
   });
 
   await Promise.all([
     validatePackagedPlaywrightInputs(),
-    stageValidatedFfmpeg(),
+    stageValidatedFfmpeg(sourceFfmpeg),
   ]);
   await run("pnpm", [
     "exec",

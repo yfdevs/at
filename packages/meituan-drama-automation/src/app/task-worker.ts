@@ -7,7 +7,7 @@ import {
   type MeituanTaskReport,
 } from "../api/task.js";
 import { runPublishTask } from "../automation/publish-runner.js";
-import { log } from "../automation/browser-session.js";
+import { log, saveTaskFailureDiagnostics } from "../automation/browser-session.js";
 import type {
   MeituanCreationAccount,
   MeituanCreationRuntimeOptions,
@@ -26,8 +26,9 @@ function errorMessage(error: unknown) {
 }
 
 function reportableErrorMessage(error: unknown) {
+  const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
   const sanitizedMessage = errorMessage(error)
-    .replace(/\u001B\[[0-?]*[ -/]*[@-~]/g, "")
+    .replace(ansiEscapePattern, "")
     .replace(/\r\n/g, "\n")
     .trim();
   const locatorDescription = sanitizedMessage
@@ -240,15 +241,18 @@ export async function runMeituanAccountTaskWorker(options: {
       } catch (error) {
         const message = reportableErrorMessage(error);
         const failStage = taskNormalized ? classifyFailStage(error) : "OTHER";
+        const diagnosticDir = await saveTaskFailureDiagnostics({
+          page: taskPage,
+          runtimeOptions,
+          taskId: claimed.accountTaskId,
+          error,
+        }).catch(() => null);
         log(
           runtimeOptions,
           `[meituan-drama] task failed: accountTaskId=${claimed.accountTaskId} ` +
-            `failStage=${failStage} error=${message}`,
+            `failStage=${failStage} error=${message} ` +
+            `diagnostics=${diagnosticDir ?? "(unavailable)"}`,
         );
-
-        //
-        // oxlint-disable-next-line no-debugger
-        debugger;
 
         await reportWithRetry(
           runtimeOptions,

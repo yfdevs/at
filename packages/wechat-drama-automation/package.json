@@ -28,7 +28,7 @@
     "fast-glob": "^3.3.3",
     "pino": "^10.3.1",
     "tsx": "latest",
-    "typescript": "latest",
+    "typescript": "^6.0.3",
     "vite": "catalog:"
   }
 }

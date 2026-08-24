@@ -166,7 +166,8 @@ async function waitForEpisodeUploadComplete(
   episodeCount: number,
   options: QqDramaRuntimeOptions,
 ) {
-  const timeoutMs = 80 * 60 * 1000;
+  const timeoutMinutes = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120);
+  const timeoutMs = timeoutMinutes * 60 * 1000;
   const pollMs = 2_000;
   const startedAt = Date.now();
   const maxRetryAttempts = Math.max(0, options.episodeUploadFailedRetryAttempts ?? 3);
@@ -193,7 +194,8 @@ async function waitForEpisodeUploadComplete(
     throw failedEpisodeUploadError(failures, maxRetryAttempts);
   }
   throw new Error(
-    `[upload-failed] 等待 QQ 剧集视频上传完成超时。当前状态：${lastText || "未读取到上传状态"}`,
+    `[upload-failed] 等待 QQ 剧集视频上传完成超时（上限 ${timeoutMinutes} 分钟）。` +
+      `当前状态：${lastText || "未读取到上传状态"}`,
   );
 }
 

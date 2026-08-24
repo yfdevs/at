@@ -252,6 +252,7 @@ export type QqDramaRuntimeOptions = {
   apiConfig?: QqDramaApiConfig;
   localEpisodeVideoRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
+  episodeUploadWaitTimeoutMinutes?: number;
   episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
   config?: {

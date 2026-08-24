@@ -1,4 +1,4 @@
-import { appendFile, mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { appendFile, mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
 import type { BrowserContext, Page } from "playwright";
 import type {
@@ -9,6 +9,66 @@ import type {
 export function log(options: MeituanCreationRuntimeOptions, message: string) {
   options.onLog?.(message);
   void writeLogFile(options, "info", message).catch(() => undefined);
+}
+
+function diagnosticPathSegment(value: string | number) {
+  return String(value).replace(/[^a-zA-Z0-9_-]/g, "_");
+}
+
+export async function saveTaskFailureDiagnostics(options: {
+  page: Page | null;
+  runtimeOptions: MeituanCreationRuntimeOptions;
+  taskId: string | number;
+  error: unknown;
+}) {
+  const { page, runtimeOptions, taskId, error } = options;
+  if (!page || page.isClosed() || !runtimeOptions.logFilePath) return null;
+
+  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
+  const diagnosticDir = join(
+    dirname(runtimeOptions.logFilePath),
+    "diagnostics",
+    `${diagnosticPathSegment(taskId)}-${timestamp}`,
+  );
+  await mkdir(diagnosticDir, { recursive: true });
+
+  const visibleText = async (selector: string) => (
+    await page.locator(selector).allInnerTexts().catch(() => [])
+  )
+    .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 500))
+    .filter(Boolean);
+  const details = {
+    time: new Date().toISOString(),
+    taskId,
+    url: page.url(),
+    title: await page.title().catch(() => ""),
+    error: error instanceof Error ? error.message : String(error),
+    visibleDrawers: await visibleText(
+      ".mtd-drawer:visible, .mtd-drawer-wrapper:visible, .mtd-drawer-container:visible",
+    ),
+    visibleModals: await visibleText(".mtd-modal:visible"),
+    visibleMessages: await visibleText(".mtd-message:visible"),
+    visibleFormErrors: await visibleText(".mtd-form-item-error-tip:visible, .err-tips:visible"),
+    visibleButtons: await visibleText("button:visible"),
+    draggerCount: await page.locator(".mtd-upload-dragger").count().catch(() => -1),
+    visibleDraggerCount: await page.locator(".mtd-upload-dragger:visible").count().catch(() => -1),
+    fileInputs: await page
+      .locator('input[type="file"]')
+      .evaluateAll((elements: HTMLInputElement[]) => elements.map((element) => ({
+        accept: element.accept,
+        className: element.className,
+        disabled: element.disabled,
+        multiple: element.multiple,
+      })))
+      .catch(() => []),
+  };
+
+  await Promise.all([
+    writeFile(join(diagnosticDir, "details.json"), JSON.stringify(details, null, 2), "utf8"),
+    page.content().then((html) => writeFile(join(diagnosticDir, "page.html"), html, "utf8")),
+    page.screenshot({ path: join(diagnosticDir, "page.png"), fullPage: true }),
+  ].map((operation) => operation.catch(() => undefined)));
+  return diagnosticDir;
 }
 
 function formatChineseDateTime(date: Date): string {

@@ -24,7 +24,7 @@
   "devDependencies": {
     "@types/node": "latest",
     "@types/ws": "^8.18.1",
-    "typescript": "latest",
+    "typescript": "^6.0.3",
     "vite": "catalog:"
   },
   "dependencies": {
