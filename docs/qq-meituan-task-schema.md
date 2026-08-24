@@ -64,13 +64,14 @@ type ClaimedQqDramaTask = {
 | `productionCostWan` | 是 | 数字 | 数字文本框 | 大于等于 0，单位万元 |
 | `productionYear` | 是 | 整数 | 数字文本框 | 1900～2100 |
 | `costAllocationReportFiles` | 是 | 字符串数组 | 文件批量上传 | 仅取 `productionCost.proofFiles` 的全部文件，至少 1 个 |
-| `licenseProofFiles` | 运行时生成 | 字符串数组 | 权属文件上传 | 忽略接口字段；本地工程/权属图片合成为 1 张后上传 |
+| `productionProofFiles` | 是 | 字符串数组 | 版权信息文件上传 | 取 `payloadJson.copyright.productionProofFiles`，至少 1 个 |
 | `contractName` | 是 | 字符串 | 合同下拉 | 动态选项，取决于当前账号 |
 | `submit` | 否 | 布尔值 | 是否提交审核 | 默认 `false` |
 
 QQ 正式任务与美团使用相同的本地封面准备逻辑：从
 `{localEpisodeVideoRoot}/{originalTitle}` 中匹配文件名包含“封面”或“海报”的图片；
-完全没有文件名匹配时，再查找名称包含“封面”或“海报”的目录并取排序后的第一张。
+完全没有文件名匹配时，再查找名称包含“封面”或“海报”的目录，并按文件名顺序取第一张
+高度大于宽度的竖图；横图不作为无关键词时的封面候选。
 任务包含百度网盘链接时，下载阶段要求至少 1 张封面并标准化到本地目录。最终上传使用
 运行时生成的 `localCoverFile`。后端返回的 `coverImageFile`、`coverImageUrl` 和
 `posterImageUrl` 均会被忽略。
@@ -150,13 +151,13 @@ type QqDramaRole = {
 - 最大文件：10 MB。
 - 格式：JPG、PNG、PDF。
 
-版权采买与播出授权证明：
+版权信息制作合同：
 
-- 忽略接口返回的 `payloadJson.copyright.licenseProofFiles`。
-- 从 `{localEpisodeVideoRoot}/{originalTitle}` 下名称包含“工程”或“权属”的目录递归收集图片。
-- 有百度网盘链接时，下载阶段要求至少 1 张工程/权属图片。
-- 将全部本地权属图片纵向合成为 1 张临时图片后上传，任务结束后清理合成图。
-- 本地和百度网盘均找不到权属图片时，任务失败并上报后端。
+- 后端字段：`payloadJson.copyright.productionProofFiles`。
+- 至少 1 个；缺失或为空时任务校验失败并上报后端。
+- 取全部文件，去重后批量上传到页面现有的版权信息文件区域。
+- 远程制作合同按任务保存到账号素材目录的 `copyright-proofs/<accountTaskId>` 下；桌面端使用 `node-cron` 按 `Asia/Shanghai` 时区每天凌晨 1 点删除最后修改时间早于当天 00:00 的合同任务目录。
+- QQ 流程不再要求、扫描、合成或上传本地工程/权属图片。
 
 正片视频：
 
@@ -570,6 +571,9 @@ QQ 和美团都在领取任务后、执行页面发布前按同一顺序处理�
 至少 1 张封面/海报图片
 ```
 
+美团流程不要求百度网盘提供工程/权属图片，也不会扫描、合成或上传这类图片。
+“版权证明”仅使用接口返回的制作合同和授权委托合同，各取最多一份。
+
 下载器会把匹配到的封面标准化到：
 
 ```text
@@ -579,7 +583,7 @@ QQ 和美团都在领取任务后、执行页面发布前按同一顺序处理�
 发布前会递归扫描 `{localEpisodeVideoRoot}/{originalTitle}`，匹配：
 
 - 文件名包含“封面”或“海报”的图片。
-- 或目录名包含“封面”或“海报”时，该目录内排序后的第一张图片。
+- 或目录名包含“封面”或“海报”时，该目录内按文件名排序后的第一张竖图（高度大于宽度）。
 
 支持 `png`、`jpg`、`jpeg`、`bmp`、`webp`，文件必须存在且大小大于 0。
 找不到封面时以 `poster-material-invalid` 失败，不进入页面填写。

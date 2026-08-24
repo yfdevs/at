@@ -4,6 +4,24 @@ import { log } from "../browser-session.js";
 import { scrollLocatorIntoView } from "../form-controls.js";
 
 const submitButtonTextPattern = /提交[\s\S]*(?:审核|送审)/;
+const fieldValidationSelector = ".mtd-form-item-error-tip:visible, .err-tips:visible";
+
+async function visibleFieldValidationTexts(page: Page) {
+  return [
+    ...new Set(
+      (await page.locator(fieldValidationSelector).allInnerTexts().catch(() => []))
+        .map((text) => text.replace(/\s+/g, " ").trim())
+        .filter(Boolean),
+    ),
+  ];
+}
+
+async function throwIfFieldValidationFailed(page: Page) {
+  const texts = await visibleFieldValidationTexts(page);
+  if (texts.length > 0) {
+    throw new Error(`MEITUAN_SUBMIT_FORM_INVALID: ${texts.join("；")}`);
+  }
+}
 
 export async function submitPublishStep(
   page: Page,
@@ -39,7 +57,19 @@ export async function submitPublishStep(
     .locator(".mtd-modal:visible")
     .filter({ hasText: "提交后将进入审核流程" })
     .last();
-  await confirmModal.waitFor({ state: "visible", timeout: 60_000 });
+  const validationTips = page.locator(fieldValidationSelector);
+  const submitResult = await Promise.race([
+    confirmModal
+      .waitFor({ state: "visible", timeout: 60_000 })
+      .then(() => "confirm" as const),
+    validationTips
+      .first()
+      .waitFor({ state: "visible", timeout: 60_000 })
+      .then(() => "validation" as const),
+  ]);
+  if (submitResult === "validation") {
+    await throwIfFieldValidationFailed(page);
+  }
 
   const confirmButton = confirmModal.getByRole("button", {
     name: "确认提交",
@@ -48,6 +78,7 @@ export async function submitPublishStep(
   await confirmButton.waitFor({ state: "visible", timeout: 30_000 });
   await confirmButton.click({ timeout: 30_000 });
   await page.waitForTimeout(1_000);
+  await throwIfFieldValidationFailed(page);
 
   log(options, "[meituan-drama] submit confirmation button clicked");
 }

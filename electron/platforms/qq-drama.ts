@@ -1,6 +1,8 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import cron, { type ScheduledTask } from "node-cron";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { lstat, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   directoryDefaultPath,
@@ -121,6 +123,7 @@ const defaultQqDramaConfig: QqDramaConfig = {
 
 const runtimeController = new RuntimeController<QqDramaRuntime>();
 let store: Store<QqDramaStore> | null = null;
+let contractCleanupTask: ScheduledTask | null = null;
 
 export function getQqDramaBrowserInstanceCount() {
   return (
@@ -285,6 +288,82 @@ function qqDramaAssetDownloadDir(
     "assets",
     encodedAccountProfileName(config, accountProfileName),
   );
+}
+
+function isMissingContractPathError(error: unknown) {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+async function latestContractModifiedAtMs(target: string): Promise<number> {
+  const targetStat = await lstat(target);
+  let latest = targetStat.mtimeMs;
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest;
+
+  const entries = await readdir(target, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    latest = Math.max(latest, await latestContractModifiedAtMs(path.join(target, entry.name)));
+  }
+  return latest;
+}
+
+async function cleanupPreviousQqCopyrightProofs(now = new Date()) {
+  const assetsRoot = path.resolve(qqDramaRunDataDir(), "assets");
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let accountEntries;
+  try {
+    accountEntries = await readdir(assetsRoot, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingContractPathError(error)) return;
+    throw error;
+  }
+
+  let deletedCount = 0;
+  for (const accountEntry of accountEntries) {
+    if (!accountEntry.isDirectory() || accountEntry.isSymbolicLink()) continue;
+    const proofRoot = path.join(assetsRoot, accountEntry.name, "copyright-proofs");
+    const taskEntries = await readdir(proofRoot, { withFileTypes: true }).catch((error: unknown) => {
+      if (isMissingContractPathError(error)) return [];
+      throw error;
+    });
+    for (const taskEntry of taskEntries) {
+      if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue;
+      const taskDir = path.resolve(proofRoot, taskEntry.name);
+      const relativeTaskDir = path.relative(proofRoot, taskDir);
+      if (!relativeTaskDir || relativeTaskDir.startsWith("..") || path.isAbsolute(relativeTaskDir)) {
+        continue;
+      }
+      const modifiedAtMs = await latestContractModifiedAtMs(taskDir).catch((error: unknown) => {
+        if (isMissingContractPathError(error)) return startOfToday;
+        throw error;
+      });
+      if (modifiedAtMs >= startOfToday) continue;
+
+      await rm(taskDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
+      deletedCount += 1;
+      console.log(`[qq-drama] deleted previous copyright proofs: ${taskDir}`);
+    }
+  }
+  console.log(`[qq-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`);
+}
+
+function scheduleQqCopyrightProofCleanup() {
+  if (contractCleanupTask) return;
+  contractCleanupTask = cron.schedule("0 1 * * *", async () => {
+    await cleanupPreviousQqCopyrightProofs().catch((error: unknown) => {
+      console.error(
+        `[qq-drama] previous copyright proof cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }, {
+    name: "qq-copyright-proof-cleanup",
+    timezone: "Asia/Shanghai",
+    noOverlap: true,
+    unref: true,
+  });
+  console.log("[qq-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai");
 }
 
 function qqDramaLogDir(config = readConfig()) {
@@ -482,6 +561,8 @@ async function startRuntime() {
 }
 
 export function registerQqDramaPlatformHandlers() {
+  scheduleQqCopyrightProofCleanup();
+
   ipcMain.handle("qq-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),

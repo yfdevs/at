@@ -62,10 +62,8 @@ https://czz.meituan.com/new/publishVideo
 文件名或目录名包含“封面/海报”的图片。匹配结果写入运行时
 `collectionCoverFile`，校验通过后才通过文件控件上传。
 `productionProofFiles` 和 `licenseProofFiles` 分别来自领取任务
-`payloadJson.copyright` 下的制作合同与授权委托合同 URL 数组。运行时还会从
-`{localEpisodeVideoRoot}/{originalTitle}` 的工程/权属目录扫描全部图片并合成一张
-纵向排列的图片，合成文件保存在剧集对应的工程/权属目录下，最后取最多两张合同和
-一张工程合成图上传到“版权证明”。
+`payloadJson.copyright` 下的制作合同与授权委托合同 URL 数组，运行时各取最多一份
+上传到“版权证明”。下载后的合同文件会保留在平台运行数据目录中，不在任务开始、失败或结束时清理；桌面端使用 `node-cron` 按 `Asia/Shanghai` 时区每天凌晨 1 点删除最后修改时间早于当天 00:00 的合同任务目录。美团流程不再扫描、校验或合成工程/权属目录中的图片。
 `premiereProofUrl` 从领取任务 `payloadJson.meituanImages` 中
 `key="premiereProof"` 对应的 `url` 生成，运行时会下载到平台运行数据目录后通过文件控件上传。
 `backgroundText` 是时代背景，支持 `现代`、`都市`、`古代`、`乡村`、`年代`、`架空`、`职场`、`民国`、`宫廷`、`校园`、`荒岛`、`古装`、`末世`。
@@ -81,8 +79,7 @@ https://czz.meituan.com/new/publishVideo
 
 `baiduPanResourceLink` 是可选的百度网盘分享文本。存在时，运行时先把资源下载并标准化到
 `{localEpisodeVideoRoot}/{originalTitle}`，再用 `originalTitle + totalEpisodes`
-严格校验第 1 集到第 N 集，同时要求至少下载 1 张工程/权属图片；校验通过后才开始
-页面填写和上传。
+严格校验第 1 集到第 N 集，同时要求至少下载 1 张封面；校验通过后才开始页面填写和上传。
 
 ## 任务轮询
 

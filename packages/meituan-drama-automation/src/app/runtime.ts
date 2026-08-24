@@ -15,7 +15,12 @@ import type {
   MeituanCreationRuntimeOptions,
   MeituanCreationRuntimeStatus,
 } from "../shared/types.js";
-import { loginStateFromUrl, log, saveCredentialState } from "../automation/browser-session.js";
+import {
+  cleanupOldLogFiles,
+  loginStateFromUrl,
+  log,
+  saveCredentialState,
+} from "../automation/browser-session.js";
 import { runPublishTask } from "../automation/publish-runner.js";
 import { runMeituanAccountTaskWorker } from "./task-worker.js";
 
@@ -134,6 +139,8 @@ export async function startMeituanCreationRuntime(
 
   let running = true;
   const accountBrowsers: AccountBrowser[] = [];
+
+  await cleanupOldLogFiles(options).catch(() => undefined);
 
   try {
     for (const account of options.accounts) {

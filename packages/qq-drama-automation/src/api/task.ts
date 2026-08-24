@@ -164,7 +164,7 @@ function uniqueStrings(values: Array<string | undefined>) {
 
 function classifyClaimedTaskFailStage(error: unknown): QqDramaTaskFailStage {
   const message = error instanceof Error ? error.message : String(error);
-  return /productionCost\.proofFiles|costAllocationReport|cover|poster|licenseProof|ownership|成本|封面|海报|权属|文件|素材/i.test(
+  return /productionCost\.proofFiles|productionProof|costAllocationReport|cover|poster|licenseProof|ownership|成本|封面|海报|权属|文件|素材/i.test(
     message,
   )
     ? "UPLOAD_FILE"
@@ -191,7 +191,9 @@ function normalizeClaimedTask(options: {
   delete playletPayload.coverImageUrl;
   delete playletPayload.posterImageUrl;
   const productionCost = recordValue(payload.productionCost);
+  const copyright = recordValue(payload.copyright);
   const productionCostProofFiles = uniqueStrings(stringArray(productionCost.proofFiles));
+  const productionProofFiles = uniqueStrings(stringArray(copyright.productionProofFiles));
 
   const playlet = {
     ...playletPayload,
@@ -206,7 +208,7 @@ function normalizeClaimedTask(options: {
     productionCostWan:
       numberValue(playletPayload.productionCostWan) ?? numberValue(productionCost.amountWan),
     costAllocationReportFiles: productionCostProofFiles,
-    licenseProofFiles: [],
+    productionProofFiles,
     submit: booleanValue(playletPayload.submit) ?? false,
   };
 

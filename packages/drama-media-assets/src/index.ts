@@ -61,6 +61,31 @@ export type EpisodeDirectorySummary = {
   unmatchedMp4: string[];
 };
 
+const nonRetryableBaiduNetdiskResourceErrorPatterns = [
+  "分享文本中没有找到百度网盘链接",
+  "分享链接没有解析出",
+  "分享提取码校验失败",
+  "分享页要求验证码",
+  "百度网盘账号登录已过期",
+  "账户已过期",
+  "重新登录",
+  "重新登陆",
+  "百度网盘剧集视频数量不正确",
+  "百度网盘权属材料数量不足",
+  "百度网盘权属材料筛选后数量不足",
+  "百度网盘海报封面数量不足",
+  "百度网盘AI制作证明数量不足",
+  "[local-video-invalid]",
+  "剧集视频目录不存在",
+  "存在重复集数",
+  "剧集文件应按文件名匹配",
+] as const;
+
+export function isNonRetryableBaiduNetdiskResourceError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return nonRetryableBaiduNetdiskResourceErrorPatterns.some((pattern) => message.includes(pattern));
+}
+
 const knownEpisodeSubDirs = ["成片", "成品", "视频", "正片"];
 const ownershipImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp"]);
 const aiProductionProofExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp", ".pdf"]);
@@ -218,6 +243,7 @@ export async function listLocalOwnershipMaterials(options: {
   resourceName: string;
   rootIsResourceDir?: boolean;
   deduplicateByContent?: boolean;
+  includePortraitImages?: boolean;
 }): Promise<LocalOwnershipMaterialSet> {
   const resourceDir = options.rootIsResourceDir ? options.root : playletDir(options.root, options.resourceName);
   const result: LocalOwnershipMaterialSet = [];
@@ -236,6 +262,10 @@ export async function listLocalOwnershipMaterials(options: {
       if (seenFiles.has(resolved)) continue;
       const fileStat = await stat(file).catch(() => undefined);
       if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      if (!options.includePortraitImages) {
+        const metadata = await sharp(file).metadata().catch(() => undefined);
+        if (metadata?.width && metadata?.height && metadata.height > metadata.width) continue;
+      }
       seenFiles.add(resolved);
       result.push({
         index: ownershipMaterialIndex(entry.name),
@@ -271,9 +301,16 @@ export async function listLocalPosterImages(options: {
       .sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { numeric: true }));
     const namedMatches = entries.filter((entry) => /封面|海报/.test(entry.name));
     const fromFileName = namedMatches.length > 0;
-    const selectedEntries = fromFileName
-      ? namedMatches
-      : /封面|海报/.test(path.basename(dir)) && entries[0] ? [entries[0]] : [];
+    let selectedEntries = namedMatches;
+    if (!fromFileName && /封面|海报/.test(path.basename(dir))) {
+      for (const entry of entries) {
+        const metadata = await sharp(path.join(dir, entry.name)).metadata().catch(() => undefined);
+        if (metadata?.width && metadata?.height && metadata.height > metadata.width) {
+          selectedEntries = [entry];
+          break;
+        }
+      }
+    }
     for (const entry of selectedEntries) {
       const file = path.join(dir, entry.name);
       const resolved = path.resolve(file).toLowerCase();

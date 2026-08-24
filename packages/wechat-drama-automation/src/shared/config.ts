@@ -22,6 +22,8 @@ const contractSubjectAliases: Record<string, string> = {
   "幻走": "HUANZOU",
   "小石榴": "XIAOSHILIU",
   "有点牛": "YOUDIANNIU",
+  "珍萃": "ZHENCUIYIHAO",
+  "瑞小豆": "RUIXIAODOU",
 };
 // 兼容后端历史数据：contractSubject=0 表示未写入有效主体枚举，精确匹配不到时兜底使用。
 const legacyUnscopedContractSubjects = new Set(["0"]);

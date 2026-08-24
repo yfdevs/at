@@ -294,8 +294,11 @@ export type MeituanCreationRuntimeOptions = {
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;
+  logFilePath?: string;
+  logRetentionDays?: number;
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadFailedRetryAttempts?: number;
+  closeTaskPageAfterRun?: boolean;
   ensureBaiduNetdiskResource?: (request: {
     shareText: string;
     resourceName: string;

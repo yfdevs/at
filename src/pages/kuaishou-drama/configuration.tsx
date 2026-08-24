@@ -20,6 +20,9 @@ import {
 
 const emptyConfig: KuaishouDramaConfig = {
   accountProfileName: "default",
+  localEpisodeVideoRoot: "",
+  baiduNetdiskDownloadRetryAttempts: "3",
+  videoUploadTimeoutMinutes: "120",
   headless: "false",
   operationDelaySeconds: "0",
   runDataDir: ".drama-runs/kuaishou-drama",
@@ -52,6 +55,28 @@ const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
         label: "运行数据目录",
         description: "保存账号登录态、日志、素材缓存和调试快照。",
         directory: true,
+      },
+      {
+        key: "localEpisodeVideoRoot",
+        label: "本地剧集视频目录",
+        description: "百度网盘资源下载到该目录，并按原剧名建立子目录；上剧前校验第1集至最后一集。",
+        directory: true,
+      },
+      {
+        key: "baiduNetdiskDownloadRetryAttempts",
+        label: "网盘下载重试",
+        description: "百度网盘资源准备失败后的额外重试次数。",
+        type: "number",
+        suffix: "次",
+        min: 0,
+      },
+      {
+        key: "videoUploadTimeoutMinutes",
+        label: "视频上传超时",
+        description: "批量视频开始上传后，等待全部剧集完成的最长时间。",
+        type: "number",
+        suffix: "分钟",
+        min: 1,
       },
       {
         key: "logRetentionDays",
@@ -148,10 +173,12 @@ export function KuaishouDramaConfigurationPage() {
   })
 
   const selectDirectory = async (key: keyof KuaishouDramaConfig & string) => {
-    if (key !== "runDataDir") return
-
     try {
-      const selectedPath = await kuaishouDramaService.selectRunDataDir(config.runDataDir)
+      const selectedPath = key === "runDataDir"
+        ? await kuaishouDramaService.selectRunDataDir(config.runDataDir)
+        : key === "localEpisodeVideoRoot"
+          ? await kuaishouDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
+          : null
       if (selectedPath) {
         updateConfig(key, selectedPath)
       }

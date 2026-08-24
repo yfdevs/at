@@ -5,6 +5,7 @@ export type MeituanCreationConfig = {
   headless: string
   operationDelaySeconds: string
   episodeUploadFailedRetryAttempts: string
+  closeTaskPageAfterRun: string
   localEpisodeVideoRoot: string
   runDataDir: string
 }

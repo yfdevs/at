@@ -8,6 +8,9 @@ import { kuaishouDramaTaskSchema } from "./types.js";
 
 const taskKeys: Array<keyof KuaishouDramaTaskInput> = [
   "title",
+  "episodeCount",
+  "baiduPanResourceLink",
+  "fullDramaPriceYuan",
   "coverImageUrl",
   "summary",
   "genderChannel",
@@ -28,6 +31,8 @@ const taskKeys: Array<keyof KuaishouDramaTaskInput> = [
   "actorName",
   "actorGender",
   "actorRole",
+  "mainActors",
+  "authorDeclaration",
   "productionYear",
   "productionCostWan",
   "averageEpisodeDurationMinutes",
@@ -78,7 +83,12 @@ export function createMockKuaishouDramaTaskInput(
   overrides: Partial<KuaishouDramaTaskInput> = {},
 ): KuaishouDramaTaskInput {
   return {
-    title: "示例漫剧标题",
+    title: "风起南湾：绝境归途2",
+    episodeCount: 10,
+    baiduPanResourceLink:
+      "通过网盘分享的文件：风起南湾：绝境归途\n" +
+      "链接: https://pan.baidu.com/s/18RkOdrhgBMigLlSnvZ97uA?pwd=x7wp 提取码: x7wp",
+    fullDramaPriceYuan: 19.9,
     coverImageUrl: "https://picsum.photos/seed/kuaishou-cover/720/1280.jpg",
     summary:
       "这是一个用于调试快手短剧经营者平台自动填表的模拟简介，文本长度满足页面一百到四百字的限制。剧情围绕主角在逆境中成长展开，包含完整起承转合、关键冲突和结局方向，用于验证输入框、字数校验和表单提交前的数据结构是否稳定。",
@@ -88,7 +98,12 @@ export function createMockKuaishouDramaTaskInput(
     authorizationPromotionFileUrl: "https://picsum.photos/seed/kuaishou-auth/801/601.jpg",
     copyrightDeclarationFileUrl: "https://picsum.photos/seed/kuaishou-copyright/802/602.jpg",
     posterImageUrl: "https://picsum.photos/seed/kuaishou-poster/720/1281.jpg",
-    productionOrganization: "北京赢夏科技有限公司",
+    mainActors: [
+      { actorName: "张三", actorGender: "男", actorRole: "主角" },
+      { actorName: "李四", actorGender: "女", actorRole: "配角" },
+    ],
+    authorDeclaration: "含AI生成内容",
+    productionOrganization: "北京星河数字文化有限公司",
     ...overrides,
   };
 }

@@ -422,6 +422,7 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
   const dramaName = validateDramaName(playlet.name);
   const dramaSummary = sanitizeDramaText(playlet.summary, "summary");
   const remoteAssetDirectoryName = dramaName;
+  const contractRemoteAssetDirectoryName = `${dramaName}-contract`;
 
   await page.goto(postUrl, { waitUntil: "domcontentloaded" });
   await page.waitForLoadState("networkidle", { timeout: 5000 }).catch(() => undefined);
@@ -507,14 +508,14 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     ["剧目制作证明材料"], // 表单标签名称，支持一个名称或多个兼容名称
     playlet.copyright.productionProofFiles ?? [],
     "剧目制作证明材料", // 用于日志和错误提示，不参与页面元素匹配
-    remoteAssetDirectoryName,
+    contractRemoteAssetDirectoryName,
   );
   await uploadByLabeledGroupFileInput(
     page,
     ["版权采买&播出授权证明材料", "版权采买及播出授权证明材料", "版权授权证明材料"],
     playlet.copyright.licenseProofFiles ?? [],
     "版权采买&播出授权证明材料",
-    remoteAssetDirectoryName,
+    contractRemoteAssetDirectoryName,
   );
 
   const qualificationType = playlet.qualification.type ?? "其他微短剧";

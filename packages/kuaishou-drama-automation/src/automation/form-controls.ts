@@ -541,6 +541,9 @@ async function hasSelectedOptionText(selectRoot: Locator, value: string) {
 
     return (
       option.classList.contains("selected") ||
+      option.classList.contains("is-selected") ||
+      option.getAttribute("aria-selected") === "true" ||
+      Boolean(option.querySelector(".ks-checkbox.is-checked")) ||
       Boolean(option.querySelector(".ks-checkbox__input.is-checked")) ||
       Boolean(option.querySelector<HTMLInputElement>("input[type='checkbox']")?.checked)
     );
@@ -560,6 +563,9 @@ async function selectedOptionTexts(selectRoot: Locator) {
     return Array.from(popper.querySelectorAll<HTMLElement>(".ks-select-dropdown__item"))
       .filter((option) => (
         option.classList.contains("selected") ||
+        option.classList.contains("is-selected") ||
+        option.getAttribute("aria-selected") === "true" ||
+        Boolean(option.querySelector(".ks-checkbox.is-checked")) ||
         Boolean(option.querySelector(".ks-checkbox__input.is-checked")) ||
         Boolean(option.querySelector<HTMLInputElement>("input[type='checkbox']")?.checked)
       ))
@@ -636,11 +642,7 @@ async function openAndFilterMultiSelectNoScroll(selectRoot: Locator, value: stri
     }
 
     input.focus({ preventScroll: true });
-
-    const descriptor = Object.getOwnPropertyDescriptor(
-      window.HTMLInputElement.prototype,
-      "value",
-    );
+    const descriptor = Object.getOwnPropertyDescriptor(window.HTMLInputElement.prototype, "value");
     descriptor?.set?.call(input, "");
     input.dispatchEvent(new InputEvent("input", {
       bubbles: true,
@@ -716,17 +718,12 @@ async function dispatchVisibleOptionClickNoScroll(
       parent = parent.parentElement;
     }
 
-    const eventInit = {
-      bubbles: true,
-      cancelable: true,
-      view: window,
-    };
+    const eventInit = { bubbles: true, cancelable: true, view: window };
     option.dispatchEvent(new PointerEvent("pointerdown", eventInit));
     option.dispatchEvent(new MouseEvent("mousedown", eventInit));
     option.dispatchEvent(new PointerEvent("pointerup", eventInit));
     option.dispatchEvent(new MouseEvent("mouseup", eventInit));
     option.click();
-
     return { clicked: true, options: [] };
   }, { targetText: value, targetPopperId: popperId });
 }
@@ -740,13 +737,11 @@ async function closeMultiSelectNoScroll(selectRoot: Locator, popperId: string | 
       key: "Escape",
       code: "Escape",
     };
-
     input?.dispatchEvent(new KeyboardEvent("keydown", eventInit));
     input?.dispatchEvent(new KeyboardEvent("keyup", eventInit));
     input?.blur();
     document.dispatchEvent(new KeyboardEvent("keydown", eventInit));
     document.dispatchEvent(new KeyboardEvent("keyup", eventInit));
-
     const popper = targetPopperId ? document.getElementById(targetPopperId) : null;
     popper?.dispatchEvent(new KeyboardEvent("keydown", eventInit));
     popper?.dispatchEvent(new KeyboardEvent("keyup", eventInit));

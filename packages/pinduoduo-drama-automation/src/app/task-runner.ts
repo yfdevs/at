@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { PINDUODUO_SHORTPLAY_APPLY_EDIT_URL } from "../shared/constants.js";
 import {
   type ClaimNextPinduoduoDramaTaskOptions,
@@ -306,7 +307,7 @@ async function ensurePinduoduoVideoResourceReady(
       return;
     } catch (error) {
       lastError = error;
-      if (attempt >= maxAttempts) break;
+      if (isNonRetryableBaiduNetdiskResourceError(error) || attempt >= maxAttempts) break;
       await sleep(VIDEO_RESOURCE_DOWNLOAD_RETRY_DELAY_MS);
     }
   }

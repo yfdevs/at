@@ -1,6 +1,8 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import cron, { type ScheduledTask } from "node-cron";
 import { mkdirSync } from "node:fs";
+import { lstat, readdir, rm } from "node:fs/promises";
 import path from "node:path";
 import {
   directoryDefaultPath,
@@ -39,6 +41,7 @@ export type MeituanCreationConfig = {
   headless: string;
   operationDelaySeconds: string;
   episodeUploadFailedRetryAttempts: string;
+  closeTaskPageAfterRun: string;
   localEpisodeVideoRoot: string;
   runDataDir: string;
 };
@@ -62,12 +65,14 @@ const defaultMeituanCreationConfig: MeituanCreationConfig = {
   headless: "false",
   operationDelaySeconds: "0.02",
   episodeUploadFailedRetryAttempts: "5",
+  closeTaskPageAfterRun: "true",
   localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-drama",
 };
 
 const runtimeController = new RuntimeController<MeituanCreationRuntime>();
 let store: Store<MeituanCreationStore> | null = null;
+let contractCleanupTask: ScheduledTask | null = null;
 
 export function getMeituanCreationBrowserInstanceCount() {
   return (
@@ -138,6 +143,8 @@ function normalizeConfig(
       Number.isInteger(retryAttempts) && retryAttempts >= 0
         ? String(retryAttempts)
         : defaultMeituanCreationConfig.episodeUploadFailedRetryAttempts,
+    closeTaskPageAfterRun:
+      config.closeTaskPageAfterRun ?? defaultMeituanCreationConfig.closeTaskPageAfterRun,
     localEpisodeVideoRoot:
       config.localEpisodeVideoRoot ?? defaultMeituanCreationConfig.localEpisodeVideoRoot,
     runDataDir:
@@ -194,12 +201,114 @@ function meituanCreationLogDir(config = readConfig()) {
   return path.join(meituanCreationRunDataDir(config), "logs");
 }
 
+function formatDateKey(date = new Date()) {
+  const year = date.getFullYear();
+  const month = String(date.getMonth() + 1).padStart(2, "0");
+  const day = String(date.getDate()).padStart(2, "0");
+  return `${year}-${month}-${day}`;
+}
+
+function meituanCreationLogFile(config = readConfig()) {
+  return path.join(meituanCreationLogDir(config), `app-${formatDateKey()}.jsonl`);
+}
+
 function meituanCreationAuthRoot() {
   return path.join(meituanCreationRunDataDir(), "auth");
 }
 
 function meituanCreationAssetDownloadRoot() {
   return path.join(meituanCreationRunDataDir(), "remote-upload-assets");
+}
+
+function meituanCreationCopyrightProofRoot(accountDir: string) {
+  return path.join(accountDir, "copyright-proofs");
+}
+
+function isMissingPathError(error: unknown) {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+async function latestModifiedAtMs(target: string): Promise<number> {
+  const targetStat = await lstat(target);
+  let latest = targetStat.mtimeMs;
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest;
+
+  const entries = await readdir(target, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    const entryPath = path.join(target, entry.name);
+    latest = Math.max(latest, await latestModifiedAtMs(entryPath));
+  }
+  return latest;
+}
+
+async function cleanupPreviousMeituanCopyrightProofs(now = new Date()) {
+  const assetRoot = path.resolve(meituanCreationAssetDownloadRoot());
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime();
+  let accountEntries;
+  try {
+    accountEntries = await readdir(assetRoot, { withFileTypes: true });
+  } catch (error) {
+    if (isMissingPathError(error)) return;
+    throw error;
+  }
+
+  let deletedCount = 0;
+  for (const accountEntry of accountEntries) {
+    if (!accountEntry.isDirectory() || accountEntry.isSymbolicLink()) continue;
+    const accountDir = path.join(assetRoot, accountEntry.name);
+    const proofRoot = meituanCreationCopyrightProofRoot(accountDir);
+    const taskEntries = await readdir(proofRoot, { withFileTypes: true }).catch((error: unknown) => {
+      if (isMissingPathError(error)) return [];
+      throw error;
+    });
+    for (const taskEntry of taskEntries) {
+      if (!taskEntry.isDirectory() || taskEntry.isSymbolicLink()) continue;
+      const taskDir = path.resolve(proofRoot, taskEntry.name);
+      const relativeTaskDir = path.relative(proofRoot, taskDir);
+      if (!relativeTaskDir || relativeTaskDir.startsWith("..") || path.isAbsolute(relativeTaskDir)) {
+        continue;
+      }
+
+      const modifiedAtMs = await latestModifiedAtMs(taskDir).catch((error: unknown) => {
+        if (isMissingPathError(error)) return startOfToday;
+        throw error;
+      });
+      if (modifiedAtMs >= startOfToday) continue;
+
+      await rm(taskDir, {
+        recursive: true,
+        force: true,
+        maxRetries: 5,
+        retryDelay: 500,
+      });
+      deletedCount += 1;
+      console.log(`[meituan-drama] deleted previous copyright proofs: ${taskDir}`);
+    }
+  }
+
+  console.log(
+    `[meituan-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`,
+  );
+}
+
+function scheduleMeituanCopyrightProofCleanup() {
+  if (contractCleanupTask) return;
+  contractCleanupTask = cron.schedule("0 1 * * *", async () => {
+    await cleanupPreviousMeituanCopyrightProofs().catch((error: unknown) => {
+      console.error(
+        `[meituan-drama] previous copyright proof cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      );
+    });
+  }, {
+    name: "meituan-copyright-proof-cleanup",
+    timezone: "Asia/Shanghai",
+    noOverlap: true,
+    unref: true,
+  });
+  console.log("[meituan-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai");
 }
 
 async function startRuntime() {
@@ -226,7 +335,10 @@ async function startRuntime() {
     apiBaseUrl: config.apiBaseUrl,
     authRoot: meituanCreationAuthRoot(),
     assetDownloadRoot: meituanCreationAssetDownloadRoot(),
+    logFilePath: meituanCreationLogFile(config),
+    logRetentionDays: 3,
     episodeUploadFailedRetryAttempts,
+    closeTaskPageAfterRun: config.closeTaskPageAfterRun === "true",
     ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
     onLog: (message: string) => {
       console.log(message);
@@ -242,6 +354,8 @@ async function startRuntime() {
 }
 
 export function registerMeituanCreationPlatformHandlers() {
+  scheduleMeituanCopyrightProofCleanup();
+
   ipcMain.handle("meituan-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),

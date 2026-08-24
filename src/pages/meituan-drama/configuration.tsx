@@ -16,6 +16,7 @@ const emptyConfig: MeituanCreationConfig = {
   headless: "false",
   operationDelaySeconds: "0.02",
   episodeUploadFailedRetryAttempts: "5",
+  closeTaskPageAfterRun: "true",
   localEpisodeVideoRoot: "",
   runDataDir: ".drama-runs/meituan-drama",
 }
@@ -72,6 +73,20 @@ const sections: ConfigSectionDefinition<MeituanCreationConfig>[] = [
         description: "登录和排查问题时建议显示浏览器。",
         activeLabel: "无头运行",
         inactiveLabel: "显示浏览器",
+      },
+    ],
+  },
+  {
+    title: "任务页面",
+    description: "每个任务使用独立标签页，避免前一任务的页面状态影响下一任务。",
+    fields: [
+      {
+        kind: "switch",
+        key: "closeTaskPageAfterRun",
+        label: "任务结束处理",
+        description: "任务成功或失败并完成结果上报后，是否关闭对应的任务标签页。",
+        activeLabel: "自动关闭标签页",
+        inactiveLabel: "保留标签页",
       },
     ],
   },

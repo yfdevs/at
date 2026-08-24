@@ -1,5 +1,6 @@
 import {
   findLocalEpisodeVideos,
+  isNonRetryableBaiduNetdiskResourceError,
   prepareEpisodeVideos,
   VideoTranscodeQueue,
   type VideoSizePolicy,
@@ -42,15 +43,6 @@ const logger = createLogger("worker");
 const claimErrorDelayMs = 10000;
 const loginRequiredDelayMs = 30 * 60_000;
 const baiduNetdiskDownloadRetryDelayMs = 5000;
-const nonRetryableBaiduNetdiskErrorPatterns = [
-  "百度网盘账号登录已过期",
-  "账户已过期",
-  "重新登录",
-  "重新登陆",
-  "百度网盘权属材料数量不足",
-  "百度网盘海报封面数量不足",
-  "百度网盘AI制作证明数量不足",
-];
 
 function sleep(ms: number): Promise<void> {
   return new Promise((resolve) => setTimeout(resolve, ms));
@@ -606,9 +598,7 @@ export class TaskWorkerPool {
       } catch (error) {
         lastError = error;
         const errorMessage = error instanceof Error ? error.message : String(error);
-        const nonRetryable = nonRetryableBaiduNetdiskErrorPatterns.some((pattern) =>
-          errorMessage.includes(pattern),
-        );
+        const nonRetryable = isNonRetryableBaiduNetdiskResourceError(error);
 
         if (nonRetryable || attempt >= maxAttempts) {
           logger.error(nonRetryable ? "baidu netdisk resource failed without retry" : "baidu netdisk resource failed after retries", {

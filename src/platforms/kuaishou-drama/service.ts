@@ -2,6 +2,9 @@ export type KuaishouDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type KuaishouDramaConfig = {
   accountProfileName: string
+  localEpisodeVideoRoot: string
+  baiduNetdiskDownloadRetryAttempts: string
+  videoUploadTimeoutMinutes: string
   headless: string
   operationDelaySeconds: string
   runDataDir: string
@@ -64,6 +67,12 @@ export const kuaishouDramaService = {
   selectRunDataDir(currentPath?: string) {
     return invokeKuaishouDrama<string | null>(
       "kuaishou-drama:config:select-run-data-dir",
+      currentPath
+    )
+  },
+  selectLocalEpisodeVideoRoot(currentPath?: string) {
+    return invokeKuaishouDrama<string | null>(
+      "kuaishou-drama:config:select-local-episode-video-root",
       currentPath
     )
   },

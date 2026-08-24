@@ -218,6 +218,7 @@ async function listCurrentOwnershipMaterials(
   targetRoot: string,
   resourceName: string,
   deduplicateByContent = true,
+  includePortraitImages = false,
 ): Promise<LocalOwnershipMaterialSet> {
   const downloaded: LocalOwnershipMaterialSet = [];
   const seen = new Set<string>();
@@ -231,6 +232,7 @@ async function listCurrentOwnershipMaterials(
       resourceName,
       rootIsResourceDir: true,
       deduplicateByContent,
+      includePortraitImages,
     });
     downloaded.push(...materials);
   }
@@ -250,6 +252,7 @@ async function listCurrentOwnershipMaterials(
         root: targetRoot,
         resourceName,
         deduplicateByContent,
+        includePortraitImages,
       });
   return [...new Map(
     combined.map((file) => [path.resolve(file.file).toLowerCase(), file]),
@@ -489,6 +492,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.targetRoot,
       options.resourceName,
       false,
+      true,
     );
     let ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
     let posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
@@ -570,6 +574,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.targetRoot,
           options.resourceName,
           false,
+          true,
         );
         ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
         posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
@@ -622,6 +627,11 @@ async function waitForCompleteLocalEpisodeVideos(options: {
         const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages;
         const posterDownloadComplete = posters.length >= expectedPosterImages;
         const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
+        if (taskStatus.completed && ownershipDirectoryComplete && !ownershipComplete) {
+          throw new Error(
+            `百度网盘权属材料筛选后数量不足。至少需要${options.ownershipRequirements.minimumImages ?? 0}张非竖图，实际找到${ownership.length}张；高度大于宽度的图片不会作为权属文件。`,
+          );
+        }
         if (
           (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && aiProductionProofsComplete && aiProductionProofDownloadComplete && nextStable.count >= options.stableCompletePolls)
           || (taskStatus.completed && complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && aiProductionProofsComplete && aiProductionProofDownloadComplete)

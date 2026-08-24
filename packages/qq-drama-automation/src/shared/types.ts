@@ -113,10 +113,10 @@ const qqDramaPublishFormBaseSchema = z.object({
     .array(fileReference)
     .min(1)
     .describe("成本配置比例情况报告，支持 JPG、PNG、PDF，单个 <= 10MB。"),
-  licenseProofFiles: z
+  productionProofFiles: z
     .array(fileReference)
     .min(1)
-    .describe("版权采买与播出授权证明文件，支持 PDF、JPG、JPEG、PNG，单个 <= 10MB。"),
+    .describe("制作合同文件，支持 PDF、JPG、JPEG、PNG，单个 <= 10MB。"),
   contractName: requiredText.describe("与本剧目绑定的合同，绑定后不可更改。"),
 });
 
@@ -187,10 +187,10 @@ export const qqDramaTaskPayloadSchema = z
       .array(fileReference)
       .min(1, "payloadJson.productionCost.proofFiles must contain at least 1 file")
       .describe("成本配置比例情况报告，至少 1 个，支持 JPG、PNG、PDF，单个 <= 10MB"),
-    licenseProofFiles: z
+    productionProofFiles: z
       .array(fileReference)
-      .default([])
-      .describe("版权采买与播出授权证明文件，支持 PDF、JPG、JPEG、PNG，单个 <= 10MB"),
+      .min(1, "payloadJson.copyright.productionProofFiles must contain at least 1 file")
+      .describe("制作合同文件，至少 1 个，支持 PDF、JPG、JPEG、PNG，单个 <= 10MB"),
     contractName: requiredText.describe("与本剧目绑定的合同，绑定后不可更改"),
     submit: z.boolean().default(false),
   })

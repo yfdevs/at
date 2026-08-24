@@ -1,17 +1,16 @@
 import type { BrowserContext, Page } from "playwright";
 import {
   KUAISHOU_DRAMA_EDIT_URL,
-  KUAISHOU_DRAMA_LOGIN_URL,
 } from "../shared/constants.js";
 import type {
+  KuaishouDramaPublishVariant,
   KuaishouDramaRuntimeOptions,
   KuaishouDramaTaskConfig,
 } from "../shared/types.js";
+import { createKuaishouDramaPublishVariants } from "../shared/publish-variants.js";
 import {
-  loginStateFromUrl,
   log,
   saveCredentialState,
-  waitForLoginIfNeeded,
 } from "./browser-session.js";
 import {
   countFormItemsByLabel,
@@ -29,6 +28,12 @@ import {
   setSingleDateByLabelAt,
 } from "./form-controls.js";
 import { downloadRemoteAsset } from "./upload/remote-assets.js";
+import { fillKuaishouDramaSaleAndEpisodes } from "./episodes.js";
+import { maximizeKuaishouImageCropArea } from "./image-crop.js";
+import {
+  installWarningMessageGuard,
+  throwIfKuaishouWarningCaptured,
+} from "./warning-guard.js";
 
 type BroadcastRowValue = {
   platform: string;
@@ -66,6 +71,7 @@ async function confirmImageCropDialog(
   page: Page,
   options: KuaishouDramaRuntimeOptions,
   logLabel: string,
+  clickDeadline: number,
 ) {
   type CropDialogState = {
     found: boolean;
@@ -74,11 +80,9 @@ async function confirmImageCropDialog(
     buttons: string[];
   };
 
-  const searchDeadline = Date.now() + 1_200;
-  const readyDeadline = Date.now() + 5_000;
   let lastState: CropDialogState | null = null;
 
-  while (Date.now() < (lastState?.found ? readyDeadline : searchDeadline)) {
+  while (Date.now() < clickDeadline) {
     const state = await page.evaluate<CropDialogState>(() => {
       const normalize = (text: string | null | undefined) => text?.replace(/\s+/g, " ").trim() ?? "";
       const cropTitlePattern = /(图片\s*(剪裁|裁剪)|剪裁|裁剪|编辑图片|图片编辑|调整图片)/;
@@ -168,7 +172,7 @@ async function confirmImageCropDialog(
     if (state.clicked) {
       log(options, `[kuaishou-drama] confirmed ${logLabel} crop dialog`);
       await page.waitForTimeout(300);
-      await page
+      const cropClosed = await page
         .waitForFunction(
           () => {
             const normalize = (text: string | null | undefined) => text?.replace(/\s+/g, " ").trim() ?? "";
@@ -196,9 +200,13 @@ async function confirmImageCropDialog(
             ).some((element) => isVisible(element) && cropTitlePattern.test(normalize(element.textContent)));
           },
           undefined,
-          { timeout: 3_000 },
+          { timeout: 10_000 },
         )
-        .catch(() => undefined);
+        .then(() => true)
+        .catch(() => false);
+      if (!cropClosed) {
+        throw new Error(`KUAISHOU_DRAMA_IMAGE_CROP_DIALOG_NOT_CLOSED: ${logLabel}`);
+      }
       return true;
     }
 
@@ -212,6 +220,32 @@ async function confirmImageCropDialog(
   }
 
   return false;
+}
+
+async function cancelImageCropDialogIfVisible(page: Page) {
+  const cropDialog = page
+    .locator('.ks-dialog[aria-label="图片剪裁"]:visible,[role="dialog"][aria-label="图片剪裁"]:visible')
+    .last();
+  if (!await cropDialog.isVisible().catch(() => false)) return;
+
+  const cancel = cropDialog
+    .locator("button,.ks-button")
+    .filter({ hasText: /^\s*取\s*消\s*$/ })
+    .last();
+  await cancel.evaluate((button) => (button as HTMLElement).click()).catch(async () => {
+    await cropDialog.locator('button[aria-label="close"]').evaluate((button) => {
+      (button as HTMLElement).click();
+    });
+  });
+  const closed = await cropDialog.waitFor({ state: "hidden", timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (!closed) {
+    await cropDialog.locator('button[aria-label="close"]').evaluate((button) => {
+      (button as HTMLElement).click();
+    });
+    await cropDialog.waitFor({ state: "hidden", timeout: 5_000 });
+  }
 }
 
 async function waitForImageUploadCompleted(page: Page, labelText: string, logLabel: string) {
@@ -289,20 +323,60 @@ async function uploadRemoteAssetByLabel(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const filePath = await downloadRemoteAsset(assetUrl, options, fallbackBaseName, logLabel);
-  const input = await fileInputByLabel(page, labelText);
-  await input.setInputFiles(filePath, { timeout: 60_000 });
-
   const shouldConfirmCrop = shouldConfirmImageCropDialog(labelText, fallbackBaseName, logLabel);
-  const cropConfirmed = shouldConfirmCrop
-    ? await confirmImageCropDialog(page, options, logLabel)
-    : false;
-  if (shouldConfirmCrop) {
-    await waitForImageUploadCompleted(page, labelText, logLabel);
-    log(options, `[kuaishou-drama] ${logLabel} upload confirmed`);
+  if (!shouldConfirmCrop) {
+    const input = await fileInputByLabel(page, labelText);
+    await input.setInputFiles(filePath, { timeout: 60_000 });
+    await page.waitForTimeout(250);
     return;
   }
 
-  await page.waitForTimeout(cropConfirmed ? 500 : 250);
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      const input = await fileInputByLabel(page, labelText);
+      await input.setInputFiles(filePath, { timeout: 60_000 });
+      const cropDialog = page.locator('.ks-dialog[aria-label="图片剪裁"]:visible').last();
+      await cropDialog.waitFor({ state: "visible", timeout: 10_000 });
+      const clickDeadline = Date.now() + 10_000;
+      const cropSize = await maximizeKuaishouImageCropArea(page, cropDialog);
+      if (Date.now() >= clickDeadline) {
+        throw new Error(`KUAISHOU_DRAMA_IMAGE_CROP_CONFIRM_TIMEOUT: ${logLabel}`);
+      }
+      log(
+        options,
+        `[kuaishou-drama] maximized ${logLabel} crop area (attempt ${attempt}/3): ` +
+          `${Math.round(cropSize.before.width)}x${Math.round(cropSize.before.height)} -> ` +
+          `${Math.round(cropSize.after.width)}x${Math.round(cropSize.after.height)}`,
+      );
+      const cropConfirmed = await confirmImageCropDialog(
+        page,
+        options,
+        logLabel,
+        clickDeadline,
+      );
+      if (!cropConfirmed) {
+        throw new Error(`KUAISHOU_DRAMA_IMAGE_CROP_CONFIRM_TIMEOUT: ${logLabel}`);
+      }
+      await waitForImageUploadCompleted(page, labelText, logLabel);
+      log(options, `[kuaishou-drama] ${logLabel} upload confirmed`);
+      return;
+    } catch (error) {
+      lastError = error;
+      log(
+        options,
+        `[kuaishou-drama] ${logLabel} crop attempt ${attempt}/3 failed: ` +
+          `${error instanceof Error ? error.message : String(error)}`,
+      );
+      await cancelImageCropDialogIfVisible(page);
+      if (attempt < 3) await page.waitForTimeout(300);
+    }
+  }
+  throw new Error(
+    `KUAISHOU_DRAMA_IMAGE_CROP_RETRY_EXHAUSTED: ${logLabel}; ${
+      lastError instanceof Error ? lastError.message : String(lastError)
+    }`,
+  );
 }
 
 async function fillFormControlsFast(page: Page, controls: FastControlFill[]) {
@@ -547,23 +621,151 @@ async function fillMainActorInfo(
   taskConfig: KuaishouDramaTaskConfig,
   options: KuaishouDramaRuntimeOptions,
 ) {
-  try {
-    await fillFormControlsFast(page, [
-      { kind: "text", label: "演员姓名", value: taskConfig.actorName, placeholder: "请输入" },
-      { kind: "select", label: "演员性别", value: taskConfig.actorGender },
-      { kind: "text", label: "演员角色", value: taskConfig.actorRole, placeholder: "请输入角色名" },
-    ]);
+  const actors = taskConfig.mainActors;
+  if (actors.length < 2 || actors.length > 5) {
+    throw new Error(`KUAISHOU_DRAMA_MAIN_ACTOR_COUNT_INVALID: ${actors.length}`);
+  }
+
+  log(options, `[kuaishou-drama] main actor target count: ${actors.length}`);
+  for (const [index, actor] of actors.entries()) {
+    const actorNumber = index + 1;
+    const actorTitle = `演员${actorNumber}`;
+    let actorCard = page
+      .locator(".main-actor")
+      .filter({
+        has: page.locator(".platform-title .text").filter({ hasText: new RegExp(`^${actorTitle}$`) }),
+      })
+      .filter({ visible: true })
+      .first();
+
+    if (index > 0 && !await actorCard.isVisible().catch(() => false)) {
+      log(options, `[kuaishou-drama] clicking add main actor for row ${actorNumber}`);
+      const addResult = await page.evaluate(() => {
+        const normalize = (text: string | null | undefined) => text?.replace(/\s+/g, " ").trim() ?? "";
+        const buttons = Array.from(document.querySelectorAll<HTMLButtonElement>("button"));
+        const button = buttons.find((candidate) => (
+          normalize(candidate.textContent) === "新增主要演员信息" && !candidate.disabled
+        ));
+        if (!button) {
+          return {
+            clicked: false,
+            buttons: buttons.map((candidate) => normalize(candidate.textContent)).filter(Boolean),
+          };
+        }
+
+        const eventInit = { bubbles: true, cancelable: true, view: window };
+        button.dispatchEvent(new PointerEvent("pointerdown", eventInit));
+        button.dispatchEvent(new MouseEvent("mousedown", eventInit));
+        button.dispatchEvent(new PointerEvent("pointerup", eventInit));
+        button.dispatchEvent(new MouseEvent("mouseup", eventInit));
+        button.click();
+        return { clicked: true, buttons: [] as string[] };
+      });
+      if (!addResult.clicked) {
+        throw new Error(
+          `KUAISHOU_DRAMA_ADD_MAIN_ACTOR_BUTTON_NOT_FOUND: ` +
+            `buttons=${addResult.buttons.join("|")}`,
+        );
+      }
+
+      actorCard = page
+        .locator(".main-actor")
+        .filter({
+          has: page.locator(".platform-title .text").filter({ hasText: new RegExp(`^${actorTitle}$`) }),
+        })
+        .filter({ visible: true })
+        .first();
+      await actorCard.waitFor({ state: "visible", timeout: 10_000 });
+      log(options, `[kuaishou-drama] added main actor row ${actorNumber}`);
+    }
+
+    await actorCard.waitFor({ state: "visible", timeout: 10_000 });
+    const nameInput = actorCard
+      .locator('label[for$=".actorName"]')
+      .locator("xpath=..")
+      .locator('input[placeholder="请输入"]')
+      .first();
+    const roleInput = actorCard
+      .locator('label[for$=".actorRole"]')
+      .locator("xpath=..")
+      .locator('input[placeholder="请输入角色名"]')
+      .first();
+    await nameInput.fill(actor.actorName, { timeout: 30_000 });
+    await selectSingleByLabelAt(page, "演员性别", actor.actorGender, index);
+    await roleInput.fill(actor.actorRole, { timeout: 30_000 });
+    if (
+      await nameInput.inputValue() !== actor.actorName ||
+      await roleInput.inputValue() !== actor.actorRole
+    ) {
+      throw new Error(`KUAISHOU_DRAMA_MAIN_ACTOR_FILL_FAILED: actor=${index + 1}`);
+    }
+    log(options, `[kuaishou-drama] main actor filled: ${actorNumber}/${actors.length}`);
+  }
+
+  await page.evaluate(() => {
+    const activeElement = document.activeElement;
+    if (activeElement instanceof HTMLElement) {
+      activeElement.blur();
+    }
+    const eventInit = {
+      bubbles: true,
+      cancelable: true,
+      key: "Escape",
+      code: "Escape",
+    };
+    document.dispatchEvent(new KeyboardEvent("keydown", eventInit));
+    document.dispatchEvent(new KeyboardEvent("keyup", eventInit));
+  }).catch(() => undefined);
+
+  const finalActorCount = await page.locator(".main-actor:visible").count();
+  if (finalActorCount < actors.length) {
+    throw new Error(
+      `KUAISHOU_DRAMA_MAIN_ACTOR_CARD_COUNT_INVALID: ` +
+        `actual=${finalActorCount} expectedAtLeast=${actors.length}`,
+    );
+  }
+  log(options, `[kuaishou-drama] main actor section completed: ${finalActorCount} rows visible`);
+}
+
+async function fillAuthorDeclaration(
+  page: Page,
+  taskConfig: KuaishouDramaTaskConfig,
+  options: KuaishouDramaRuntimeOptions,
+) {
+  const label = page
+    .locator("label.ks-form-item__label")
+    .filter({ hasText: /^\s*作者声明\s*$/ })
+    .filter({ visible: true })
+    .first();
+  await label.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {
+    throw new Error("KUAISHOU_DRAMA_AUTHOR_DECLARATION_FIELD_NOT_FOUND");
+  });
+
+  const formItem = label.locator("xpath=..");
+  const input = formItem.locator(".ks-select input.ks-input__inner").first();
+  await input.waitFor({ state: "attached", timeout: 10_000 });
+  const currentValue = (await input.inputValue().catch(() => "")).replace(/\s+/g, "").trim();
+  const targetValue = taskConfig.authorDeclaration.replace(/\s+/g, "").trim();
+  if (currentValue === targetValue || currentValue.includes(targetValue)) {
+    log(options, `[kuaishou-drama] author declaration already selected: ${taskConfig.authorDeclaration}`);
     return;
-  } catch (error) {
-    log(
-      options,
-      `[kuaishou-drama] main actor fast fill fallback: ${error instanceof Error ? error.message : String(error)}`,
+  }
+
+  const disabled = await input.isDisabled().catch(() => false);
+  const readOnly = await input.getAttribute("readonly").then((value) => value !== null).catch(() => false);
+  if (disabled) {
+    throw new Error(
+      `KUAISHOU_DRAMA_AUTHOR_DECLARATION_DISABLED: current=${currentValue || "empty"}`,
     );
   }
 
-  await fillTextboxByLabel(page, "演员姓名", taskConfig.actorName, "请输入");
-  await selectSingleByLabel(page, "演员性别", taskConfig.actorGender);
-  await fillTextboxByLabel(page, "演员角色", taskConfig.actorRole, "请输入角色名");
+  // Kuaishou selects use readonly text inputs as their normal trigger, so readonly is informational only.
+  log(
+    options,
+    `[kuaishou-drama] author declaration field ready: current=${currentValue || "empty"}; readonly=${readOnly}`,
+  );
+  await selectSingleByLabel(page, "作者声明", taskConfig.authorDeclaration);
+  log(options, `[kuaishou-drama] author declaration selected: ${taskConfig.authorDeclaration}`);
 }
 
 async function fillBroadcastRow(
@@ -982,12 +1184,14 @@ async function fillPersonnelInfo(
 export async function fillKuaishouDramaEditForm(
   page: Page,
   taskConfig: KuaishouDramaTaskConfig,
+  variant: KuaishouDramaPublishVariant,
+  resourceName: string,
   options: KuaishouDramaRuntimeOptions,
 ) {
-  const remoteAssetDirectoryName = taskConfig.title;
+  const remoteAssetDirectoryName = `${taskConfig.title}-${variant.kind}`;
 
-  log(options, "[kuaishou-drama] filling drama title");
-  await fillTextboxByLabel(page, "短剧标题", taskConfig.title, "请输入");
+  log(options, `[kuaishou-drama] filling drama title: ${variant.title}`);
+  await fillTextboxByLabel(page, "短剧标题", variant.title, "请输入");
 
   log(options, "[kuaishou-drama] uploading drama cover");
   await uploadRemoteAssetByLabel(
@@ -1071,6 +1275,9 @@ export async function fillKuaishouDramaEditForm(
   if (taskConfig.hasRecordNumber === "否") {
     log(options, "[kuaishou-drama] filling main actor info");
     await fillMainActorInfo(page, taskConfig, options);
+
+    log(options, `[kuaishou-drama] selecting author declaration: ${taskConfig.authorDeclaration}`);
+    await fillAuthorDeclaration(page, taskConfig, options);
 
     log(options, "[kuaishou-drama] selecting production year");
     await selectYearByLabel(page, "出品年份", taskConfig.productionYear);
@@ -1156,45 +1363,87 @@ export async function fillKuaishouDramaEditForm(
     );
   }
 
-  log(options, "[kuaishou-drama] edit form fields completed");
+  await fillKuaishouDramaSaleAndEpisodes(page, taskConfig, variant, resourceName, options);
+
+  log(options, `[kuaishou-drama] edit form fields completed: ${variant.kind}`);
+}
+
+async function openKuaishouDramaEditPage(
+  context: BrowserContext,
+  page: Page,
+  options: KuaishouDramaRuntimeOptions,
+  allowLogin: boolean,
+) {
+  await installWarningMessageGuard(page, options);
+  await page.goto(KUAISHOU_DRAMA_EDIT_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+
+  const titleLabel = page.getByText("短剧标题", { exact: true });
+  const formAlreadyReady = await titleLabel
+    .waitFor({ state: "visible", timeout: 5_000 })
+    .then(() => true)
+    .catch(() => false);
+  if (allowLogin && !formAlreadyReady) {
+    log(options, "[kuaishou-drama] login required, waiting for authenticated edit form");
+  }
+
+  if (!formAlreadyReady) {
+    await titleLabel.waitFor({
+      state: "visible",
+      timeout: allowLogin ? 10 * 60_000 : 60_000,
+    });
+  }
+  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+  if (allowLogin) {
+    log(options, "[kuaishou-drama] login confirmed, edit form is ready");
+    await saveCredentialState(context, options);
+  }
 }
 
 export async function runPublishTask(
   context: BrowserContext,
   page: Page,
   options: KuaishouDramaRuntimeOptions,
-  taskConfig: KuaishouDramaTaskConfig | null,
+  resolveTask: () => Promise<{
+    taskConfig: KuaishouDramaTaskConfig;
+    resourceName: string;
+  } | null>,
 ) {
-  log(options, "[kuaishou-drama] opening edit page");
-  await page.goto(KUAISHOU_DRAMA_EDIT_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
+  log(options, "[kuaishou-drama] opening edit page; task execution is paused until login");
+  await openKuaishouDramaEditPage(context, page, options, true);
+  const resolvedTask = await resolveTask();
 
-  if (loginStateFromUrl(page.url()) === "login-required") {
-    await page.goto(KUAISHOU_DRAMA_LOGIN_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
-    if (await waitForLoginIfNeeded(page, options)) {
-      await saveCredentialState(context, options);
-    }
-    if (!page.url().includes("/home/content/content-management/edit")) {
-      await page.goto(KUAISHOU_DRAMA_EDIT_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      });
-    }
-  }
-
-  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
-  await page.getByText("短剧标题", { exact: true }).waitFor({ state: "visible", timeout: 60_000 });
-  await saveCredentialState(context, options);
-
-  if (!taskConfig) {
+  if (!resolvedTask) {
     log(options, "[kuaishou-drama] task config not provided, browser is ready");
     return;
   }
+  const { taskConfig, resourceName } = resolvedTask;
 
-  await fillKuaishouDramaEditForm(page, taskConfig, options);
+  const [fullPaidVariant, adUnlockVariant] = createKuaishouDramaPublishVariants(taskConfig);
+  log(options, "[kuaishou-drama] filling publish variants one at a time");
+  const runVariant = async (
+    targetPage: Page,
+    variant: KuaishouDramaPublishVariant,
+  ) => {
+    log(options, `[kuaishou-drama] tab started: ${variant.kind}`);
+    try {
+      await targetPage.bringToFront();
+      await fillKuaishouDramaEditForm(targetPage, taskConfig, variant, resourceName, options);
+      await throwIfKuaishouWarningCaptured(targetPage, options);
+      log(options, `[kuaishou-drama] tab completed: ${variant.kind}`);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      log(options, `[kuaishou-drama] tab failed: ${variant.kind}: ${message}`);
+      throw error;
+    }
+  };
+
+  await runVariant(page, fullPaidVariant);
+
+  log(options, "[kuaishou-drama] full-paid form completed; opening ad-unlock form");
+  const adUnlockPage = await context.newPage();
+  await openKuaishouDramaEditPage(context, adUnlockPage, options, false);
+  await runVariant(adUnlockPage, adUnlockVariant);
 }

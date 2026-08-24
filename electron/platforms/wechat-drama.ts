@@ -1,6 +1,8 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import Store from 'electron-store'
+import cron, { type ScheduledTask } from 'node-cron'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
+import { lstat, readdir, rm } from 'node:fs/promises'
 import path from 'node:path'
 import {
   directoryDefaultPath,
@@ -81,7 +83,7 @@ type WechatVideoStore = {
 
 const defaultWechatVideoConfig: WechatVideoConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
-  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU,YOUDIANNIU',
+  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU,YOUDIANNIU,ZHENCUIYIHAO,RUIXIAODOU',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-drama',
@@ -115,6 +117,8 @@ const contractSubjectOptions = [
   { label: '幻走', value: 'HUANZOU' },
   { label: '小石榴', value: 'XIAOSHILIU' },
   { label: '有点牛', value: 'YOUDIANNIU' },
+  { label: '珍萃', value: 'ZHENCUIYIHAO' },
+  { label: '瑞小豆', value: 'RUIXIAODOU' },
 ]
 
 const contractSubjectAliases: Record<string, string> = {
@@ -124,20 +128,20 @@ const contractSubjectAliases: Record<string, string> = {
   幻走: 'HUANZOU',
   小石榴: 'XIAOSHILIU',
   有点牛: 'YOUDIANNIU',
+  珍萃: 'ZHENCUIYIHAO',
+  瑞小豆: 'RUIXIAODOU',
 }
 
-const legacyDefaultContractSubjects = new Set([
-  'MINGXINGSHUO',
-  'MISU',
-  'WEITAO',
-  'HUANZOU',
-  'XIAOSHILIU',
-])
+const legacyDefaultContractSubjectSets = [
+  new Set(['MINGXINGSHUO', 'MISU', 'WEITAO', 'HUANZOU', 'XIAOSHILIU']),
+  new Set(['MINGXINGSHUO', 'MISU', 'WEITAO', 'HUANZOU', 'XIAOSHILIU', 'YOUDIANNIU']),
+]
 
 const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
 const runtimeController = new RuntimeController<WechatVideoRuntime>()
 let store: Store<WechatVideoStore> | null = null
+let contractCleanupTask: ScheduledTask | null = null
 
 export function getWechatVideoBrowserInstanceCount() {
   return runtimeController.current
@@ -247,11 +251,14 @@ function normalizeConfig(
       .map((subject) => subject.trim())
       .filter(Boolean),
   )
-  const usesLegacyDefaultContractSubjects =
-    selectedContractSubjects.size === legacyDefaultContractSubjects.size
-    && [...legacyDefaultContractSubjects].every((subject) => selectedContractSubjects.has(subject))
+  const usesLegacyDefaultContractSubjects = legacyDefaultContractSubjectSets.some((legacySubjects) => (
+    selectedContractSubjects.size === legacySubjects.size
+    && [...legacySubjects].every((subject) => selectedContractSubjects.has(subject))
+  ))
   if (usesLegacyDefaultContractSubjects) {
     selectedContractSubjects.add('YOUDIANNIU')
+    selectedContractSubjects.add('ZHENCUIYIHAO')
+    selectedContractSubjects.add('RUIXIAODOU')
   }
 
   return {
@@ -302,6 +309,84 @@ function sanitizeLogFileSegment(value: string) {
 
 function logDirPath(config = readConfig()) {
   return path.join(resolveFromAppRoot(config.runDataDir), 'logs')
+}
+
+function isMissingContractPathError(error: unknown) {
+  return (error as NodeJS.ErrnoException)?.code === 'ENOENT'
+}
+
+async function latestContractModifiedAtMs(target: string): Promise<number> {
+  const targetStat = await lstat(target)
+  let latest = targetStat.mtimeMs
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest
+
+  const entries = await readdir(target, { withFileTypes: true })
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue
+    latest = Math.max(latest, await latestContractModifiedAtMs(path.join(target, entry.name)))
+  }
+  return latest
+}
+
+async function cleanupPreviousWechatCopyrightProofs(now = new Date()) {
+  const proofParent = path.resolve(resolveFromAppRoot(readConfig().runDataDir), 'remote-upload-assets')
+  const startOfToday = new Date(now.getFullYear(), now.getMonth(), now.getDate()).getTime()
+  let entries
+  try {
+    entries = await readdir(proofParent, { withFileTypes: true })
+  } catch (error) {
+    if (isMissingContractPathError(error)) return
+    throw error
+  }
+
+  let deletedCount = 0
+  for (const entry of entries) {
+    if (
+      !entry.isDirectory()
+      || entry.isSymbolicLink()
+      || !entry.name.toLowerCase().endsWith('-contract')
+    ) {
+      continue
+    }
+    const contractDir = path.resolve(proofParent, entry.name)
+    const relativeContractDir = path.relative(proofParent, contractDir)
+    if (
+      !relativeContractDir
+      || relativeContractDir.startsWith('..')
+      || path.isAbsolute(relativeContractDir)
+    ) {
+      continue
+    }
+    const modifiedAtMs = await latestContractModifiedAtMs(contractDir).catch((error: unknown) => {
+      if (isMissingContractPathError(error)) return startOfToday
+      throw error
+    })
+    if (modifiedAtMs >= startOfToday) continue
+
+    await rm(contractDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
+    deletedCount += 1
+    console.log(`[wechat-drama] deleted previous copyright proofs: ${contractDir}`)
+  }
+  console.log(`[wechat-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`)
+}
+
+function scheduleWechatCopyrightProofCleanup() {
+  if (contractCleanupTask) return
+  contractCleanupTask = cron.schedule('0 1 * * *', async () => {
+    await cleanupPreviousWechatCopyrightProofs().catch((error: unknown) => {
+      console.error(
+        `[wechat-drama] previous copyright proof cleanup failed: ${
+          error instanceof Error ? error.message : String(error)
+        }`,
+      )
+    })
+  }, {
+    name: 'wechat-copyright-proof-cleanup',
+    timezone: 'Asia/Shanghai',
+    noOverlap: true,
+    unref: true,
+  })
+  console.log('[wechat-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai')
 }
 
 function findLatestVideoAccountLogFile(videoAccountId: string) {
@@ -358,6 +443,8 @@ async function startRuntime() {
 }
 
 export function registerWechatVideoPlatformHandlers() {
+  scheduleWechatCopyrightProofCleanup()
+
   ipcMain.handle('wechat-drama:config:get', () => ({
     config: readConfig(),
     path: configPath(),

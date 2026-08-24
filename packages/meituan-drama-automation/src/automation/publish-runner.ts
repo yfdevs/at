@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { MEITUAN_CREATION_PUBLISH_VIDEO_URL } from "../shared/constants.js";
 import type { ClaimedMeituanDramaTask, MeituanCreationRuntimeOptions } from "../shared/types.js";
 import { log, saveCredentialState, waitForLogin } from "./browser-session.js";
@@ -48,23 +49,13 @@ async function ensureBaiduNetdiskResourceReady(
         resourceName,
         localEpisodeVideoRoot,
         episodeCount,
-        requiredOwnership: {
-          minimumImages: 1,
-        },
         requiredPosterImages: 1,
       });
       return;
     } catch (error) {
       lastError = error;
       const message = errorMessage(error);
-      const nonRetryable = [
-        "分享文本中没有找到百度网盘链接",
-        "百度网盘账号登录已过期",
-        "百度网盘海报封面数量不足",
-        "剧集视频目录不存在",
-        "存在重复集数",
-        "剧集文件应按文件名匹配",
-      ].some((pattern) => message.includes(pattern));
+      const nonRetryable = isNonRetryableBaiduNetdiskResourceError(error);
       if (nonRetryable || attempt >= maxAttempts) break;
 
       log(
@@ -129,15 +120,11 @@ export async function runPublishTask(
   log(options, "[meituan-drama] preparing copyright proof materials");
   const copyrightProofMaterials = await prepareMeituanCopyrightProofMaterials(task, options);
 
-  try {
-    await openPublishPage(context, page, options);
-    log(options, "[meituan-drama] clicking publish-to-collection entry");
-    await clickWhenReady(page, page.getByText("发布至合集"));
-    await selectPublishTargetStep(page, taskConfig, options, copyrightProofMaterials.files);
-    await uploadEpisodeVideosStep(page, task, options);
-    await submitPublishStep(page, options);
-    log(options, "[meituan-drama] publish task completed");
-  } finally {
-    await copyrightProofMaterials.cleanup();
-  }
+  await openPublishPage(context, page, options);
+  log(options, "[meituan-drama] clicking publish-to-collection entry");
+  await clickWhenReady(page, page.getByText("发布至合集"));
+  await selectPublishTargetStep(page, taskConfig, options, copyrightProofMaterials.files);
+  await uploadEpisodeVideosStep(page, task, options);
+  await submitPublishStep(page, options);
+  log(options, "[meituan-drama] publish task completed");
 }

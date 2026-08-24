@@ -2,6 +2,7 @@ import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
@@ -32,6 +33,9 @@ type KuaishouDramaRuntime = {
 
 export type KuaishouDramaConfig = {
   accountProfileName: string;
+  localEpisodeVideoRoot: string;
+  baiduNetdiskDownloadRetryAttempts: string;
+  videoUploadTimeoutMinutes: string;
   headless: string;
   operationDelaySeconds: string;
   runDataDir: string;
@@ -66,6 +70,9 @@ type KuaishouDramaStore = {
 
 const defaultKuaishouDramaConfig: KuaishouDramaConfig = {
   accountProfileName: "default",
+  localEpisodeVideoRoot: "",
+  baiduNetdiskDownloadRetryAttempts: "3",
+  videoUploadTimeoutMinutes: "120",
   headless: "false",
   operationDelaySeconds: "0",
   runDataDir: ".drama-runs/kuaishou-drama",
@@ -144,6 +151,17 @@ function normalizeConfig(
   return {
     accountProfileName:
       config.accountProfileName?.trim() || defaultKuaishouDramaConfig.accountProfileName,
+    localEpisodeVideoRoot:
+      config.localEpisodeVideoRoot ?? defaultKuaishouDramaConfig.localEpisodeVideoRoot,
+    baiduNetdiskDownloadRetryAttempts:
+      /^\d+$/.test(config.baiduNetdiskDownloadRetryAttempts?.trim() ?? "")
+        ? config.baiduNetdiskDownloadRetryAttempts!.trim()
+        : defaultKuaishouDramaConfig.baiduNetdiskDownloadRetryAttempts,
+    videoUploadTimeoutMinutes:
+      /^\d+$/.test(config.videoUploadTimeoutMinutes?.trim() ?? "") &&
+      Number.parseInt(config.videoUploadTimeoutMinutes!.trim(), 10) >= 1
+        ? config.videoUploadTimeoutMinutes!.trim()
+        : defaultKuaishouDramaConfig.videoUploadTimeoutMinutes,
     headless: config.headless ?? defaultKuaishouDramaConfig.headless,
     operationDelaySeconds: normalizeOperationDelaySeconds(config.operationDelaySeconds),
     runDataDir:
@@ -233,7 +251,14 @@ function ensureStorageDirectories(paths = storagePaths()) {
 
 async function importKuaishouDramaRuntimePackage() {
   return import("@drama/kuaishou-drama-automation") as Promise<{
-    createMockKuaishouDramaTaskInput: () => unknown;
+    claimNextKuaishouDramaTaskApi: () => Promise<{
+      accountTaskId: number;
+      task: unknown;
+    } | null>;
+    reportKuaishouDramaTaskErrorApi: (task: {
+      accountTaskId: number;
+      errorMessage: string;
+    }) => Promise<void>;
     startKuaishouDramaRuntime: (
       options: Record<string, unknown>,
     ) => Promise<KuaishouDramaRuntime>;
@@ -291,17 +316,32 @@ async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
 
   const config = readConfig();
+  const configuredVideoRoot = config.localEpisodeVideoRoot.trim();
+  if (!configuredVideoRoot) {
+    throw new Error("请先在快手短剧配置中选择本地剧集视频目录，再启动服务。");
+  }
+  const localEpisodeVideoRoot = resolveFromAppRoot(configuredVideoRoot);
+  if (!existsSync(localEpisodeVideoRoot) || !statSync(localEpisodeVideoRoot).isDirectory()) {
+    throw new Error(`快手短剧本地剧集视频目录不存在或不是文件夹：${localEpisodeVideoRoot}`);
+  }
+
   const paths = storagePaths(config);
   ensureStorageDirectories(paths);
   const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
   const logRetentionDays = Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3);
+  const baiduNetdiskDownloadRetryAttempts = Math.max(
+    0,
+    Number.parseInt(config.baiduNetdiskDownloadRetryAttempts, 10) || 0,
+  );
+  const videoUploadTimeoutMinutes = Math.max(
+    1,
+    Number.parseInt(config.videoUploadTimeoutMinutes, 10) || 120,
+  );
   const {
-    createMockKuaishouDramaTaskInput,
+    claimNextKuaishouDramaTaskApi,
+    reportKuaishouDramaTaskErrorApi,
     startKuaishouDramaRuntime,
   } = await importKuaishouDramaRuntimePackage();
-  const task = config.mockTaskEnabled === "true"
-    ? createMockKuaishouDramaTaskInput()
-    : undefined;
   return startKuaishouDramaRuntime({
     accountProfileName: config.accountProfileName,
     accountDir: paths.accountDir,
@@ -310,15 +350,24 @@ async function startRuntime() {
     assetDownloadDir: paths.assetDownloadDir,
     logFilePath: paths.logFilePath,
     logRetentionDays,
+    localEpisodeVideoRoot,
+    baiduNetdiskDownloadRetryAttempts,
+    videoUploadTimeoutMinutes,
+    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
     onLog: (message: string) => {
       console.log(message);
     },
+    claimTask: config.mockTaskEnabled === "true"
+      ? async () => await claimNextKuaishouDramaTaskApi()
+      : undefined,
+    reportTaskError: config.mockTaskEnabled === "true"
+      ? reportKuaishouDramaTaskErrorApi
+      : undefined,
     config: {
       browser: {
         headless: config.headless === "true",
         slowMo: operationDelayMs,
       },
-      task,
     },
   });
 }
@@ -354,6 +403,15 @@ export function registerKuaishouDramaPlatformHandlers() {
 
     return normalizePlatformRunDataDir(selectedPath, "kuaishou-drama");
   });
+
+  ipcMain.handle(
+    "kuaishou-drama:config:select-local-episode-video-root",
+    async (event, currentPath?: string) => selectDirectory(event, {
+      title: "选择快手短剧剧集视频根目录",
+      defaultPath: directoryDefaultPath(currentPath, app.getPath("videos")),
+      properties: ["openDirectory", "createDirectory"],
+    }),
+  );
 
   ipcMain.handle(
     "kuaishou-drama:config:open-storage-path",

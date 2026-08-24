@@ -1,15 +1,7 @@
-import { mkdir, rm } from "node:fs/promises";
+import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  composeOwnershipMaterialsIntoOne,
-  listLocalOwnershipMaterials,
-} from "@drama/drama-media-assets";
 import { log } from "../automation/browser-session.js";
 import { downloadRemoteAsset } from "../automation/upload/remote-assets.js";
-import {
-  getMeituanLocalEpisodeVideoRoot,
-  getMeituanOriginalTitle,
-} from "./local-episode-videos.js";
 import type {
   ClaimedMeituanDramaTask,
   MeituanCreationRuntimeOptions,
@@ -17,7 +9,6 @@ import type {
 
 export type PreparedMeituanCopyrightProofMaterials = {
   files: string[];
-  cleanup: () => Promise<void>;
 };
 
 function copyrightProofTaskDir(
@@ -60,60 +51,30 @@ export async function prepareMeituanCopyrightProofMaterials(
   options: MeituanCreationRuntimeOptions,
 ): Promise<PreparedMeituanCopyrightProofMaterials> {
   const taskDir = copyrightProofTaskDir(task, options);
-  const cleanup = () => rm(taskDir, { recursive: true, force: true });
-
-  await cleanup();
   await mkdir(taskDir, { recursive: true });
 
-  try {
-    const resourceName = getMeituanOriginalTitle(task);
-    const ownershipFiles = await listLocalOwnershipMaterials({
-      root: getMeituanLocalEpisodeVideoRoot(options),
-      resourceName,
-    });
-    if (ownershipFiles.length === 0) {
-      throw new Error(
-        `[copyright-proof-invalid] 未找到工程或权属目录下的图片：${resourceName}`,
-      );
-    }
+  const productionProofFiles = await downloadProofFiles({
+    urls: task.playlet.productionProofFiles.slice(0, 1),
+    kind: "production",
+    taskDir,
+    runtimeOptions: options,
+  });
+  const licenseProofFiles = await downloadProofFiles({
+    urls: task.playlet.licenseProofFiles.slice(0, 1),
+    kind: "license",
+    taskDir,
+    runtimeOptions: options,
+  });
+  const files = [
+    ...productionProofFiles,
+    ...licenseProofFiles,
+  ];
 
-    const productionProofFiles = await downloadProofFiles({
-      urls: task.playlet.productionProofFiles.slice(0, 1),
-      kind: "production",
-      taskDir,
-      runtimeOptions: options,
-    });
-    const licenseProofFiles = await downloadProofFiles({
-      urls: task.playlet.licenseProofFiles.slice(0, 1),
-      kind: "license",
-      taskDir,
-      runtimeOptions: options,
-    });
-    const contractProofFiles = [
-      ...productionProofFiles,
-      ...licenseProofFiles,
-    ];
-    const ownershipComposite = await composeOwnershipMaterialsIntoOne({
-      files: ownershipFiles,
-      outputDir: path.dirname(ownershipFiles[0].file),
-      resourceName,
-    });
-    const files = [
-      ...contractProofFiles,
-      ownershipComposite,
-    ];
-
-    log(
-      options,
-      `[meituan-drama] copyright proof materials ready: ` +
+  log(
+    options,
+    `[meituan-drama] copyright proof materials ready: ` +
       `production=${productionProofFiles.length} license=${licenseProofFiles.length} ` +
-      `contractUpload=${contractProofFiles.length} ` +
-      `ownershipSource=${ownershipFiles.length} ownershipComposite=1 ` +
       `upload=${files.length}`,
-    );
-    return { files, cleanup };
-  } catch (error) {
-    await cleanup();
-    throw error;
-  }
+  );
+  return { files };
 }

@@ -190,6 +190,7 @@ export async function runMeituanAccountTaskWorker(options: {
 
       claimedCount += 1;
       let taskNormalized = false;
+      let taskPage: Page | null = null;
       try {
         if (claimed.accountTaskId !== listedTask.id) {
           throw new Error(
@@ -203,7 +204,39 @@ export async function runMeituanAccountTaskWorker(options: {
           account,
         });
         taskNormalized = true;
-        await runPublishTask(context, page, runtimeOptions, task);
+        taskPage = await context.newPage();
+        log(
+          runtimeOptions,
+          `[meituan-drama] opened dedicated task page: accountTaskId=${claimed.accountTaskId}`,
+        );
+        await runPublishTask(context, taskPage, runtimeOptions, task);
+
+        await reportWithRetry(
+          runtimeOptions,
+          {
+            taskId: claimed.accountTaskId,
+            success: true,
+            resultJson: {
+              activeUrl: taskPage.url(),
+              accountId: account.accountId,
+              accountName: account.accountName,
+            },
+          },
+          isRunning,
+        )
+          .then(() => {
+            log(
+              runtimeOptions,
+              `[meituan-drama] task succeeded and reported: accountTaskId=${claimed.accountTaskId}`,
+            );
+          })
+          .catch((reportError) => {
+            log(
+              runtimeOptions,
+              `[meituan-drama] success report exhausted retries: ` +
+                `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
+            );
+          });
       } catch (error) {
         const message = reportableErrorMessage(error);
         const failStage = taskNormalized ? classifyFailStage(error) : "OTHER";
@@ -225,7 +258,7 @@ export async function runMeituanAccountTaskWorker(options: {
             failStage,
             errorMessage: message,
             resultJson: {
-              activeUrl: page.url(),
+              activeUrl: taskPage?.url() ?? page.url(),
               accountId: account.accountId,
               accountName: account.accountName,
             },
@@ -239,34 +272,22 @@ export async function runMeituanAccountTaskWorker(options: {
           );
         });
         continue;
+      } finally {
+        if (taskPage) {
+          if (runtimeOptions.closeTaskPageAfterRun !== false) {
+            await taskPage.close().catch(() => undefined);
+            log(
+              runtimeOptions,
+              `[meituan-drama] closed dedicated task page: accountTaskId=${claimed.accountTaskId}`,
+            );
+          } else {
+            log(
+              runtimeOptions,
+              `[meituan-drama] kept dedicated task page: accountTaskId=${claimed.accountTaskId}`,
+            );
+          }
+        }
       }
-
-      await reportWithRetry(
-        runtimeOptions,
-        {
-          taskId: claimed.accountTaskId,
-          success: true,
-          resultJson: {
-            activeUrl: page.url(),
-            accountId: account.accountId,
-            accountName: account.accountName,
-          },
-        },
-        isRunning,
-      )
-        .then(() => {
-          log(
-            runtimeOptions,
-            `[meituan-drama] task succeeded and reported: accountTaskId=${claimed.accountTaskId}`,
-          );
-        })
-        .catch((reportError) => {
-          log(
-            runtimeOptions,
-            `[meituan-drama] success report exhausted retries: ` +
-              `accountTaskId=${claimed.accountTaskId} error=${errorMessage(reportError)}`,
-          );
-        });
     }
 
     if (claimedCount > 0) {

@@ -244,7 +244,7 @@ async function confirmCreateCollectionDrawer(page: Page) {
   await confirmButton.click({ timeout: 30_000 });
   await page.waitForTimeout(300);
 
-  const errorTips = page.locator(".mtd-form-item-error-tip:visible");
+  const errorTips = page.locator(".mtd-form-item-error-tip:visible, .err-tips:visible");
   const errorTexts = (await errorTips.allInnerTexts().catch(() => []))
     .map((text) => text.trim())
     .filter(Boolean);
@@ -485,7 +485,7 @@ export async function fillCreateCollectionDrawer(
   copyrightProofFiles: string[],
 ) {
   const messageContent = page.locator(".mtd-message.mtd-message-error .mtd-message-content");
-  const formItemErrors = page.locator(".mtd-form-item-error-tip:visible");
+  const formItemErrors = page.locator(".mtd-form-item-error-tip:visible, .err-tips:visible");
   await page.addLocatorHandler(
     messageContent,
     async (message) => {

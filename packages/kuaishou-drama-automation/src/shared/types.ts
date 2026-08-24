@@ -83,13 +83,23 @@ export const kuaishouDramaProductionMethodValues = [
 export const kuaishouDramaCopyrightProofTypeValues = ["自有版权", "授权版权"] as const;
 export const kuaishouDramaCopyrightMaterialValues = [
   "作品登记证书",
-  "短剧制作协议/权属声明",
-  "现场拍摄图/短剧工程文件",
-  "可信时间戳认证证书",
+  "短剧制作协议",
+  "承诺函+现场拍摄图/短剧工程文件",
+  "承诺函+可信时间戳认证",
 ] as const;
 export const kuaishouDramaYesNoValues = ["是", "否"] as const;
 export const kuaishouDramaBroadcastPathValues = ["小屏小程序", "小屏APP", "PC端"] as const;
 export const kuaishouDramaPersonGenderValues = ["男", "女"] as const;
+export const kuaishouDramaAuthorDeclarationValues = [
+  "内容无需添加声明",
+  "含AI生成内容",
+] as const;
+export const kuaishouDramaSaleModeValues = [
+  "全剧付费",
+  "单集+全剧付费",
+  "观看广告解锁",
+] as const;
+export const kuaishouDramaEpisodePriceValues = ["免费", "付费"] as const;
 
 const requiredText = z.string().trim().min(1);
 const requiredRemoteUrl = z.string().trim().url();
@@ -109,8 +119,21 @@ function oneYearLater(value: Date) {
   return next;
 }
 
+const kuaishouDramaMainActorSchema = z.object({
+  actorName: requiredText.max(30).describe("主要演员姓名"),
+  actorGender: z.enum(kuaishouDramaPersonGenderValues).describe("主要演员性别"),
+  actorRole: requiredText.max(10).describe("演员角色名，最多10字"),
+});
+
 const kuaishouDramaTaskBaseSchema = z.object({
-  title: requiredText.max(30),
+  title: requiredText.max(28)
+    .describe("快手短剧标题；付费版本直接使用，广告版本外层增加《》，因此原名最多 28 字"),
+  episodeCount: z.coerce.number().int().min(1).max(1000)
+    .describe("任务返回的总集数，用于创建单集信息槽和批量设置集数范围"),
+  baiduPanResourceLink: z.string().trim().optional()
+    .describe("百度网盘分享文本，包含分享链接和提取码；存在时上剧前必须下载并校验全部剧集视频"),
+  fullDramaPriceYuan: z.coerce.number().positive().max(9999).default(19.9)
+    .describe("全剧付费版本的全剧价格，单位元"),
   coverImageUrl: requiredRemoteUrl,
   summary: requiredText.min(100).max(400),
   genderChannel: z.enum(kuaishouDramaGenderChannelValues),
@@ -125,7 +148,7 @@ const kuaishouDramaTaskBaseSchema = z.object({
   copyrightMaterials: z
     .array(z.enum(kuaishouDramaCopyrightMaterialValues))
     .min(1)
-    .default(["短剧制作协议/权属声明"]),
+    .default(["短剧制作协议"]),
   copyrightDeclarationFileUrl: requiredRemoteUrl,
   copyrightValidityStartDate: dateTextSchema.optional(),
   copyrightValidityEndDate: dateTextSchema.optional(),
@@ -134,6 +157,11 @@ const kuaishouDramaTaskBaseSchema = z.object({
   actorName: requiredText.default("张三"),
   actorGender: z.enum(kuaishouDramaPersonGenderValues).default("男"),
   actorRole: requiredText.default("主角"),
+  mainActors: z.array(kuaishouDramaMainActorSchema).min(2).max(5).optional()
+    .describe("主要演员列表；快手要求最少2人、最多5人"),
+  authorDeclaration: z.enum(kuaishouDramaAuthorDeclarationValues)
+    .default("含AI生成内容")
+    .describe("作者声明；AIGC剧必须选择“含AI生成内容”"),
   productionYear: z.coerce.number().int().min(1900).max(2100).optional(),
   productionCostWan: z.coerce.number().positive().default(1),
   averageEpisodeDurationMinutes: z.coerce.number().positive().default(1),
@@ -167,12 +195,35 @@ const kuaishouDramaTaskBaseSchema = z.object({
       message: "copyrightValidityEndDate cannot be earlier than copyrightValidityStartDate",
     });
   }
+  if (
+    taskConfig.productionMethod === "AIGC剧" &&
+    taskConfig.authorDeclaration !== "含AI生成内容"
+  ) {
+    context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["authorDeclaration"],
+      message: "AIGC剧的作者声明必须选择含AI生成内容",
+    });
+  }
 });
 
 export const kuaishouDramaTaskSchema = kuaishouDramaTaskBaseSchema.transform((taskConfig) => {
   const today = new Date();
+  const mainActors = taskConfig.mainActors ?? [
+    {
+      actorName: taskConfig.actorName,
+      actorGender: taskConfig.actorGender,
+      actorRole: taskConfig.actorRole,
+    },
+    {
+      actorName: `${taskConfig.actorName}二`.slice(0, 30),
+      actorGender: taskConfig.actorGender,
+      actorRole: "配角",
+    },
+  ];
   return {
     ...taskConfig,
+    mainActors,
     copyrightValidityStartDate: taskConfig.copyrightValidityStartDate ?? formatDate(today),
     copyrightValidityEndDate: taskConfig.copyrightValidityEndDate ?? formatDate(oneYearLater(today)),
     broadcastDate: taskConfig.broadcastDate ?? formatDate(today),
@@ -198,8 +249,31 @@ export type KuaishouDramaBroadcastPath = z.infer<
   typeof kuaishouDramaTaskBaseSchema
 >["broadcastPaths"][number];
 export type KuaishouDramaPersonGender = z.infer<typeof kuaishouDramaTaskBaseSchema>["actorGender"];
+export type KuaishouDramaSaleMode = (typeof kuaishouDramaSaleModeValues)[number];
+export type KuaishouDramaEpisodePrice = (typeof kuaishouDramaEpisodePriceValues)[number];
 export type KuaishouDramaTaskInput = z.input<typeof kuaishouDramaTaskSchema>;
 export type KuaishouDramaTaskConfig = z.infer<typeof kuaishouDramaTaskSchema>;
+
+export type KuaishouDramaPublishVariant = {
+  kind: "full-paid" | "ad-unlock";
+  title: string;
+  saleMode: Extract<KuaishouDramaSaleMode, "全剧付费" | "观看广告解锁">;
+  fullDramaPriceYuan?: number;
+  episodePriceRanges: Array<{
+    startEpisode: number;
+    endEpisode: number;
+    price: KuaishouDramaEpisodePrice;
+  }>;
+};
+
+export type ClaimedKuaishouDramaTask = {
+  accountTaskId: number;
+  dramaId?: number;
+  originalTitle: string;
+  kuaishouAccountId?: string;
+  kuaishouAccountName?: string;
+  task: KuaishouDramaTaskConfig;
+};
 
 export interface KuaishouDramaBrowserOptions {
   userDataDir?: string;
@@ -242,7 +316,21 @@ export type KuaishouDramaRuntimeOptions = {
   assetDownloadDir?: string;
   logFilePath?: string;
   logRetentionDays?: number;
+  localEpisodeVideoRoot?: string;
+  baiduNetdiskDownloadRetryAttempts?: number;
+  videoUploadTimeoutMinutes?: number;
   onLog?: (message: string) => void;
+  /** Called only after the authenticated edit form is visible. */
+  claimTask?: () => Promise<KuaishouDramaTaskInput | ClaimedKuaishouDramaTask | null>;
+  reportTaskError?: (
+    task: Pick<ClaimedKuaishouDramaTask, "accountTaskId"> & { errorMessage: string },
+  ) => Promise<void>;
+  ensureBaiduNetdiskResource?: (request: {
+    shareText: string;
+    resourceName: string;
+    localEpisodeVideoRoot: string;
+    episodeCount: number;
+  }) => Promise<unknown>;
 };
 
 export type KuaishouDramaRuntime = {

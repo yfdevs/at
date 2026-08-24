@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { QQ_DRAMA_ADD_URL, QQ_DRAMA_LOGIN_URL, QQ_DRAMA_PLATFORM } from "../shared/constants.js";
 import {
   cleanupOldLogFiles,
@@ -20,7 +21,6 @@ import {
   validateQqDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
 import { prepareQqDramaPosterMaterial } from "../shared/poster-materials.js";
-import { prepareQqDramaCopyrightProofMaterials } from "../shared/copyright-proof-materials.js";
 import {
   launchQqDramaBrowserContext,
   qqDramaLoginStateFromUrl,
@@ -180,24 +180,13 @@ async function ensureBaiduNetdiskResourceReady(
         resourceName,
         localEpisodeVideoRoot,
         episodeCount,
-        requiredOwnership: {
-          minimumImages: 1,
-        },
         requiredPosterImages: 1,
       });
       return;
     } catch (error) {
       lastError = error;
       const message = errorMessage(error);
-      const nonRetryable = [
-        "分享文本中没有找到百度网盘链接",
-        "百度网盘账号登录已过期",
-        "百度网盘权属材料数量不足",
-        "百度网盘海报封面数量不足",
-        "剧集视频目录不存在",
-        "存在重复集数",
-        "剧集文件应按文件名匹配",
-      ].some((pattern) => message.includes(pattern));
+      const nonRetryable = isNonRetryableBaiduNetdiskResourceError(error);
       if (nonRetryable || attempt >= maxAttempts) break;
       log(options, "[qq-drama] baidu netdisk resource failed, retrying", {
         accountTaskId: task.accountTaskId,
@@ -240,18 +229,7 @@ async function runTask(
         await validateQqDramaLocalEpisodeVideos(task, options);
         const poster = await prepareQqDramaPosterMaterial(task, options);
         log(options, `[qq-drama] local cover ready: ${poster.file}`);
-        const copyrightProofMaterials = await prepareQqDramaCopyrightProofMaterials(task, options);
-        task.playlet.licenseProofFiles = copyrightProofMaterials.files;
-        log(
-          options,
-          `[qq-drama] local copyright proof ready: ` +
-            `source=${copyrightProofMaterials.sourceCount} upload=${copyrightProofMaterials.files.length}`,
-        );
-        try {
-          await runQqDramaPublishTask(page, context, task, options);
-        } finally {
-          await copyrightProofMaterials.cleanup();
-        }
+        await runQqDramaPublishTask(page, context, task, options);
       },
     );
     publishSucceeded = true;

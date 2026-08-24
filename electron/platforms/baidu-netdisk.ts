@@ -3,7 +3,7 @@ import Store from "electron-store";
 import { VideoTranscodeQueue } from "@drama/drama-media-assets";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { createHash } from "node:crypto";
-import { rm } from "node:fs/promises";
+import { lstat, readdir, rm, statfs, utimes } from "node:fs/promises";
 import path from "node:path";
 import {
   BaiduNetdiskDownloadRecordsRepository,
@@ -148,12 +148,122 @@ type StableEpisodeFilesListener = NonNullable<
 type ActiveDownloadOperation = {
   promise: Promise<BaiduNetdiskDownloadRecord>;
   stableEpisodeFilesListeners: Set<StableEpisodeFilesListener>;
+  localPath: string;
 };
 
 const activeDownloadOperations = new Map<string, ActiveDownloadOperation>();
 const appVideoTranscodeQueues = new Map<number, VideoTranscodeQueue>();
+const monitoredEpisodeVideoRoots = new Set<string>();
+const pendingDownloadPaths = new Set<string>();
+const diskCleanupUsageThreshold = 0.8;
+const stalePlayletAgeMs = 2 * 60 * 60 * 1000;
+const diskCleanupIntervalMs = 5 * 60 * 1000;
+let diskCleanupTimer: NodeJS.Timeout | null = null;
+let diskCleanupOperation: Promise<void> | null = null;
 let baiduCdpOperationTail: Promise<void> = Promise.resolve();
 let queuedBaiduCdpOperations = 0;
+
+function normalizedPathKey(value: string) {
+  return path.resolve(value).toLowerCase();
+}
+
+function isSafeEpisodeVideoRootOnDriveD(rootPath: string) {
+  const resolvedRoot = path.resolve(rootPath);
+  const driveRoot = path.parse(resolvedRoot).root;
+  return driveRoot.toLowerCase() === "d:\\" && normalizedPathKey(resolvedRoot) !== normalizedPathKey(driveRoot);
+}
+
+async function latestTreeModifiedAtMs(targetPath: string): Promise<number> {
+  const targetStat = await lstat(targetPath);
+  let latest = targetStat.mtimeMs;
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest;
+
+  const entries = await readdir(targetPath, { withFileTypes: true });
+  for (const entry of entries) {
+    const entryPath = path.join(targetPath, entry.name);
+    const entryStat = await lstat(entryPath).catch(() => undefined);
+    if (!entryStat) continue;
+    latest = Math.max(latest, entryStat.mtimeMs);
+    if (entryStat.isDirectory() && !entryStat.isSymbolicLink()) {
+      latest = Math.max(latest, await latestTreeModifiedAtMs(entryPath).catch(() => entryStat.mtimeMs));
+    }
+  }
+  return latest;
+}
+
+async function driveDUsageRatio() {
+  const stats = await statfs("D:\\", { bigint: true });
+  if (stats.blocks <= 0n) return 0;
+  return Number(stats.blocks - stats.bfree) / Number(stats.blocks);
+}
+
+async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: Set<string>) {
+  if (!isSafeEpisodeVideoRootOnDriveD(rootPath)) {
+    console.warn(`[disk-cleanup] 跳过不在 D 盘或范围过大的剧集保存目录：${rootPath}`);
+    return;
+  }
+
+  const usageRatio = await driveDUsageRatio();
+  if (usageRatio < diskCleanupUsageThreshold) return;
+
+  const resolvedRoot = path.resolve(rootPath);
+  const entries = await readdir(resolvedRoot, { withFileTypes: true }).catch(() => []);
+  const cutoffMs = Date.now() - stalePlayletAgeMs;
+  let deletedCount = 0;
+
+  console.warn(
+    `[disk-cleanup] D盘使用率=${(usageRatio * 100).toFixed(1)}%，开始清理两小时前的剧目目录：${resolvedRoot}`,
+  );
+
+  for (const entry of entries) {
+    if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
+    const candidate = path.resolve(resolvedRoot, entry.name);
+    if (path.dirname(candidate).toLowerCase() !== resolvedRoot.toLowerCase()) continue;
+    const candidateKey = normalizedPathKey(candidate);
+    const activePaths = [...activeDownloadOperations.values()]
+      .some((operation) => normalizedPathKey(operation.localPath) === candidateKey);
+    if (protectedPaths.has(candidateKey) || pendingDownloadPaths.has(candidateKey) || activePaths) continue;
+
+    const candidateStat = await lstat(candidate).catch(() => undefined);
+    if (!candidateStat?.isDirectory() || candidateStat.isSymbolicLink()) continue;
+    const latestModifiedAtMs = await latestTreeModifiedAtMs(candidate).catch(() => candidateStat.mtimeMs);
+    if (latestModifiedAtMs > cutoffMs) continue;
+
+    await rm(candidate, { recursive: true, force: true });
+    deletedCount += 1;
+    console.warn(
+      `[disk-cleanup] 已删除过期剧目目录：${candidate}；最后修改=${new Date(latestModifiedAtMs).toISOString()}`,
+    );
+  }
+
+  console.warn(`[disk-cleanup] 清理完成：root=${resolvedRoot} deleted=${deletedCount}`);
+}
+
+function runDiskCleanup(protectedExtraPaths: string[] = []) {
+  if (diskCleanupOperation) return diskCleanupOperation;
+  const protectedPaths = new Set([
+    ...[...activeDownloadOperations.values()].map((operation) => normalizedPathKey(operation.localPath)),
+    ...protectedExtraPaths.map(normalizedPathKey),
+  ]);
+  diskCleanupOperation = (async () => {
+    for (const rootPath of monitoredEpisodeVideoRoots) {
+      await cleanupStalePlayletDirectories(rootPath, protectedPaths).catch((error) => {
+        console.warn(`[disk-cleanup] 检查或清理失败：root=${rootPath}；${readableError(error)}`);
+      });
+    }
+  })().finally(() => {
+    diskCleanupOperation = null;
+  });
+  return diskCleanupOperation;
+}
+
+function startDiskCleanupMonitor() {
+  if (diskCleanupTimer) return;
+  diskCleanupTimer = setInterval(() => {
+    void runDiskCleanup();
+  }, diskCleanupIntervalMs);
+  diskCleanupTimer.unref();
+}
 
 function runBaiduCdpOperationExclusive<T>(label: string, operation: () => Promise<T>): Promise<T> {
   queuedBaiduCdpOperations += 1;
@@ -658,6 +768,12 @@ export async function ensureBaiduNetdiskShareDownloaded(
   const normalizedRequest = normalizeEnsureDownloadRequest(request);
   const shareKey = shareKeyFromText(normalizedRequest.shareText);
   const id = createRecordId(shareKey, normalizedRequest.resourceName);
+  const localPath = playletDir(
+    normalizedRequest.localEpisodeVideoRoot,
+    normalizedRequest.resourceName,
+  );
+  monitoredEpisodeVideoRoots.add(path.resolve(normalizedRequest.localEpisodeVideoRoot));
+  startDiskCleanupMonitor();
   const activeOperation = activeDownloadOperations.get(id);
 
   if (activeOperation) {
@@ -668,6 +784,14 @@ export async function ensureBaiduNetdiskShareDownloaded(
       );
     }
     return activeOperation.promise;
+  }
+
+  const localPathKey = normalizedPathKey(localPath);
+  pendingDownloadPaths.add(localPathKey);
+  try {
+    await runDiskCleanup([localPath]);
+  } finally {
+    pendingDownloadPaths.delete(localPathKey);
   }
 
   const stableEpisodeFilesListeners = new Set<StableEpisodeFilesListener>();
@@ -702,7 +826,7 @@ export async function ensureBaiduNetdiskShareDownloaded(
   ).finally(() => {
     activeDownloadOperations.delete(id);
   });
-  activeDownloadOperations.set(id, { promise, stableEpisodeFilesListeners });
+  activeDownloadOperations.set(id, { promise, stableEpisodeFilesListeners, localPath });
 
   return promise;
 }
@@ -801,15 +925,23 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       },
     });
 
+    const completedLocalPath = result.localPath || localPath;
+    const completedAt = new Date();
+    await utimes(completedLocalPath, completedAt, completedAt).catch((error) => {
+      console.warn(
+        `[disk-cleanup] 无法刷新剧目目录保留时间：${completedLocalPath}；${readableError(error)}`,
+      );
+    });
+
     return upsertDownloadRecord({
       ...record,
       resourceName: request.resourceName,
-      localPath: result.localPath,
+      localPath: completedLocalPath,
       progressPercent: 100,
       state: "completed",
       skippedExisting: result.skippedExisting,
       error: undefined,
-      completedAt: new Date().toISOString(),
+      completedAt: completedAt.toISOString(),
     });
   } catch (error) {
     const message = readableError(error);

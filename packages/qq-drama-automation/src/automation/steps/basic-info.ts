@@ -1,3 +1,4 @@
+import path from "node:path";
 import type { Page } from "playwright";
 import { log } from "../../shared/logger.js";
 import type {
@@ -262,11 +263,21 @@ export async function fillBasicInfoStep(
   );
 
   // 版权信息
+  const copyrightOptions = options.assetDownloadDir
+    ? {
+        ...options,
+        assetDownloadDir: path.join(
+          options.assetDownloadDir,
+          "copyright-proofs",
+          String(task.accountTaskId),
+        ),
+      }
+    : options;
   await uploadFilesIfPresent(
     page,
-    options,
-    payload.licenseProofFiles.flatMap((fileRef, index) => {
-      const file = fileFromRef("权属文件", fileRef, `license-proof-${index + 1}`);
+    copyrightOptions,
+    payload.productionProofFiles.flatMap((fileRef, index) => {
+      const file = fileFromRef("权属文件", fileRef, `production-proof-${index + 1}`);
       return file ? [file] : [];
     }),
   );
