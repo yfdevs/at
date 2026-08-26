@@ -31,6 +31,8 @@ export type LocalPosterImageFile = {
   name: string;
   file: string;
   size: number;
+  width?: number;
+  height?: number;
 };
 
 export type LocalAiProductionProofFile = {
@@ -52,6 +54,13 @@ export {
   type VideoTranscodeQueueOptions,
   type VideoTranscodeRequest,
 } from "./video-transcode.js";
+export {
+  prepareImageForUpload,
+  prepareStretchedImageVariant,
+  type ImageUploadPolicy,
+  type PreparedImageUploadFile,
+  type PreparedStretchedImageVariant,
+} from "./image-upload.js";
 
 export type EpisodeDirectorySummary = {
   dir: string;
@@ -289,6 +298,7 @@ export async function listLocalPosterImages(options: {
   root: string;
   resourceName: string;
   rootIsResourceDir?: boolean;
+  includeAllMatches?: boolean;
 }): Promise<LocalPosterImageFile[]> {
   const resourceDir = options.rootIsResourceDir ? options.root : playletDir(options.root, options.resourceName);
   const namedCandidates: LocalPosterImageFile[] = [];
@@ -317,8 +327,16 @@ export async function listLocalPosterImages(options: {
       if (seenFiles.has(resolved)) continue;
       const fileStat = await stat(file).catch(() => undefined);
       if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+      const metadata = await sharp(file).metadata().catch(() => undefined);
+      const swapsOrientation = [5, 6, 7, 8].includes(metadata?.orientation ?? 1);
       seenFiles.add(resolved);
-      (fromFileName ? namedCandidates : directoryCandidates).push({ name: entry.name, file, size: fileStat.size });
+      (fromFileName ? namedCandidates : directoryCandidates).push({
+        name: entry.name,
+        file,
+        size: fileStat.size,
+        width: swapsOrientation ? metadata?.height : metadata?.width,
+        height: swapsOrientation ? metadata?.width : metadata?.height,
+      });
     }
   }
 
@@ -326,7 +344,12 @@ export async function listLocalPosterImages(options: {
     Number(!left.name.includes("海报")) - Number(!right.name.includes("海报"))
     || left.name.localeCompare(right.name, "zh-CN", { numeric: true })
     || left.file.localeCompare(right.file));
-  const selected = sortCandidates(namedCandidates)[0] ?? sortCandidates(directoryCandidates)[0];
+  const sortedNamedCandidates = sortCandidates(namedCandidates);
+  const sortedDirectoryCandidates = sortCandidates(directoryCandidates);
+  if (options.includeAllMatches) {
+    return [...sortedNamedCandidates, ...sortedDirectoryCandidates];
+  }
+  const selected = sortedNamedCandidates[0] ?? sortedDirectoryCandidates[0];
   return selected ? [selected] : [];
 }
 

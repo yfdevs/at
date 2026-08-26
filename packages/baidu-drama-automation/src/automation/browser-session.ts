@@ -1,0 +1,131 @@
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
+import { chromium, type BrowserContext, type Page } from "playwright";
+import { BAIDU_DRAMA_CREATE_URL, BAIDU_DRAMA_LOGIN_URL } from "../shared/constants.js";
+import { log } from "../shared/logger.js";
+import type { BaiduDramaLoginState, BaiduDramaRuntimeOptions } from "../shared/types.js";
+
+export function baiduDramaLoginStateFromUrl(url: string | undefined): BaiduDramaLoginState {
+  if (!url || url === "about:blank") return "unknown";
+  try {
+    const parsed = new URL(url);
+    if (parsed.pathname.includes("/builder/theme/playletPlat/product")) return "login-required";
+    if (parsed.hostname === "duanju.baidu.com") return "logged-in";
+  } catch {
+    return "unknown";
+  }
+  return "unknown";
+}
+
+export async function launchBaiduDramaBrowserContext(
+  userDataDir: string,
+  options: BaiduDramaRuntimeOptions,
+) {
+  return chromium.launchPersistentContext(userDataDir, {
+    args: ["--disable-blink-features=AutomationControlled"],
+    extraHTTPHeaders: { "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" },
+    headless: options.config?.browser?.headless ?? false,
+    ignoreDefaultArgs: ["--enable-automation"],
+    locale: "zh-CN",
+    slowMo: options.config?.browser?.slowMo ?? 0,
+    timezoneId: "Asia/Shanghai",
+    viewport: null,
+  });
+}
+
+export async function saveBaiduDramaCredentialState(
+  context: BrowserContext,
+  options: BaiduDramaRuntimeOptions,
+) {
+  if (!options.credentialStatePath) return;
+  await mkdir(dirname(options.credentialStatePath), { recursive: true });
+  await context.storageState({ path: options.credentialStatePath });
+}
+
+export async function openBaiduDramaCreatePage(page: Page) {
+  await page.goto(BAIDU_DRAMA_CREATE_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+}
+
+function isBaiduDramaCreatePageUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return (
+      parsed.hostname === "duanju.baidu.com" &&
+      parsed.pathname === "/builder/rc/edit" &&
+      parsed.searchParams.get("type") === "playlet"
+    );
+  } catch {
+    return false;
+  }
+}
+
+function compactPageText(text: string) {
+  return text.replace(/\s+/g, " ").trim().slice(0, 300);
+}
+
+export async function waitForBaiduDramaCreatePageReady(
+  page: Page,
+  timeoutMs = 60_000,
+) {
+  const readyTexts = ["选择短剧类型", "非真人短剧", "下一步"];
+  const deadline = Date.now() + timeoutMs;
+  let lastBodyText = "";
+
+  while (Date.now() < deadline) {
+    lastBodyText = await page.locator("body").innerText({ timeout: 2_000 }).catch(() => "");
+    if (
+      isBaiduDramaCreatePageUrl(page.url()) &&
+      readyTexts.every((text) => lastBodyText.includes(text))
+    ) {
+      return;
+    }
+    await page.waitForTimeout(500);
+  }
+
+  const title = await page.title().catch(() => "");
+  throw new Error(
+    `BAIDU_DRAMA_CREATE_PAGE_NOT_READY: url=${page.url()} ` +
+      `title=${JSON.stringify(title)} body=${JSON.stringify(compactPageText(lastBodyText))}`,
+  );
+}
+
+export async function ensureBaiduDramaCreatePage(
+  page: Page,
+  options: BaiduDramaRuntimeOptions,
+) {
+  await openBaiduDramaCreatePage(page);
+  await waitForBaiduDramaCreatePageReady(page);
+  log(options, "[baidu-drama] 百度短剧创建页已就绪，开始领取任务。", undefined, "browser");
+}
+
+export async function waitForBaiduDramaLogin(
+  page: Page,
+  context: BrowserContext,
+  options: BaiduDramaRuntimeOptions,
+) {
+  if (baiduDramaLoginStateFromUrl(page.url()) !== "login-required") return false;
+
+  log(options, "[baidu-drama] 百度短剧平台需要登录，请在浏览器中完成登录。", undefined, "browser");
+  await page.bringToFront();
+  if (!page.url().startsWith(BAIDU_DRAMA_LOGIN_URL)) {
+    await page.goto(BAIDU_DRAMA_LOGIN_URL, { waitUntil: "domcontentloaded", timeout: 60_000 });
+  }
+
+  const deadline = Date.now() + 120 * 60 * 1000;
+  while (Date.now() < deadline) {
+    if (baiduDramaLoginStateFromUrl(page.url()) === "logged-in") {
+      await saveBaiduDramaCredentialState(context, options).catch(() => undefined);
+      log(options, "[baidu-drama] 百度短剧平台登录完成。", undefined, "browser");
+      return true;
+    }
+    const workbenchButton = page.getByText("去工作台", { exact: true }).first();
+    if (await workbenchButton.isVisible().catch(() => false)) {
+      await workbenchButton.click().catch(() => undefined);
+      await page.waitForTimeout(1_000);
+      await openBaiduDramaCreatePage(page).catch(() => undefined);
+      continue;
+    }
+    await page.waitForTimeout(3_000);
+  }
+  throw new Error("BAIDU_DRAMA_LOGIN_TIMEOUT");
+}

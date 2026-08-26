@@ -1,35 +1,27 @@
-import {
-  ServiceControlButtonPage,
-  useServiceControl,
-} from "@/pages/shared/service-control"
+import { ServiceControlButtonPage, useServiceControl } from "@/pages/shared/service-control";
 import {
   type KuaishouDramaServiceStatus,
   kuaishouDramaService,
-} from "@/platforms/kuaishou-drama/service"
+} from "@/platforms/kuaishou-drama/service";
 
 const initialStatus: KuaishouDramaServiceStatus = {
   platform: "kuaishou-drama",
   running: false,
-  loginState: "unknown",
-  userDataDir: "",
+  accounts: [],
   pid: null,
-}
+};
 
 function successMessage(status: KuaishouDramaServiceStatus) {
-  return status.running ? "快手短剧服务已启动" : "快手短剧服务已停止"
+  const browserCount = status.accounts.filter((account) => account.launched).length;
+  return status.running ? `快手短剧服务已启动 ${browserCount} 个账号浏览器` : "快手短剧服务已停止";
 }
 
 export function KuaishouDramaServiceControlPage() {
-  const {
-    loading,
-    pendingAction,
-    status,
-    toggleService,
-  } = useServiceControl({
+  const { loading, pendingAction, status, toggleService } = useServiceControl({
     initialStatus,
     service: kuaishouDramaService,
     successMessage,
-  })
+  });
 
   return (
     <ServiceControlButtonPage
@@ -38,5 +30,5 @@ export function KuaishouDramaServiceControlPage() {
       running={status.running}
       onToggle={() => void toggleService()}
     />
-  )
+  );
 }

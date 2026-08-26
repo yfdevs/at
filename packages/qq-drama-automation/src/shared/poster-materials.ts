@@ -1,4 +1,10 @@
-import { listLocalPosterImages } from "@drama/drama-media-assets";
+import path from "node:path";
+import { rm } from "node:fs/promises";
+import {
+  listLocalPosterImages,
+  prepareImageForUpload,
+} from "@drama/drama-media-assets";
+import { log } from "./logger.js";
 import type { ClaimedQqDramaTask, QqDramaRuntimeOptions } from "./types.js";
 import {
   getQqDramaLocalEpisodeVideoRoot,
@@ -23,6 +29,31 @@ export async function prepareQqDramaPosterMaterial(
   }
 
   const selected = files[0];
-  task.playlet.localCoverFile = selected.file;
-  return selected;
+  if (!options.assetDownloadDir) {
+    throw new Error("QQ drama assetDownloadDir is required to prepare the cover image.");
+  }
+  const outputDir = path.join(options.assetDownloadDir, "poster-upload");
+  await rm(outputDir, { recursive: true, force: true });
+  const prepared = await prepareImageForUpload({
+    inputFile: selected.file,
+    outputDir,
+    outputFileName: "qq-cover.jpg",
+    policy: {
+      maxFileBytes: 5_000_000,
+      targetFileBytes: 4_700_000,
+      minimumWidth: 350,
+      minimumHeight: 500,
+      maximumWidth: 2_100,
+      maximumHeight: 3_000,
+      minimumJpegQuality: 80,
+      targetAspectRatio: { width: 7, height: 10, tolerance: 0.02 },
+    },
+    onLog: (message) => log(options, `[qq-drama] ${message}`),
+  });
+  task.playlet.localCoverFile = prepared.file;
+  return {
+    ...selected,
+    file: prepared.file,
+    size: prepared.outputSize,
+  };
 }

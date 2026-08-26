@@ -10,7 +10,10 @@ import {
 import { fillBasicInfoStep } from "./steps/basic-info.js";
 import { confirmAndSubmitStep } from "./steps/confirm.js";
 import { uploadEpisodeVideosStep } from "./steps/episodes.js";
-import { qqPageMessageErrorLocator } from "./steps/form-controls.js";
+import {
+  installQqPageMessageCapture,
+  qqPageMessageErrorLocator,
+} from "./steps/form-controls.js";
 
 export async function openQqDramaAddPage(
   page: Page,
@@ -73,6 +76,7 @@ export async function runQqDramaPublishTask(
 ) {
   log(options, `[qq-drama] opening add page for accountTaskId=${task.accountTaskId}`);
   await openQqDramaAddPage(page, context, options);
+  await installQqPageMessageCapture(page);
 
   const messageErrors = qqPageMessageErrorLocator(page);
   await page.addLocatorHandler(

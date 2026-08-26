@@ -142,6 +142,7 @@ async function submitKuaishouDramaForReview(
   page: Page,
   options: KuaishouDramaRuntimeOptions,
 ) {
+  const postSubmitSettleMs = 10_000;
   const footer = page.locator(".handle-footer:visible").last();
   await footer.waitFor({ state: "visible", timeout: 60_000 });
   const submit = footer
@@ -151,7 +152,13 @@ async function submitKuaishouDramaForReview(
   await submit.waitFor({ state: "visible", timeout: 30_000 });
   await submit.scrollIntoViewIfNeeded();
   await submit.click({ timeout: 30_000 });
-  log(options, "[kuaishou-drama] submit for review clicked");
+  log(
+    options,
+    `[kuaishou-drama] submit for review clicked; waiting ${postSubmitSettleMs}ms ` +
+      "before the page may be closed",
+  );
+  await page.waitForTimeout(postSubmitSettleMs);
+  log(options, "[kuaishou-drama] post-submit wait completed");
 }
 
 export async function uploadKuaishouDramaEpisodeVideos(

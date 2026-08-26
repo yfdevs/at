@@ -3,10 +3,15 @@ import {
   KUAISHOU_DRAMA_EDIT_URL,
 } from "../shared/constants.js";
 import type {
+  ClaimedKuaishouDramaTask,
   KuaishouDramaPublishVariant,
   KuaishouDramaRuntimeOptions,
   KuaishouDramaTaskConfig,
 } from "../shared/types.js";
+import {
+  kuaishouAuthorizationPromotionFile,
+  kuaishouCopyrightDeclarationFile,
+} from "../shared/fixed-assets.js";
 import { createKuaishouDramaPublishVariants } from "../shared/publish-variants.js";
 import {
   log,
@@ -27,7 +32,7 @@ import {
   setDateRangeByLabel,
   setSingleDateByLabelAt,
 } from "./form-controls.js";
-import { downloadRemoteAsset } from "./upload/remote-assets.js";
+import { resolveUploadAssetFile } from "./upload/remote-assets.js";
 import { fillKuaishouDramaSaleAndEpisodes } from "./episodes.js";
 import { maximizeKuaishouImageCropArea } from "./image-crop.js";
 import {
@@ -60,6 +65,51 @@ type FastControlFill =
 const fastFillOpenSettleMs = 60;
 const fastFillChangeSettleMs = 90;
 const fastFillSettleMs = 60;
+const uploadErrorMessageSelector = '.ks-message.ks-message--error[role="alert"]:visible';
+
+class KuaishouUploadMessageError extends Error {
+  constructor(logLabel: string, message: string) {
+    super(`KUAISHOU_DRAMA_UPLOAD_MESSAGE_ERROR: ${logLabel}; ${message}`);
+    this.name = "KuaishouUploadMessageError";
+  }
+}
+
+async function visibleUploadErrorMessage(page: Page) {
+  const messages = (await page.locator(uploadErrorMessageSelector).allInnerTexts().catch(() => []))
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  return messages[messages.length - 1] ?? null;
+}
+
+async function throwIfUploadMessageError(page: Page, logLabel: string) {
+  const message = await visibleUploadErrorMessage(page);
+  if (message) {
+    throw new KuaishouUploadMessageError(logLabel, message);
+  }
+}
+
+async function waitForUploadErrorWindow(page: Page, logLabel: string, timeoutMs: number) {
+  const deadline = Date.now() + timeoutMs;
+  while (Date.now() < deadline) {
+    await throwIfUploadMessageError(page, logLabel);
+    await page.waitForTimeout(100);
+  }
+  await throwIfUploadMessageError(page, logLabel);
+}
+
+async function waitForImageCropDialog(page: Page, logLabel: string) {
+  const cropDialog = page.locator('.ks-dialog[aria-label="图片剪裁"]:visible').last();
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    await throwIfUploadMessageError(page, logLabel);
+    if (await cropDialog.isVisible().catch(() => false)) {
+      return cropDialog;
+    }
+    await page.waitForTimeout(100);
+  }
+  await throwIfUploadMessageError(page, logLabel);
+  throw new Error(`KUAISHOU_DRAMA_IMAGE_CROP_DIALOG_NOT_FOUND: ${logLabel}`);
+}
 
 function shouldConfirmImageCropDialog(labelText: string, fallbackBaseName: string, logLabel: string) {
   return /(封面|海报|图片|cover|poster|image)/i.test(
@@ -314,20 +364,25 @@ async function waitForImageUploadCompleted(page: Page, labelText: string, logLab
     });
 }
 
-async function uploadRemoteAssetByLabel(
+async function uploadAssetByLabel(
   page: Page,
   labelText: string,
-  assetUrl: string,
+  assetReference: string,
   fallbackBaseName: string,
   logLabel: string,
   options: KuaishouDramaRuntimeOptions,
 ) {
-  const filePath = await downloadRemoteAsset(assetUrl, options, fallbackBaseName, logLabel);
+  const filePath = await resolveUploadAssetFile(
+    assetReference,
+    options,
+    fallbackBaseName,
+    logLabel,
+  );
   const shouldConfirmCrop = shouldConfirmImageCropDialog(labelText, fallbackBaseName, logLabel);
   if (!shouldConfirmCrop) {
     const input = await fileInputByLabel(page, labelText);
     await input.setInputFiles(filePath, { timeout: 60_000 });
-    await page.waitForTimeout(250);
+    await waitForUploadErrorWindow(page, logLabel, 1_000);
     return;
   }
 
@@ -336,8 +391,7 @@ async function uploadRemoteAssetByLabel(
     try {
       const input = await fileInputByLabel(page, labelText);
       await input.setInputFiles(filePath, { timeout: 60_000 });
-      const cropDialog = page.locator('.ks-dialog[aria-label="图片剪裁"]:visible').last();
-      await cropDialog.waitFor({ state: "visible", timeout: 10_000 });
+      const cropDialog = await waitForImageCropDialog(page, logLabel);
       const clickDeadline = Date.now() + 10_000;
       const cropSize = await maximizeKuaishouImageCropArea(page, cropDialog);
       if (Date.now() >= clickDeadline) {
@@ -363,6 +417,13 @@ async function uploadRemoteAssetByLabel(
       return;
     } catch (error) {
       lastError = error;
+      if (error instanceof KuaishouUploadMessageError) {
+        log(
+          options,
+          `[kuaishou-drama] ${logLabel} upload rejected by page: ${error.message}`,
+        );
+        throw error;
+      }
       log(
         options,
         `[kuaishou-drama] ${logLabel} crop attempt ${attempt}/3 failed: ` +
@@ -1189,15 +1250,18 @@ export async function fillKuaishouDramaEditForm(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const remoteAssetDirectoryName = `${taskConfig.title}-${variant.kind}`;
+  if (!taskConfig.localCoverFile) {
+    throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
+  }
 
   log(options, `[kuaishou-drama] filling drama title: ${variant.title}`);
   await fillTextboxByLabel(page, "短剧标题", variant.title, "请输入");
 
   log(options, "[kuaishou-drama] uploading drama cover");
-  await uploadRemoteAssetByLabel(
+  await uploadAssetByLabel(
     page,
     "短剧封面",
-    taskConfig.coverImageUrl,
+    taskConfig.localCoverFile,
     `${remoteAssetDirectoryName}-cover`,
     "short drama cover",
     options,
@@ -1236,10 +1300,10 @@ export async function fillKuaishouDramaEditForm(
   await selectSingleByLabel(page, "版权证明类型", taskConfig.copyrightProofType);
 
   log(options, "[kuaishou-drama] uploading authorization promotion file");
-  await uploadRemoteAssetByLabel(
+  await uploadAssetByLabel(
     page,
     "授权推广文件",
-    taskConfig.authorizationPromotionFileUrl,
+    kuaishouAuthorizationPromotionFile,
     `${remoteAssetDirectoryName}-authorization-promotion`,
     "authorization promotion file",
     options,
@@ -1249,10 +1313,10 @@ export async function fillKuaishouDramaEditForm(
   await selectMultipleByLabel(page, "版权证明材料", [...taskConfig.copyrightMaterials]);
 
   log(options, "[kuaishou-drama] uploading copyright declaration file");
-  await uploadRemoteAssetByLabel(
+  await uploadAssetByLabel(
     page,
     "短剧制作协议/权属声明",
-    taskConfig.copyrightDeclarationFileUrl,
+    kuaishouCopyrightDeclarationFile,
     `${remoteAssetDirectoryName}-copyright-declaration`,
     "copyright declaration file",
     options,
@@ -1313,16 +1377,6 @@ export async function fillKuaishouDramaEditForm(
         "请输入单集平均时长",
       );
     }
-
-    log(options, "[kuaishou-drama] uploading poster image");
-    await uploadRemoteAssetByLabel(
-      page,
-      "海报图片",
-      taskConfig.posterImageUrl,
-      `${remoteAssetDirectoryName}-poster`,
-      "poster image",
-      options,
-    );
 
     log(options, "[kuaishou-drama] filling broadcast info");
     await fillBroadcastInfo(page, taskConfig, options);
@@ -1409,6 +1463,7 @@ export async function runPublishTask(
   resolveTask: () => Promise<{
     taskConfig: KuaishouDramaTaskConfig;
     resourceName: string;
+    claimedTask?: ClaimedKuaishouDramaTask;
   } | null>,
 ) {
   log(options, "[kuaishou-drama] opening edit page; task execution is paused until login");
@@ -1417,7 +1472,7 @@ export async function runPublishTask(
 
   if (!resolvedTask) {
     log(options, "[kuaishou-drama] task config not provided, browser is ready");
-    return;
+    return false;
   }
   const { taskConfig, resourceName } = resolvedTask;
 
@@ -1444,6 +1499,11 @@ export async function runPublishTask(
 
   log(options, "[kuaishou-drama] full-paid form completed; opening ad-unlock form");
   const adUnlockPage = await context.newPage();
-  await openKuaishouDramaEditPage(context, adUnlockPage, options, false);
-  await runVariant(adUnlockPage, adUnlockVariant);
+  try {
+    await openKuaishouDramaEditPage(context, adUnlockPage, options, false);
+    await runVariant(adUnlockPage, adUnlockVariant);
+  } finally {
+    await adUnlockPage.close().catch(() => undefined);
+  }
+  return resolvedTask;
 }

@@ -1,12 +1,6 @@
-import {
-  chromium,
-  type BrowserContext,
-  type Page,
-} from "playwright";
+import { chromium, type BrowserContext, type Page } from "playwright";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
-import {
-  KUAISHOU_DRAMA_PLATFORM,
-} from "../shared/constants.js";
+import { KUAISHOU_DRAMA_PLATFORM } from "../shared/constants.js";
 import { parseTaskConfig } from "../shared/task-config.js";
 import type {
   ClaimedKuaishouDramaTask,
@@ -26,8 +20,17 @@ import {
   getKuaishouDramaLocalEpisodeVideoRoot,
   validateKuaishouDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
+import { prepareKuaishouDramaTaskMaterials } from "../shared/poster-materials.js";
 
 const baiduNetdiskRetryDelayMs = 5_000;
+
+function classifyFailStage(error: unknown) {
+  const message = errorMessage(error);
+  if (/login|登录/i.test(message)) return "LOGIN" as const;
+  if (/upload|file|视频|封面|海报|版权|授权|素材/i.test(message)) return "UPLOAD_FILE" as const;
+  if (/form|field|填写|表单/i.test(message)) return "FILL_FORM" as const;
+  return "OTHER" as const;
+}
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -68,6 +71,7 @@ async function ensureBaiduNetdiskResourceReady(
         resourceName,
         localEpisodeVideoRoot,
         episodeCount: task.episodeCount,
+        requiredPosterImages: 1,
       });
       await validateKuaishouDramaLocalEpisodeVideos(task, resourceName, options);
       log(
@@ -104,7 +108,13 @@ export async function startKuaishouDramaRuntime(
   let running = true;
   let page: Page | null = null;
   let context: BrowserContext | null = null;
-  let claimedTaskForReporting: Pick<ClaimedKuaishouDramaTask, "accountTaskId"> | null = null;
+  const taskState: { claimed?: ClaimedKuaishouDramaTask } = {};
+  const currentClaimedTask = (): ClaimedKuaishouDramaTask | undefined => taskState.claimed;
+  let lastTask: KuaishouDramaRuntimeStatus["lastTask"];
+  let configuredTaskConsumed = false;
+  let taskLoopPromise: Promise<void> | null = null;
+  let pollTimer: ReturnType<typeof setTimeout> | null = null;
+  let wakePoll: (() => void) | null = null;
 
   await cleanupOldLogFiles(options).catch(() => undefined);
   log(options, "[kuaishou-drama] starting browser");
@@ -114,18 +124,26 @@ export async function startKuaishouDramaRuntime(
   });
   context.on("close", () => {
     running = false;
+    wakePoll?.();
   });
 
   page = context.pages()[0] ?? (await context.newPage());
 
   const resolveTask = async () => {
-    if (configuredTask) {
+    if (configuredTask && !configuredTaskConsumed) {
+      configuredTaskConsumed = true;
       await ensureBaiduNetdiskResourceReady(
         configuredTask,
         configuredTask.title,
         undefined,
         options,
       );
+      const poster = await prepareKuaishouDramaTaskMaterials(
+        configuredTask,
+        configuredTask.title,
+        options,
+      );
+      log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
       return { taskConfig: configuredTask, resourceName: configuredTask.title };
     }
     if (!options.claimTask) return null;
@@ -136,7 +154,13 @@ export async function startKuaishouDramaRuntime(
     const isClaimedTask = "accountTaskId" in claimedTask && "task" in claimedTask;
     const taskInput = isClaimedTask
       ? (() => {
-          claimedTaskForReporting = { accountTaskId: claimedTask.accountTaskId };
+          taskState.claimed = claimedTask;
+          lastTask = {
+            accountTaskId: claimedTask.accountTaskId,
+            originalTitle: claimedTask.originalTitle,
+            status: "running",
+            updatedAt: new Date().toISOString(),
+          };
           return claimedTask.task;
         })()
       : claimedTask;
@@ -153,34 +177,79 @@ export async function startKuaishouDramaRuntime(
       isClaimedTask ? claimedTask.accountTaskId : undefined,
       options,
     );
+    const resourceName = isClaimedTask ? claimedTask.originalTitle : taskConfig.title;
+    const poster = await prepareKuaishouDramaTaskMaterials(taskConfig, resourceName, options);
+    log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
     return {
       taskConfig,
-      resourceName: isClaimedTask ? claimedTask.originalTitle : taskConfig.title,
+      resourceName,
+      claimedTask: isClaimedTask ? claimedTask : undefined,
     };
   };
 
-  void runPublishTask(context, page, options, resolveTask).catch(async (error) => {
-    const errorMessage = error instanceof Error ? error.message : String(error);
-    log(options, `[kuaishou-drama] task failed: ${errorMessage}`);
-    if (claimedTaskForReporting && options.reportTaskError) {
-      await options.reportTaskError({
-        ...claimedTaskForReporting,
-        errorMessage,
-      }).then(() => {
-        log(
-          options,
-          `[kuaishou-drama] task error reported: ${claimedTaskForReporting?.accountTaskId}`,
-        );
-      }).catch((reportError) => {
-        log(
-          options,
-          `[kuaishou-drama] task error report failed: ${
-            reportError instanceof Error ? reportError.message : String(reportError)
-          }`,
-        );
-      });
+  const waitForNextPoll = async () => {
+    await new Promise<void>((resolve) => {
+      wakePoll = resolve;
+      pollTimer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
+    });
+    if (pollTimer) clearTimeout(pollTimer);
+    pollTimer = null;
+    wakePoll = null;
+  };
+
+  taskLoopPromise = (async () => {
+    while (running && page && !page.isClosed()) {
+      taskState.claimed = undefined;
+      try {
+        const executed = await runPublishTask(context!, page, options, resolveTask);
+        if (executed && executed.claimedTask) {
+          const completedTask = executed.claimedTask;
+          await options.reportTaskSuccess?.({
+            accountTaskId: completedTask.accountTaskId,
+            resultJson: {
+              accountId: options.kuaishouAccountId,
+              accountName: options.kuaishouAccountName,
+              variants: ["full-paid", "ad-unlock"],
+            },
+          });
+          lastTask = {
+            accountTaskId: completedTask.accountTaskId,
+            originalTitle: completedTask.originalTitle,
+            status: "succeeded",
+            updatedAt: new Date().toISOString(),
+          };
+          log(options, `[kuaishou-drama] task succeeded: ${completedTask.accountTaskId}`);
+        }
+      } catch (error) {
+        const message = errorMessage(error);
+        log(options, `[kuaishou-drama] task failed: ${message}`);
+        const failedTask = currentClaimedTask();
+        if (failedTask) {
+          lastTask = {
+            accountTaskId: failedTask.accountTaskId,
+            originalTitle: failedTask.originalTitle,
+            status: "failed",
+            errorMessage: message,
+            updatedAt: new Date().toISOString(),
+          };
+          await options
+            .reportTaskError?.({
+              accountTaskId: failedTask.accountTaskId,
+              failStage: classifyFailStage(error),
+              errorMessage: message,
+            })
+            .catch((reportError) => {
+              log(
+                options,
+                `[kuaishou-drama] task error report failed: ${errorMessage(reportError)}`,
+              );
+            });
+        }
+      }
+      if (!running || page.isClosed()) break;
+      await waitForNextPoll();
     }
-  });
+  })();
 
   return {
     getStatus(): KuaishouDramaRuntimeStatus {
@@ -196,6 +265,7 @@ export async function startKuaishouDramaRuntime(
         credentialStatePath: options.credentialStatePath,
         assetDownloadDir: options.assetDownloadDir,
         logFilePath: options.logFilePath,
+        lastTask,
       };
     },
     async stop() {
@@ -203,7 +273,12 @@ export async function startKuaishouDramaRuntime(
         await saveCredentialState(context, options).catch(() => undefined);
       }
       running = false;
+      if (pollTimer) clearTimeout(pollTimer);
+      pollTimer = null;
+      wakePoll?.();
+      wakePoll = null;
       await context?.close();
+      await taskLoopPromise?.catch(() => undefined);
       log(options, "[kuaishou-drama] runtime stopped");
     },
   };

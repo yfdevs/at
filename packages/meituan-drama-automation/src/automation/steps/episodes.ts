@@ -17,18 +17,7 @@ const videoUploadProgressTimeoutMs = 2 * 60 * 60 * 1000;
 const videoUploadProgressPollMs = 2_000;
 const videoUploadStartPollMs = 1_000;
 const videoUploadStartWaitMsByAttempt = [20_000, 30_000] as const;
-const visibleDrawerSelector =
-  ".mtd-drawer:visible, .mtd-drawer-wrapper:visible, .mtd-drawer-container:visible";
-const collectionVideoInputSelector = [
-  "#video-list input[type='file']",
-  ".video-list input[type='file']",
-].join(", ");
-const multipleVideoInputSelector = [
-  "input.mtd-upload-input[type='file'][multiple][accept*='video' i]",
-  "input.mtd-upload-input[type='file'][multiple][accept*='.mp4' i]",
-  "input[type='file'][multiple][accept*='video' i]",
-  "input[type='file'][multiple][accept*='.mp4' i]",
-].join(", ");
+const maxEpisodeFilesPerSelection = 100;
 
 type VideoUploadRow = {
   indexText: string;
@@ -70,102 +59,22 @@ function unknownErrorMessage(error: unknown): string | null {
   }
 }
 
-async function usableFileInput(locator: Locator, requireMultiple = false) {
-  const count = await locator.count();
-  for (let index = 0; index < count; index += 1) {
-    const candidate = locator.nth(index);
-    const usable = await candidate
-      .evaluate((element: HTMLInputElement) => (
-        element.isConnected &&
-        element.type === "file" &&
-        !element.disabled &&
-        (!requireMultiple || element.multiple)
-      ))
-      .catch(() => false);
-    if (usable) return candidate;
-  }
-  return null;
-}
+// Restored from the working implementation before 2026-08-24. The Meituan
+// upload component renders its native file input as the dragger's next sibling.
+// Waiting on or evaluating that hidden input before returning it caused the
+// upload path to stall even though the control was already attached.
+async function episodeVideoInputByDragger(page: Page, timeout = 60_000) {
+  const dragger = page.locator(".mtd-upload-dragger:visible").first();
+  await dragger.waitFor({ state: "visible", timeout });
+  await scrollLocatorIntoView(page, dragger);
 
-async function videoInputNearVisibleDragger(page: Page, requireMultiple: boolean) {
-  const draggers = page.locator(".mtd-upload-dragger:visible");
-  const count = await draggers.count();
-  for (let index = 0; index < count; index += 1) {
-    const dragger = draggers.nth(index);
-    const input = await usableFileInput(
-      dragger
-        .locator("xpath=..")
-        .locator("input[type='file'], .mtd-upload-input")
-        .or(
-          dragger.locator(
-            "xpath=following-sibling::*[contains(concat(' ', normalize-space(@class), ' '), ' mtd-upload-input ')][1]",
-          ),
-        ),
-      requireMultiple,
-    );
-    if (input) {
-      await scrollLocatorIntoView(page, dragger);
-      return input;
-    }
-  }
-  return null;
-}
-
-async function episodeVideoInput(page: Page, expectedFileCount: number, timeout = 60_000) {
-  const deadline = Date.now() + timeout;
-  const requireMultiple = expectedFileCount > 1;
-  while (Date.now() < deadline) {
-    if ((await page.locator(visibleDrawerSelector).count()) > 0) {
-      const drawerText = (await page.locator(visibleDrawerSelector).last().innerText().catch(() => ""))
-        .replace(/\s+/g, " ")
-        .trim()
-        .slice(0, 500);
-      throw new Error(
-        `MEITUAN_VIDEO_UPLOAD_BLOCKED_BY_DRAWER: ${drawerText || "visible collection drawer"}`,
-      );
-    }
-
-    // Prefer the collection-specific list. The page keeps the ordinary single-video
-    // uploader mounted in another tab, so a generic video input can silently target
-    // the wrong workflow. For multi-episode tasks, never accept a single-file input.
-    const collectionInput = await usableFileInput(
-      page.locator(collectionVideoInputSelector),
-      requireMultiple,
-    );
-    if (collectionInput) return collectionInput;
-
-    const multipleInput = await usableFileInput(page.locator(multipleVideoInputSelector));
-    if (multipleInput) return multipleInput;
-
-    const draggerInput = await videoInputNearVisibleDragger(page, requireMultiple);
-    if (draggerInput) return draggerInput;
-
-    const uploadErrorText = await readReplaceModalContentEvent(page);
-    if (uploadErrorText) {
-      throw new Error(`MEITUAN_VIDEO_UPLOAD_INVALID: ${uploadErrorText}`);
-    }
-    await page.waitForTimeout(500);
-  }
-
-  const inputSnapshots = await page
-    .locator('input[type="file"]')
-    .evaluateAll((elements: HTMLInputElement[]) => elements.map((element) => ({
-      accept: element.accept,
-      className: element.className,
-      disabled: element.disabled,
-      multiple: element.multiple,
-    })))
-    .catch(() => []);
-  const visibleModalTexts = (await page.locator(".mtd-modal:visible").allInnerTexts().catch(() => []))
-    .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 300))
-    .filter(Boolean);
-  throw new Error(
-    `MEITUAN_VIDEO_UPLOAD_CONTROL_NOT_READY: url=${page.url()} ` +
-      `draggers=${await page.locator(".mtd-upload-dragger").count()} ` +
-      `visibleDraggers=${await page.locator(".mtd-upload-dragger:visible").count()} ` +
-      `fileInputs=${JSON.stringify(inputSnapshots)} ` +
-      `visibleModals=${visibleModalTexts.join(" | ") || "(none)"}`,
-  );
+  const input = dragger
+    .locator(
+      "xpath=following-sibling::*[1][contains(concat(' ', normalize-space(@class), ' '), ' mtd-upload-input ')]",
+    )
+    .first();
+  await input.waitFor({ state: "attached", timeout: 30_000 });
+  return input;
 }
 
 async function fileInputSnapshot(input: Locator): Promise<FileInputSnapshot> {
@@ -203,14 +112,15 @@ async function readVideoUploadStartSnapshot(
   };
 }
 
-function uploadStarted(snapshot: VideoUploadStartSnapshot) {
-  return snapshot.rowCount > 0 || snapshot.matchedFileNames.length > 0;
+function uploadBatchStarted(snapshot: VideoUploadStartSnapshot, previousRowCount: number) {
+  return snapshot.rowCount > previousRowCount || snapshot.matchedFileNames.length > 0;
 }
 
 async function waitForVideoUploadStart(
   page: Page,
   videoFiles: string[],
   timeoutMs: number,
+  previousRowCount: number,
 ): Promise<VideoUploadStartSnapshot> {
   const deadline = Date.now() + timeoutMs;
 
@@ -221,11 +131,32 @@ async function waitForVideoUploadStart(
     }
 
     const snapshot = await readVideoUploadStartSnapshot(page, videoFiles);
-    if (uploadStarted(snapshot)) return snapshot;
+    if (uploadBatchStarted(snapshot, previousRowCount)) return snapshot;
     await page.waitForTimeout(videoUploadStartPollMs);
   }
 
   return readVideoUploadStartSnapshot(page, videoFiles);
+}
+
+async function waitForVideoUploadBatchQueued(
+  page: Page,
+  expectedRowCount: number,
+  timeoutMs = 60_000,
+) {
+  const deadline = Date.now() + timeoutMs;
+  let rowCount = 0;
+  while (Date.now() < deadline) {
+    const uploadErrorText = await readReplaceModalContentEvent(page);
+    if (uploadErrorText) {
+      throw new Error(`MEITUAN_VIDEO_UPLOAD_INVALID: ${uploadErrorText}`);
+    }
+    rowCount = (await readVideoUploadRows(page)).length;
+    if (rowCount >= expectedRowCount) return rowCount;
+    await page.waitForTimeout(videoUploadStartPollMs);
+  }
+  throw new Error(
+    `MEITUAN_VIDEO_UPLOAD_BATCH_ROWS_INCOMPLETE: expectedRows=${expectedRowCount} actualRows=${rowCount}`,
+  );
 }
 
 function shouldFailWithoutUploadStartRetry(error: unknown) {
@@ -595,97 +526,135 @@ export async function uploadEpisodeVideosStep(
   const videoFiles = episodes.map((episode) => episode.file);
 
   log(options, `[meituan-drama] uploading ${videoFiles.length} episode video(s)`);
+  const videoFileBatches: string[][] = [];
+  for (let offset = 0; offset < videoFiles.length; offset += maxEpisodeFilesPerSelection) {
+    videoFileBatches.push(videoFiles.slice(offset, offset + maxEpisodeFilesPerSelection));
+  }
   await createReplaceModalContentListener(page);
   try {
-    let uploadStartedSuccessfully = false;
-    let lastSnapshot: VideoUploadStartSnapshot = { rowCount: 0, matchedFileNames: [] };
-    let lastInputSnapshot: FileInputSnapshot | null = null;
-    let lastError: unknown;
+    let previousRowCount = 0;
+    for (let batchIndex = 0; batchIndex < videoFileBatches.length; batchIndex += 1) {
+      const batchFiles = videoFileBatches[batchIndex];
+      const batchNumber = batchIndex + 1;
+      let uploadStartedSuccessfully = false;
+      let lastSnapshot: VideoUploadStartSnapshot = {
+        rowCount: previousRowCount,
+        matchedFileNames: [],
+      };
+      let lastInputSnapshot: FileInputSnapshot | null = null;
+      let lastError: unknown;
 
-    for (let attempt = 1; attempt <= videoUploadStartWaitMsByAttempt.length; attempt += 1) {
-      const timeoutMs = videoUploadStartWaitMsByAttempt[attempt - 1];
       log(
         options,
-        `[meituan-drama] video upload start attempt ${attempt}/${videoUploadStartWaitMsByAttempt.length}: ` +
-          `files=${videoFiles.length} waitMs=${timeoutMs}`,
+        `[meituan-drama] selecting video upload batch ${batchNumber}/${videoFileBatches.length}: ` +
+          `files=${batchFiles.length} previousRows=${previousRowCount}`,
       );
 
-      try {
-        const videoInput = await episodeVideoInput(
+      for (let attempt = 1; attempt <= videoUploadStartWaitMsByAttempt.length; attempt += 1) {
+        const timeoutMs = videoUploadStartWaitMsByAttempt[attempt - 1];
+        log(
+          options,
+          `[meituan-drama] video upload start attempt ${attempt}/${videoUploadStartWaitMsByAttempt.length}: ` +
+            `batch=${batchNumber}/${videoFileBatches.length} files=${batchFiles.length} waitMs=${timeoutMs}`,
+        );
+
+        try {
+          const videoInput = await episodeVideoInputByDragger(
+            page,
+            attempt === 1 ? 60_000 : 15_000,
+          );
+          lastInputSnapshot = await fileInputSnapshot(videoInput).catch(() => null);
+          if (attempt > 1) {
+            await videoInput.setInputFiles([], { timeout: 30_000 });
+          }
+          await videoInput.setInputFiles(batchFiles, { timeout: 120_000 });
+          log(
+            options,
+            `[meituan-drama] episode files assigned to upload input: ` +
+              `batch=${batchNumber}/${videoFileBatches.length} ` +
+              `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} files=${batchFiles.length}`,
+          );
+          lastSnapshot = await waitForVideoUploadStart(
+            page,
+            batchFiles,
+            timeoutMs,
+            previousRowCount,
+          );
+          if (uploadBatchStarted(lastSnapshot, previousRowCount)) {
+            uploadStartedSuccessfully = true;
+            log(
+              options,
+              `[meituan-drama] video upload batch started: batch=${batchNumber}/${videoFileBatches.length} ` +
+                `attempt=${attempt} rows=${lastSnapshot.rowCount} ` +
+                `matchedFileNames=${lastSnapshot.matchedFileNames.length}`,
+            );
+            break;
+          }
+        } catch (error) {
+          lastError = error;
+          if (shouldFailWithoutUploadStartRetry(error)) throw error;
+          log(
+            options,
+            `[meituan-drama] video upload start attempt failed: ` +
+              `batch=${batchNumber}/${videoFileBatches.length} ` +
+              `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} ` +
+              `error=${error instanceof Error ? error.message : String(error)}`,
+          );
+        }
+
+        if (attempt < videoUploadStartWaitMsByAttempt.length) {
+          lastSnapshot = await readVideoUploadStartSnapshot(page, batchFiles);
+          if (uploadBatchStarted(lastSnapshot, previousRowCount)) {
+            uploadStartedSuccessfully = true;
+            log(
+              options,
+              `[meituan-drama] video upload batch started before retry: ` +
+                `batch=${batchNumber}/${videoFileBatches.length} rows=${lastSnapshot.rowCount} ` +
+                `matchedFileNames=${lastSnapshot.matchedFileNames.length}`,
+            );
+            break;
+          }
+          log(
+            options,
+            `[meituan-drama] no new upload rows after ${timeoutMs}ms, ` +
+              `retrying batch ${batchNumber}/${videoFileBatches.length} once`,
+          );
+        }
+      }
+
+      if (!uploadStartedSuccessfully) {
+        const diagnosticDir = await saveVideoUploadStartDiagnostics({
           page,
-          videoFiles.length,
-          attempt === 1 ? 60_000 : 15_000,
-        );
-        lastInputSnapshot = await fileInputSnapshot(videoInput).catch(() => null);
-        if (attempt > 1) {
-          await videoInput.setInputFiles([], { timeout: 30_000 });
-        }
-        await videoInput.setInputFiles(videoFiles, { timeout: 120_000 });
-        log(
-          options,
-          `[meituan-drama] episode files assigned to upload input: ` +
-            `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} files=${videoFiles.length}`,
-        );
-        lastSnapshot = await waitForVideoUploadStart(page, videoFiles, timeoutMs);
-        if (uploadStarted(lastSnapshot)) {
-          uploadStartedSuccessfully = true;
-          log(
-            options,
-            `[meituan-drama] video upload started: attempt=${attempt} ` +
-              `rows=${lastSnapshot.rowCount} matchedFileNames=${lastSnapshot.matchedFileNames.length}`,
-          );
-          break;
-        }
-      } catch (error) {
-        lastError = error;
-        if (shouldFailWithoutUploadStartRetry(error)) throw error;
-        log(
-          options,
-          `[meituan-drama] video upload start attempt failed: ` +
-            `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} ` +
-            `error=${error instanceof Error ? error.message : String(error)}`,
-        );
+          task,
+          runtimeOptions: options,
+          videoFiles: batchFiles,
+          attempts: videoUploadStartWaitMsByAttempt.length,
+          lastSnapshot,
+          lastInputSnapshot,
+          lastError,
+        }).catch(() => null);
+        const detail = {
+          batch: `${batchNumber}/${videoFileBatches.length}`,
+          attempts: videoUploadStartWaitMsByAttempt.length,
+          batchExpectedCount: batchFiles.length,
+          totalExpectedCount: videoFiles.length,
+          previousRowCount,
+          visibleUploadRows: lastSnapshot.rowCount,
+          matchedFileNames: lastSnapshot.matchedFileNames.length,
+          selectedInput: lastInputSnapshot,
+          diagnosticDir,
+          lastError: unknownErrorMessage(lastError),
+        };
+        throw new Error(`MEITUAN_VIDEO_UPLOAD_NOT_STARTED: ${JSON.stringify(detail)}`);
       }
 
-      if (attempt < videoUploadStartWaitMsByAttempt.length) {
-        lastSnapshot = await readVideoUploadStartSnapshot(page, videoFiles);
-        if (uploadStarted(lastSnapshot)) {
-          uploadStartedSuccessfully = true;
-          log(
-            options,
-            `[meituan-drama] video upload started before retry: ` +
-              `rows=${lastSnapshot.rowCount} matchedFileNames=${lastSnapshot.matchedFileNames.length}`,
-          );
-          break;
-        }
-        log(
-          options,
-          `[meituan-drama] no upload rows after ${timeoutMs}ms, retrying file selection once`,
-        );
-      }
-    }
-
-    if (!uploadStartedSuccessfully) {
-      const diagnosticDir = await saveVideoUploadStartDiagnostics({
-        page,
-        task,
-        runtimeOptions: options,
-        videoFiles,
-        attempts: videoUploadStartWaitMsByAttempt.length,
-        lastSnapshot,
-        lastInputSnapshot,
-        lastError,
-      }).catch(() => null);
-      const detail = {
-        attempts: videoUploadStartWaitMsByAttempt.length,
-        expectedCount: videoFiles.length,
-        visibleUploadRows: lastSnapshot.rowCount,
-        matchedFileNames: lastSnapshot.matchedFileNames.length,
-        selectedInput: lastInputSnapshot,
-        diagnosticDir,
-        lastError: unknownErrorMessage(lastError),
-      };
-      throw new Error(`MEITUAN_VIDEO_UPLOAD_NOT_STARTED: ${JSON.stringify(detail)}`);
+      const expectedRowCount = previousRowCount + batchFiles.length;
+      previousRowCount = await waitForVideoUploadBatchQueued(page, expectedRowCount);
+      log(
+        options,
+        `[meituan-drama] video upload batch queued: batch=${batchNumber}/${videoFileBatches.length} ` +
+          `batchFiles=${batchFiles.length} totalRows=${previousRowCount}/${videoFiles.length}`,
+      );
     }
 
     await waitForVideoUploadProgress(page, videoFiles.length, options);

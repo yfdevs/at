@@ -60,6 +60,14 @@ import {
   stopPinduoduoDramaPlatformRuntime,
 } from "./platforms/pinduoduo-drama";
 import {
+  getBaiduDramaBrowserInstanceCount,
+  getBaiduDramaPlatformRuntimeSummary,
+  getBaiduDramaRunningPlatformCount,
+  openBaiduDramaLogDir,
+  registerBaiduDramaPlatformHandlers,
+  stopBaiduDramaPlatformRuntime,
+} from "./platforms/baidu-drama";
+import {
   ensureBaiduNetdiskCdpReadyOnStartup,
   registerBaiduNetdiskPlatformHandlers,
 } from "./platforms/baidu-netdisk";
@@ -94,6 +102,7 @@ type PlatformId =
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
+  | "baidu-drama"
   | "tiktok-drama"
   | "pinduoduo-drama";
 
@@ -191,6 +200,7 @@ app.on("before-quit", () => {
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopQqDramaPlatformRuntime();
+  stopBaiduDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
   stopPinduoduoDramaPlatformRuntime();
 });
@@ -210,6 +220,7 @@ app.whenReady().then(() => {
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerQqDramaPlatformHandlers();
+    registerBaiduDramaPlatformHandlers();
     registerTiktokDramaCenterPlatformHandlers();
     registerPinduoduoDramaPlatformHandlers();
     registerBaiduNetdiskPlatformHandlers();
@@ -286,6 +297,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getKuaishouDramaPlatformRuntimeSummary();
     case "qq-drama":
       return getQqDramaPlatformRuntimeSummary();
+    case "baidu-drama":
+      return getBaiduDramaPlatformRuntimeSummary();
     case "tiktok-drama":
       return getTiktokDramaCenterPlatformRuntimeSummary();
     case "pinduoduo-drama":
@@ -305,6 +318,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openKuaishouDramaLogDir();
     case "qq-drama":
       return openQqDramaLogDir();
+    case "baidu-drama":
+      return openBaiduDramaLogDir();
     case "tiktok-drama":
       return openTiktokDramaCenterLogDir();
     case "pinduoduo-drama":
@@ -320,6 +335,7 @@ function getGlobalBrowserInstanceCount() {
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getQqDramaBrowserInstanceCount,
+    getBaiduDramaBrowserInstanceCount,
     getTiktokDramaCenterBrowserInstanceCount,
     getPinduoduoDramaBrowserInstanceCount,
   ];
@@ -339,6 +355,7 @@ function getGlobalRunningPlatformStatus() {
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getQqDramaRunningPlatformCount,
+    getBaiduDramaRunningPlatformCount,
     getTiktokDramaCenterRunningPlatformCount,
     getPinduoduoDramaRunningPlatformCount,
   ];

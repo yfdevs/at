@@ -5,6 +5,7 @@ import { scrollLocatorIntoView } from "../form-controls.js";
 
 const submitButtonTextPattern = /提交[\s\S]*(?:审核|送审)/;
 const fieldValidationSelector = ".mtd-form-item-error-tip:visible, .err-tips:visible";
+const submitSettleDelayMs = 10_000;
 
 async function visibleFieldValidationTexts(page: Page) {
   return [
@@ -77,7 +78,7 @@ export async function submitPublishStep(
   });
   await confirmButton.waitFor({ state: "visible", timeout: 30_000 });
   await confirmButton.click({ timeout: 30_000 });
-  await page.waitForTimeout(1_000);
+  await page.waitForTimeout(submitSettleDelayMs);
   await throwIfFieldValidationFailed(page);
 
   log(options, "[meituan-drama] submit confirmation button clicked");

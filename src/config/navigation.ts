@@ -6,6 +6,7 @@ export type PlatformId =
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
+  | "baidu-drama"
   | "tiktok-drama"
   | "pinduoduo-drama";
 
@@ -24,6 +25,8 @@ export type AppRoute =
   | "kuaishou-drama/settings"
   | "qq-drama/service"
   | "qq-drama/config"
+  | "baidu-drama/service"
+  | "baidu-drama/config"
   | "tiktok-drama/service"
   | "tiktok-drama/config"
   | "pinduoduo-drama/service"
@@ -44,6 +47,8 @@ const appRoutes = [
   "kuaishou-drama/settings",
   "qq-drama/service",
   "qq-drama/config",
+  "baidu-drama/service",
+  "baidu-drama/config",
   "tiktok-drama/service",
   "tiktok-drama/config",
   "pinduoduo-drama/service",
@@ -108,6 +113,14 @@ export const platformNavigation: PlatformNavigationItem[] = [
     serviceRoute: "qq-drama/service",
     configRoute: "qq-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}QQ.svg`,
+  },
+  {
+    id: "baidu-drama",
+    title: "百度短剧",
+    routePrefix: "baidu-drama",
+    serviceRoute: "baidu-drama/service",
+    configRoute: "baidu-drama/config",
+    logoSrc: `${import.meta.env.BASE_URL}百度网盘.svg`,
   },
   {
     id: "tiktok-drama",
@@ -184,6 +197,21 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "配置管理",
         route: "qq-drama/config",
+        icon: FineTune,
+      },
+    ],
+  },
+  {
+    title: "百度短剧",
+    items: [
+      {
+        title: "服务控制",
+        route: "baidu-drama/service",
+        icon: Terminal,
+      },
+      {
+        title: "配置管理",
+        route: "baidu-drama/config",
         icon: FineTune,
       },
     ],

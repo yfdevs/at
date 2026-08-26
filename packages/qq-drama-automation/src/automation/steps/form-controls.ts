@@ -19,16 +19,80 @@ const formErrorSelectors = [
 const visibleFormErrorSelector = formErrorSelectors
   .map((selector) => `${selector}:visible`)
   .join(",");
-const visibleMessageErrorSelector = [
-  ".t-message.t-is-error:visible",
-  ".t-message--error:visible",
-  ".ant-message-error:visible",
-  ".el-message--error:visible",
-  "[role='alert'][class*='error']:visible",
-].join(",");
+const messageErrorSelectors = [
+  ".t-message.t-is-error",
+  ".t-message--error",
+  ".ant-message-error",
+  ".el-message--error",
+  "[role='alert'][class*='error']",
+];
+const visibleMessageErrorSelector = messageErrorSelectors
+  .map((selector) => `${selector}:visible`)
+  .join(",");
 
 export function qqPageMessageErrorLocator(page: Page) {
   return page.locator(visibleMessageErrorSelector);
+}
+
+export async function installQqPageMessageCapture(page: Page) {
+  await page.evaluate((selectors) => {
+    const state = window as typeof window & {
+      __qqDramaCapturedPageMessages?: string[];
+      __qqDramaPageMessageCaptureInstalled?: boolean;
+      __qqDramaPageMessageObserver?: MutationObserver;
+    };
+    state.__qqDramaCapturedPageMessages ??= [];
+    if (state.__qqDramaPageMessageCaptureInstalled) return;
+    state.__qqDramaPageMessageCaptureInstalled = true;
+
+    const selector = selectors.join(",");
+    const captureElement = (element: Element) => {
+      if (!(element instanceof HTMLElement) || !element.matches(selector)) return;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) {
+        return;
+      }
+      const message = element.textContent?.replace(/\s+/g, " ").trim();
+      if (message && !state.__qqDramaCapturedPageMessages?.includes(message)) {
+        state.__qqDramaCapturedPageMessages?.push(message);
+      }
+    };
+    const captureNode = (node: Node) => {
+      if (node instanceof Element) {
+        captureElement(node);
+        node.querySelectorAll(selector).forEach(captureElement);
+      } else if (node.parentElement) {
+        captureElement(node.parentElement);
+      }
+    };
+
+    document.querySelectorAll(selector).forEach(captureElement);
+    state.__qqDramaPageMessageObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        captureNode(mutation.target);
+        mutation.addedNodes.forEach(captureNode);
+      });
+    });
+    state.__qqDramaPageMessageObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+  }, messageErrorSelectors);
+}
+
+async function capturedPageMessageTexts(page: Page) {
+  return page.evaluate(() => {
+    const state = window as typeof window & {
+      __qqDramaCapturedPageMessages?: string[];
+    };
+    const messages = [...(state.__qqDramaCapturedPageMessages ?? [])];
+    state.__qqDramaCapturedPageMessages = [];
+    return messages;
+  }).catch(() => [] as string[]);
 }
 
 async function visibleFormErrorTexts(page: Page) {
@@ -44,7 +108,10 @@ async function visibleFormErrorTexts(page: Page) {
 export async function throwIfQqFormInvalid(page: Page) {
   const messageTexts = [
     ...new Set(
-      (await page.locator(visibleMessageErrorSelector).allInnerTexts().catch(() => []))
+      [
+        ...await capturedPageMessageTexts(page),
+        ...await page.locator(visibleMessageErrorSelector).allInnerTexts().catch(() => []),
+      ]
         .map((text) => text.replace(/\s+/g, " ").trim())
         .filter(Boolean),
     ),
@@ -314,6 +381,8 @@ export async function uploadTaskFile(page: Page, file: QqDramaTaskFile, options:
   const localFilePath = await resolveTaskFilePath(file, options);
   if (file.selector) {
     await page.locator(file.selector).first().setInputFiles(localFilePath, { timeout: 60_000 });
+    await page.waitForTimeout(500);
+    await throwIfQqFormInvalid(page);
     return;
   }
   if (!file.label) {
@@ -324,6 +393,8 @@ export async function uploadTaskFile(page: Page, file: QqDramaTaskFile, options:
   await page.locator("input[data-qq-drama-upload-target='true']").first().setInputFiles(localFilePath, {
     timeout: 60_000,
   });
+  await page.waitForTimeout(500);
+  await throwIfQqFormInvalid(page);
   await page.locator("input[data-qq-drama-upload-target='true']").first().evaluate((element) => {
     element.removeAttribute("data-qq-drama-upload-target");
   }).catch(() => undefined);
@@ -358,6 +429,8 @@ export async function uploadTaskFiles(
   const input = page.locator("input[data-qq-drama-upload-target='true']").first();
   try {
     await input.setInputFiles(localFilePaths, { timeout: 60_000 });
+    await page.waitForTimeout(500);
+    await throwIfQqFormInvalid(page);
     if (uploadOptions.waitForVisibleFileNames) {
       const field = page.locator("[data-qq-drama-upload-field='true']").first();
       const fileNames = localFilePaths.map((filePath) => path.basename(filePath));

@@ -48,6 +48,10 @@ export function createElectronPlugin(rootDir: string) {
               replacement: path.join(rootDir, "packages/baidu-netdisk-automation/src/index.ts"),
             },
             {
+              find: /^@drama\/baidu-drama-automation$/,
+              replacement: path.join(rootDir, "packages/baidu-drama-automation/src/index.ts"),
+            },
+            {
               find: /^@drama\/drama-media-assets$/,
               replacement: path.join(rootDir, "packages/drama-media-assets/src/index.ts"),
             },

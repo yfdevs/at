@@ -7,7 +7,7 @@ import type {
 import { exactTextPattern, scrollLocatorIntoView } from "./form-controls.js";
 import { log } from "./browser-session.js";
 import { maximizeKuaishouImageCropArea } from "./image-crop.js";
-import { downloadRemoteAsset } from "./upload/remote-assets.js";
+import { resolveUploadAssetFile } from "./upload/remote-assets.js";
 import { enterKuaishouDramaVideoUploadStep } from "./video-upload-step.js";
 import { uploadKuaishouDramaEpisodeVideos } from "./video-upload.js";
 
@@ -350,8 +350,64 @@ export async function fillKuaishouDramaSaleAndEpisodes(
   await page.waitForTimeout(episodeSettleMs);
 
   if (variant.fullDramaPriceYuan !== undefined) {
-    const priceInput = page.locator('.price-input-val[placeholder="请输入金额"]').first();
-    await priceInput.fill(String(variant.fullDramaPriceYuan), { timeout: 30_000 });
+    const expectedPrice = String(variant.fullDramaPriceYuan);
+    const priceInput = page
+      .locator('.price-input-val[placeholder="请输入金额"]:visible')
+      .first();
+    await priceInput.waitFor({ state: "visible", timeout: 30_000 });
+    await priceInput.click({ timeout: 30_000 });
+    await priceInput.press("ControlOrMeta+A");
+    await priceInput.pressSequentially(expectedPrice, { delay: 50 });
+    await priceInput.evaluate((node, nextValue) => {
+      const input = node as HTMLInputElement;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      );
+      if (descriptor?.set) {
+        descriptor.set.call(input, nextValue);
+      } else {
+        input.value = nextValue;
+      }
+      input.defaultValue = nextValue;
+      input.setAttribute("value", nextValue);
+      input.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        data: nextValue,
+        inputType: "insertText",
+      }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, expectedPrice);
+    await page.waitForTimeout(episodeSettleMs);
+    await priceInput.blur();
+    await page.waitForTimeout(episodeSettleMs);
+    const priceState = await priceInput.evaluate((node, nextValue) => {
+      const input = node as HTMLInputElement;
+      input.defaultValue = nextValue;
+      input.setAttribute("value", nextValue);
+      return {
+        value: input.value,
+        defaultValue: input.defaultValue,
+        valueAttribute: input.getAttribute("value"),
+      };
+    }, expectedPrice);
+    if (
+      Number(priceState.value) !== variant.fullDramaPriceYuan ||
+      Number(priceState.defaultValue) !== variant.fullDramaPriceYuan ||
+      Number(priceState.valueAttribute) !== variant.fullDramaPriceYuan
+    ) {
+      throw new Error(
+        `KUAISHOU_DRAMA_FULL_PRICE_INPUT_FAILED: ` +
+          `value=${priceState.value} defaultValue=${priceState.defaultValue} ` +
+          `attribute=${priceState.valueAttribute} expected=${expectedPrice}`,
+      );
+    }
+    log(
+      options,
+      `[kuaishou-drama] full drama price entered: value=${priceState.value} ` +
+        `attribute=${priceState.valueAttribute}`,
+    );
   }
 
   log(options, `[kuaishou-drama] creating ${task.episodeCount} episode slots: ${variant.kind}`);
@@ -360,8 +416,11 @@ export async function fillKuaishouDramaSaleAndEpisodes(
   if (!freeRange) {
     throw new Error(`KUAISHOU_DRAMA_FREE_EPISODE_RANGE_NOT_FOUND: ${variant.kind}`);
   }
-  const episodeCoverPath = await downloadRemoteAsset(
-    task.coverImageUrl,
+  if (!task.localCoverFile) {
+    throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
+  }
+  const episodeCoverPath = await resolveUploadAssetFile(
+    task.localCoverFile,
     options,
     `${task.title}-${variant.kind}-episode-cover`,
     `${variant.kind} episode cover`,
@@ -387,6 +446,59 @@ export async function fillKuaishouDramaSaleAndEpisodes(
     await batchSetEpisodePrice(page, range, variant.title, episodeCoverPath);
   }
 
+  if (variant.fullDramaPriceYuan !== undefined) {
+    const expectedPrice = String(variant.fullDramaPriceYuan);
+    const priceInput = page
+      .locator('.price-input-val[placeholder="请输入金额"]:visible')
+      .first();
+    await priceInput.waitFor({ state: "visible", timeout: 30_000 });
+    await priceInput.evaluate((node, nextValue) => {
+      const input = node as HTMLInputElement;
+      const descriptor = Object.getOwnPropertyDescriptor(
+        window.HTMLInputElement.prototype,
+        "value",
+      );
+      if (descriptor?.set) {
+        descriptor.set.call(input, nextValue);
+      } else {
+        input.value = nextValue;
+      }
+      input.defaultValue = nextValue;
+      input.setAttribute("value", nextValue);
+      input.dispatchEvent(new InputEvent("input", {
+        bubbles: true,
+        cancelable: true,
+        data: nextValue,
+        inputType: "insertText",
+      }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, expectedPrice);
+    await page.waitForTimeout(episodeSettleMs);
+    const priceState = await priceInput.evaluate((node) => {
+      const input = node as HTMLInputElement;
+      return {
+        value: input.value,
+        defaultValue: input.defaultValue,
+        valueAttribute: input.getAttribute("value"),
+      };
+    });
+    if (
+      Number(priceState.value) !== variant.fullDramaPriceYuan ||
+      Number(priceState.defaultValue) !== variant.fullDramaPriceYuan ||
+      Number(priceState.valueAttribute) !== variant.fullDramaPriceYuan
+    ) {
+      throw new Error(
+        `KUAISHOU_DRAMA_FULL_PRICE_INPUT_FAILED_BEFORE_CONTINUE: ` +
+          `value=${priceState.value} defaultValue=${priceState.defaultValue} ` +
+          `attribute=${priceState.valueAttribute} expected=${expectedPrice}`,
+      );
+    }
+    log(
+      options,
+      `[kuaishou-drama] full drama price re-synced before continue: ` +
+        `value=${priceState.value} attribute=${priceState.valueAttribute}`,
+    );
+  }
   await agreeAndContinue(page, options);
   await uploadKuaishouDramaEpisodeVideos(page, task, variant, resourceName, options);
 }

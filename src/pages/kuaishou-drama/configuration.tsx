@@ -1,7 +1,7 @@
-import { useState } from "react"
-import { toast } from "sonner"
+import { useState } from "react";
+import { toast } from "sonner";
 
-import { Separator } from "@/components/ui/separator"
+import { Separator } from "@/components/ui/separator";
 import {
   ConfigPanelSection,
   ConfigSection,
@@ -9,26 +9,27 @@ import {
   StoragePathRow,
   type ConfigSectionDefinition,
   usePlatformConfig,
-} from "@/pages/shared/configuration-page"
+} from "@/pages/shared/configuration-page";
 import {
   kuaishouDramaService,
   type KuaishouDramaConfig,
   type KuaishouDramaConfigResult,
   type KuaishouDramaStoragePathKey,
   type KuaishouDramaStoragePaths,
-} from "@/platforms/kuaishou-drama/service"
+} from "@/platforms/kuaishou-drama/service";
 
 const emptyConfig: KuaishouDramaConfig = {
   accountProfileName: "default",
+  apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   videoUploadTimeoutMinutes: "120",
   headless: "false",
   operationDelaySeconds: "0",
+  taskPollIntervalSeconds: "10",
   runDataDir: ".drama-runs/kuaishou-drama",
   logRetentionDays: "3",
-  mockTaskEnabled: "true",
-}
+};
 
 const emptyStoragePaths: KuaishouDramaStoragePaths = {
   runDataDir: "",
@@ -38,18 +39,33 @@ const emptyStoragePaths: KuaishouDramaStoragePaths = {
   assetDownloadDir: "",
   logDir: "",
   logFilePath: "",
-}
+};
 
 const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
+  {
+    title: "任务接口",
+    description: "从后台读取已启用的快手账号，并为每个账号独立领取和回写任务。",
+    fields: [
+      {
+        key: "apiBaseUrl",
+        label: "接口地址",
+        description: "快手 RPA 账号配置、任务领取和结果回写接口根地址。",
+        type: "url",
+      },
+      {
+        key: "taskPollIntervalSeconds",
+        label: "任务轮询间隔",
+        description: "没有可领取任务或单次双版本上传结束后，再次请求任务的间隔。",
+        type: "number",
+        suffix: "秒",
+        min: 1,
+      },
+    ],
+  },
   {
     title: "浏览器与运行数据",
     description: "登录态和临时文件由快手短剧平台独立管理。",
     fields: [
-      {
-        key: "accountProfileName",
-        label: "账号配置名",
-        description: "每个账号配置名对应一个独立浏览器登录态目录。",
-      },
       {
         key: "runDataDir",
         label: "运行数据目录",
@@ -96,14 +112,6 @@ const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
       },
       {
         kind: "switch",
-        key: "mockTaskEnabled",
-        label: "调试任务数据",
-        description: "后端任务接口接入前，启动服务后使用模拟任务填充上剧表单。",
-        activeLabel: "自动填表示例任务",
-        inactiveLabel: "只打开浏览器",
-      },
-      {
-        kind: "switch",
         key: "headless",
         label: "浏览器窗口",
         description: "登录和排查问题时建议显示浏览器。",
@@ -112,12 +120,12 @@ const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
       },
     ],
   },
-]
+];
 
 const storagePathRows: Array<{
-  key: keyof KuaishouDramaStoragePaths
-  label: string
-  description: string
+  key: keyof KuaishouDramaStoragePaths;
+  label: string;
+  description: string;
 }> = [
   {
     key: "runDataDir",
@@ -149,11 +157,11 @@ const storagePathRows: Array<{
     label: "素材缓存",
     description: "远程封面、授权材料、海报下载后临时保存在这里。",
   },
-]
+];
 
 export function KuaishouDramaConfigurationPage() {
-  const [storagePaths, setStoragePaths] = useState<KuaishouDramaStoragePaths>(emptyStoragePaths)
-  const [configFilePath, setConfigFilePath] = useState("")
+  const [storagePaths, setStoragePaths] = useState<KuaishouDramaStoragePaths>(emptyStoragePaths);
+  const [configFilePath, setConfigFilePath] = useState("");
   const {
     config,
     discardChanges,
@@ -167,37 +175,38 @@ export function KuaishouDramaConfigurationPage() {
     getConfig: kuaishouDramaService.getConfig,
     saveConfig: kuaishouDramaService.saveConfig,
     onApplyResult: (result: KuaishouDramaConfigResult) => {
-      setStoragePaths(result.storagePaths)
-      setConfigFilePath(result.path)
+      setStoragePaths(result.storagePaths);
+      setConfigFilePath(result.path);
     },
-  })
+  });
 
   const selectDirectory = async (key: keyof KuaishouDramaConfig & string) => {
     try {
-      const selectedPath = key === "runDataDir"
-        ? await kuaishouDramaService.selectRunDataDir(config.runDataDir)
-        : key === "localEpisodeVideoRoot"
-          ? await kuaishouDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-          : null
+      const selectedPath =
+        key === "runDataDir"
+          ? await kuaishouDramaService.selectRunDataDir(config.runDataDir)
+          : key === "localEpisodeVideoRoot"
+            ? await kuaishouDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
+            : null;
       if (selectedPath) {
-        updateConfig(key, selectedPath)
+        updateConfig(key, selectedPath);
       }
     } catch (error) {
       toast.error("目录选择失败", {
         description: error instanceof Error ? error.message : String(error),
-      })
+      });
     }
-  }
+  };
 
   const openStoragePath = async (key: KuaishouDramaStoragePathKey) => {
     try {
-      await kuaishouDramaService.openStoragePath(key)
+      await kuaishouDramaService.openStoragePath(key);
     } catch (error) {
       toast.error("打开路径失败", {
         description: error instanceof Error ? error.message : String(error),
-      })
+      });
     }
-  }
+  };
 
   return (
     <ConfigurationPageFrame
@@ -249,5 +258,5 @@ export function KuaishouDramaConfigurationPage() {
         />
       </ConfigPanelSection>
     </ConfigurationPageFrame>
-  )
+  );
 }

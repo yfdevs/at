@@ -158,9 +158,7 @@ async function uploadPremiereProof(
     "premiere proof",
   );
   const proofLabel =
-    taskConfig.premiereStatus === "非美团首发"
-      ? "其他平台首发证明材料"
-      : "首发证明材料";
+    taskConfig.premiereStatus === "非美团首发" ? "其他平台首发证明材料" : "首发证明材料";
   const proofArea = await proofUploadContainer(page, proofLabel);
   const proofInput = proofArea.locator(".label .mtd-upload-input").first();
 
@@ -247,7 +245,7 @@ async function waitUploadCount(
   );
 }
 
-async function confirmCreateCollectionDrawer(page: Page) {
+async function confirmCreateCollectionDrawer(page: Page, options: MeituanCreationRuntimeOptions) {
   // The Meituan drawer currently renders a duplicated, nested footer. Selecting the
   // last visible footer targets the innermost footer and avoids matching both copies
   // of the confirm button (or an unrelated confirm button in another popover).
@@ -256,6 +254,12 @@ async function confirmCreateCollectionDrawer(page: Page) {
   await drawer.waitFor({ state: "visible", timeout: 30_000 });
   const footer = drawer.locator(".mtd-drawer-footer:visible").last();
   const confirmButton = footer.getByRole("button", { name: "确定", exact: true });
+  const collectionTimelineItem = page.locator(".timeline-item").filter({
+    has: page.locator(".timeline-content .title").filter({ hasText: /^\s*选择合集\s*$/ }),
+  });
+  const collectionCompleted = collectionTimelineItem
+    .locator(".timeline-content .desc")
+    .filter({ hasText: /^\s*已完成\s*$/ });
 
   await confirmButton.click({ timeout: 30_000 });
   const deadline = Date.now() + 60_000;
@@ -276,9 +280,11 @@ async function confirmCreateCollectionDrawer(page: Page) {
       );
     }
 
-    if ((await visibleDrawers.count()) === 0) {
-      const collectionTextbox = page.getByRole("textbox", { name: "选择或创建合集" });
-      await collectionTextbox.waitFor({ state: "visible", timeout: 30_000 });
+    // Creating a collection advances the page directly to the video-upload step,
+    // so the collection textbox is no longer rendered. The timeline is the page's
+    // authoritative signal that collection selection finished successfully.
+    if (await collectionCompleted.isVisible().catch(() => false)) {
+      log(options, "[meituan-drama] collection completed; continuing to video upload");
       return;
     }
 
@@ -291,6 +297,7 @@ async function confirmCreateCollectionDrawer(page: Page) {
   throw new Error(
     `MEITUAN_CREATE_COLLECTION_DRAWER_NOT_CLOSED: ` +
       `visibleDrawers=${await visibleDrawers.count().catch(() => -1)} ` +
+      `collectionCompleted=${await collectionCompleted.isVisible().catch(() => false)} ` +
       `text=${drawerTexts.join(" | ") || "(none)"}`,
   );
 }
@@ -316,7 +323,9 @@ async function confirmCoverUploadDialog(
     }
 
     if (await confirmButtonInModal.isVisible({ timeout: 250 }).catch(() => false)) {
-      const modal = confirmButtonInModal.locator("xpath=ancestor::*[contains(@class, 'mtd-modal')][1]");
+      const modal = confirmButtonInModal.locator(
+        "xpath=ancestor::*[contains(@class, 'mtd-modal')][1]",
+      );
       await confirmButtonInModal.click({ timeout: 30_000 });
       await modal.waitFor({ state: "hidden", timeout: 30_000 }).catch(async (error) => {
         const text = (await modal.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
@@ -345,10 +354,20 @@ async function confirmCoverUploadDialog(
     await page.waitForTimeout(250);
   }
 
-  const visibleModalTexts = (await page.locator(".mtd-modal:visible").allInnerTexts().catch(() => []))
+  const visibleModalTexts = (
+    await page
+      .locator(".mtd-modal:visible")
+      .allInnerTexts()
+      .catch(() => [])
+  )
     .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 300))
     .filter(Boolean);
-  const visibleButtonTexts = (await page.locator("button:visible").allInnerTexts().catch(() => []))
+  const visibleButtonTexts = (
+    await page
+      .locator("button:visible")
+      .allInnerTexts()
+      .catch(() => [])
+  )
     .map((text) => text.replace(/\s+/g, " ").trim())
     .filter(Boolean);
   const assignedFileCount = await input
@@ -449,42 +468,95 @@ async function fillProductionInfo(
   );
 }
 
-async function clickCopyrightAgreement(page: Page) {
-  const agreementText = "我已阅读并同意以下内容";
-  const agreementLabel = page.locator("label").filter({ hasText: agreementText }).last();
-  const agreementTrigger = (await agreementLabel.count())
-    ? agreementLabel
-    : page.getByText(agreementText).last();
-  const checkbox = agreementTrigger
-    .locator("xpath=ancestor::*[.//input[@type='checkbox']][1]")
-    .locator("input[type='checkbox']")
-    .first();
+// async function _clickCopyrightAgreement(page: Page) {
+//   await closeVisibleDatePicker(page);
+//   const drawer = page.locator(visibleDrawerSelector).last();
+//   const agreementTextPattern = /(?:阅读|知悉|知晓).*同意|同意.*(?:内容|协议|条款)/;
+//   const deadline = Date.now() + 15_000;
 
-  await closeVisibleDatePicker(page);
-  await scrollLocatorIntoView(page, agreementTrigger);
+//   while (Date.now() < deadline) {
+//     const semanticControls = drawer
+//       .locator("label:visible, .mtd-checkbox:visible, [role='checkbox']:visible")
+//       .filter({ hasText: agreementTextPattern });
+//     const enabledCheckboxes = drawer.locator("input[type='checkbox']:not([disabled])");
+//     let agreementTrigger: Locator | null = null;
+//     let checkbox: Locator | null = null;
 
-  if (await checkbox.isChecked({ timeout: 1_000 }).catch(() => false)) {
-    return;
-  }
+//     if ((await semanticControls.count()) > 0) {
+//       agreementTrigger = semanticControls.last();
+//       const nestedCheckbox = agreementTrigger.locator("input[type='checkbox']").first();
+//       checkbox = (await nestedCheckbox.count()) > 0 ? nestedCheckbox : null;
+//     } else {
+//       const checkboxCount = await enabledCheckboxes.count();
+//       for (let index = 0; index < checkboxCount; index += 1) {
+//         const candidate = enabledCheckboxes.nth(index);
+//         const nearbyText = await candidate
+//           .evaluate((element) => {
+//             const container =
+//               element.closest("label, .mtd-checkbox, .mtd-form-item") ?? element.parentElement;
+//             return container?.textContent?.replace(/\s+/g, " ").trim() ?? "";
+//           })
+//           .catch(() => "");
+//         if (agreementTextPattern.test(nearbyText)) {
+//           checkbox = candidate;
+//           agreementTrigger = candidate.locator(
+//             "xpath=ancestor::*[self::label or contains(concat(' ', normalize-space(@class), ' '), ' mtd-checkbox ')][1]",
+//           );
+//           break;
+//         }
+//       }
 
-  if (await checkbox.count()) {
-    await checkbox.evaluate((node) => {
-      (node as HTMLInputElement).click();
-    });
-  } else {
-    await agreementTrigger.evaluate((node) => {
-      (node as HTMLElement).click();
-    });
-  }
-  await page.waitForTimeout(100);
+//       // The copyright section currently has exactly one checkbox. This fallback
+//       // keeps working when Meituan changes the agreement copy again.
+//       if (!checkbox && checkboxCount === 1) {
+//         checkbox = enabledCheckboxes.first();
+//         agreementTrigger = checkbox.locator(
+//           "xpath=ancestor::*[self::label or contains(concat(' ', normalize-space(@class), ' '), ' mtd-checkbox ')][1]",
+//         );
+//       }
+//     }
 
-  if (
-    (await checkbox.count()) &&
-    !(await checkbox.isChecked({ timeout: 1_000 }).catch(() => false))
-  ) {
-    throw new Error("MEITUAN_COPYRIGHT_AGREEMENT_CHECK_FAILED");
-  }
-}
+//     if (agreementTrigger || checkbox) {
+//       const scrollTarget =
+//         agreementTrigger && (await agreementTrigger.count()) > 0 ? agreementTrigger : checkbox!;
+//       await scrollTarget.scrollIntoViewIfNeeded({ timeout: 5_000 });
+//       if (checkbox && (await checkbox.isChecked({ timeout: 500 }).catch(() => false))) {
+//         return;
+//       }
+
+//       if (checkbox) {
+//         await checkbox.evaluate((node) => (node as HTMLInputElement).click());
+//       } else {
+//         await agreementTrigger!.click({ timeout: 5_000 });
+//       }
+//       await page.waitForTimeout(150);
+
+//       if (checkbox && !(await checkbox.isChecked({ timeout: 1_000 }).catch(() => false))) {
+//         throw new Error("MEITUAN_COPYRIGHT_AGREEMENT_CHECK_FAILED");
+//       }
+//       return;
+//     }
+
+//     await page.waitForTimeout(250);
+//   }
+
+//   const checkboxTexts = (
+//     await drawer
+//       .locator("label:visible, .mtd-checkbox:visible, [role='checkbox']:visible")
+//       .allInnerTexts()
+//       .catch(() => [])
+//   )
+//     .map((text) => text.replace(/\s+/g, " ").trim())
+//     .filter(Boolean);
+//   throw new Error(
+//     `MEITUAN_COPYRIGHT_AGREEMENT_NOT_FOUND: ` +
+//       `checkboxes=${await drawer
+//         .locator("input[type='checkbox']")
+//         .count()
+//         .catch(() => -1)} ` +
+//       `texts=${checkboxTexts.join(" | ") || "(none)"}`,
+//   );
+// }
 
 async function fillStoryAndRights(
   page: Page,
@@ -540,8 +612,8 @@ async function fillStoryAndRights(
     });
   }
 
-  log(options, "[meituan-drama] accepting copyright agreement");
-  await clickCopyrightAgreement(page);
+  // log(options, "[meituan-drama] accepting copyright agreement");
+  // await clickCopyrightAgreement(page);
 
   log(options, "[meituan-drama] uploading premiere proof");
   await uploadPremiereProof(page, taskConfig, options);
@@ -577,7 +649,7 @@ async function fillCreateCollectionDrawerFields(
   await fillProductionInfo(page, taskConfig, options);
   await fillStoryAndRights(page, taskConfig, options);
   log(options, "[meituan-drama] confirming collection drawer");
-  await confirmCreateCollectionDrawer(page);
+  await confirmCreateCollectionDrawer(page, options);
 }
 
 export async function fillCreateCollectionDrawer(

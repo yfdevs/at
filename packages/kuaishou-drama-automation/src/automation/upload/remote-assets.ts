@@ -1,4 +1,4 @@
-import { mkdir, writeFile } from "node:fs/promises";
+import { mkdir, stat, writeFile } from "node:fs/promises";
 import { basename, extname, join } from "node:path";
 import type { KuaishouDramaRuntimeOptions } from "../../shared/types.js";
 import { log } from "../browser-session.js";
@@ -69,4 +69,39 @@ export async function downloadRemoteAsset(
   } finally {
     clearTimeout(timeout);
   }
+}
+
+export async function resolveUploadAssetFile(
+  assetReference: string,
+  options: KuaishouDramaRuntimeOptions,
+  fallbackBaseName: string,
+  logLabel: string,
+) {
+  if (assetReference.startsWith("data:")) {
+    const match = assetReference.match(/^data:([^;,]+)?(;base64)?,(.*)$/s);
+    if (!match) {
+      throw new Error(`KUAISHOU_DRAMA_EMBEDDED_ASSET_INVALID: ${logLabel}`);
+    }
+    const downloadDir = assetDownloadDir(options);
+    const extension = remoteFileExtension(new URL("https://local.invalid/asset"), match[1] ?? null);
+    const target = join(downloadDir, `${fallbackBaseName}${extension}`);
+    const contents = match[2]
+      ? Buffer.from(match[3], "base64")
+      : Buffer.from(decodeURIComponent(match[3]), "utf8");
+    await mkdir(downloadDir, { recursive: true });
+    await writeFile(target, contents);
+    log(options, `[kuaishou-drama] ${logLabel} materialized from package asset: ${target}`);
+    return target;
+  }
+
+  if (/^https?:\/\//i.test(assetReference)) {
+    return downloadRemoteAsset(assetReference, options, fallbackBaseName, logLabel);
+  }
+
+  const fileStat = await stat(assetReference).catch(() => undefined);
+  if (!fileStat?.isFile() || fileStat.size <= 0) {
+    throw new Error(`KUAISHOU_DRAMA_LOCAL_ASSET_INVALID: ${logLabel}: ${assetReference}`);
+  }
+  log(options, `[kuaishou-drama] ${logLabel} using local file: ${assetReference}`);
+  return assetReference;
 }
