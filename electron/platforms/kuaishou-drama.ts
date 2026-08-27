@@ -4,6 +4,10 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
+  createConfiguredAiClient,
+  getConfiguredAiClientOptions,
+} from "../global-app-config";
+import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
   openExistingPath,
@@ -382,6 +386,18 @@ async function startRuntime() {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
 
   const config = readConfig();
+  let aiClient: ReturnType<typeof createConfiguredAiClient> | undefined;
+  let aiModelId: string | undefined;
+  try {
+    aiModelId = getConfiguredAiClientOptions().model;
+    aiClient = createConfiguredAiClient();
+  } catch (error) {
+    console.info(
+      `[kuaishou-drama] AI configuration is unavailable; ` +
+        `the service will start, but ad-unlock cover preparation will require it: ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
   const configuredVideoRoot = config.localEpisodeVideoRoot.trim();
   if (!configuredVideoRoot) {
     throw new Error("请先在快手短剧配置中选择本地剧集视频目录，再启动服务。");
@@ -437,6 +453,8 @@ async function startRuntime() {
         baiduNetdiskDownloadRetryAttempts,
         videoUploadTimeoutMinutes,
         taskPollIntervalMs,
+        aiClient,
+        aiModelId,
         apiConfig: apiOptions.apiConfig,
         ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
         onLog: (message: string) => console.log(message),

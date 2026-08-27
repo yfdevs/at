@@ -253,6 +253,9 @@ importers:
       electron-builder:
         specifier: ^24.13.3
         version: 24.13.3(electron-builder-squirrel-windows@24.13.3)
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.12
       typescript:
         specifier: ^6.0.3
         version: 6.0.3
@@ -406,6 +409,9 @@ importers:
 
   packages/kuaishou-drama-automation:
     dependencies:
+      '@drama/ai':
+        specifier: workspace:*
+        version: link:../drama-ai
       '@drama/drama-media-assets':
         specifier: workspace:*
         version: link:../drama-media-assets
@@ -419,6 +425,9 @@ importers:
       '@types/node':
         specifier: latest
         version: 26.3.0
+      tsx:
+        specifier: ^4.23.12
+        version: 4.23.12
       typescript:
         specifier: ^6.0.3
         version: 6.0.3

@@ -58,6 +58,10 @@ export interface AiCompletionResult {
   usage?: AiTokenUsage;
 }
 
+export interface AiJsonCompletionResult extends AiCompletionResult {
+  data: Record<string, unknown>;
+}
+
 export interface DramaAiClient {
   analyzeImages(options: ImageAnalysisOptions): Promise<AiCompletionResult>;
   generateText(options: TextGenerationOptions): Promise<AiCompletionResult>;

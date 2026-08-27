@@ -57,7 +57,11 @@ export {
 export {
   prepareImageForUpload,
   prepareCroppedImageVariant,
+  prepareExtractedImageVariant,
   prepareStretchedImageVariant,
+  readImageDimensions,
+  type ImageCropRegion,
+  type ImageDimensions,
   type ImageUploadPolicy,
   type PreparedImageUploadFile,
   type PreparedStretchedImageVariant,

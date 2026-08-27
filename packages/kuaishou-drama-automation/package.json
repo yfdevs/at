@@ -13,15 +13,18 @@
   },
   "scripts": {
     "build": "vp pack && node scripts/copy-assets.mjs",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsx --conditions=development --test src/**/*.test.ts"
   },
   "dependencies": {
+    "@drama/ai": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "playwright": "1.61.1",
     "zod": "3.22.4"
   },
   "devDependencies": {
     "@types/node": "latest",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "catalog:"
   }

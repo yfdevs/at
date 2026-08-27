@@ -13,6 +13,7 @@ import {
   kuaishouCopyrightDeclarationFile,
 } from "../shared/fixed-assets.js";
 import { createKuaishouDramaPublishVariants } from "../shared/publish-variants.js";
+import { resolveKuaishouVariantCoverFile } from "../shared/ad-cover-ai.js";
 import {
   log,
   saveCredentialState,
@@ -1250,9 +1251,7 @@ export async function fillKuaishouDramaEditForm(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const remoteAssetDirectoryName = `${taskConfig.title}-${variant.kind}`;
-  if (!taskConfig.localCoverFile) {
-    throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
-  }
+  const coverFile = resolveKuaishouVariantCoverFile(taskConfig, variant);
 
   log(options, `[kuaishou-drama] filling drama title: ${variant.title}`);
   await fillTextboxByLabel(page, "短剧标题", variant.title, "请输入");
@@ -1261,7 +1260,7 @@ export async function fillKuaishouDramaEditForm(
   await uploadAssetByLabel(
     page,
     "短剧封面",
-    taskConfig.localCoverFile,
+    coverFile,
     `${remoteAssetDirectoryName}-cover`,
     "short drama cover",
     options,

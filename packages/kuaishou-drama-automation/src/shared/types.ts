@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DramaAiClient } from "@drama/ai";
 
 export type KuaishouDramaLoginState = "login-required" | "logged-in" | "unknown";
 
@@ -239,7 +240,10 @@ export type KuaishouDramaPersonGender = (typeof kuaishouDramaPersonGenderValues)
 export type KuaishouDramaSaleMode = (typeof kuaishouDramaSaleModeValues)[number];
 export type KuaishouDramaEpisodePrice = (typeof kuaishouDramaEpisodePriceValues)[number];
 export type KuaishouDramaTaskInput = z.input<typeof kuaishouDramaTaskSchema>;
-export type KuaishouDramaTaskConfig = z.infer<typeof kuaishouDramaTaskSchema>;
+export type KuaishouDramaTaskConfig = z.infer<typeof kuaishouDramaTaskSchema> & {
+  /** Generated locally and used only by the ad-unlock publish variant. */
+  localAdUnlockCoverFile?: string;
+};
 
 export type KuaishouDramaPublishVariant = {
   kind: "full-paid" | "ad-unlock";
@@ -324,6 +328,9 @@ export type KuaishouDramaRuntimeOptions = {
   baiduNetdiskDownloadRetryAttempts?: number;
   videoUploadTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
+  aiClient?: DramaAiClient;
+  aiModelId?: string;
+  adCoverAiAnalysisAttempts?: number;
   onLog?: (message: string) => void;
   /** Called only after the authenticated edit form is visible. */
   claimTask?: () => Promise<KuaishouDramaTaskInput | ClaimedKuaishouDramaTask | null>;

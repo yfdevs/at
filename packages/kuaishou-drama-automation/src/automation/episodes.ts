@@ -7,6 +7,7 @@ import type {
 import { exactTextPattern, scrollLocatorIntoView } from "./form-controls.js";
 import { log } from "./browser-session.js";
 import { maximizeKuaishouImageCropArea } from "./image-crop.js";
+import { resolveKuaishouVariantCoverFile } from "../shared/ad-cover-ai.js";
 import { resolveUploadAssetFile } from "./upload/remote-assets.js";
 import { enterKuaishouDramaVideoUploadStep } from "./video-upload-step.js";
 import { uploadKuaishouDramaEpisodeVideos } from "./video-upload.js";
@@ -416,11 +417,9 @@ export async function fillKuaishouDramaSaleAndEpisodes(
   if (!freeRange) {
     throw new Error(`KUAISHOU_DRAMA_FREE_EPISODE_RANGE_NOT_FOUND: ${variant.kind}`);
   }
-  if (!task.localCoverFile) {
-    throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
-  }
+  const coverFile = resolveKuaishouVariantCoverFile(task, variant);
   const episodeCoverPath = await resolveUploadAssetFile(
-    task.localCoverFile,
+    coverFile,
     options,
     `${task.title}-${variant.kind}-episode-cover`,
     `${variant.kind} episode cover`,

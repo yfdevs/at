@@ -9,11 +9,16 @@ export {
   OpenAiCompatibleClient,
 } from "./openai-compatible-client.js";
 export { resolveImageDataUrl } from "./image-input.js";
+export {
+  analyzeImagesAsJson,
+  parseAiJsonObject,
+} from "./structured-output.js";
 export type {
   AiCompletionResult,
   AiGenerationOptions,
   AiImageDetail,
   AiImageInput,
+  AiJsonCompletionResult,
   AiTokenUsage,
   DramaAiClient,
   DoubaoClientOptions,

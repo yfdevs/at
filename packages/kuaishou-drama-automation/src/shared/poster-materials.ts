@@ -1,5 +1,6 @@
 import { listLocalPosterImages } from "@drama/drama-media-assets";
 import type { KuaishouDramaRuntimeOptions, KuaishouDramaTaskConfig } from "./types.js";
+import { prepareKuaishouAdUnlockCover } from "./ad-cover-ai.js";
 import { getKuaishouDramaLocalEpisodeVideoRoot } from "./local-episode-videos.js";
 
 export async function prepareKuaishouDramaTaskMaterials(
@@ -21,6 +22,7 @@ export async function prepareKuaishouDramaTaskMaterials(
 
   const selected = files[0];
   task.localCoverFile = selected.file;
+  await prepareKuaishouAdUnlockCover(task, options);
 
   return selected;
 }

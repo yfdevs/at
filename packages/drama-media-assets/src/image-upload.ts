@@ -37,6 +37,18 @@ export type PreparedStretchedImageVariant = {
   quality: number;
 };
 
+export type ImageDimensions = {
+  width: number;
+  height: number;
+};
+
+export type ImageCropRegion = {
+  left: number;
+  top: number;
+  width: number;
+  height: number;
+};
+
 type FixedImageVariantOptions = {
   inputFile: string;
   outputFile: string;
@@ -135,6 +147,107 @@ function orientedDimensions(metadata: Awaited<ReturnType<ReturnType<typeof sharp
   return [5, 6, 7, 8].includes(metadata.orientation ?? 1)
     ? { width: height, height: width }
     : { width, height };
+}
+
+export async function readImageDimensions(inputFile: string): Promise<ImageDimensions> {
+  const metadata = await sharp(inputFile, { failOn: "error" }).metadata();
+  const dimensions = orientedDimensions(metadata);
+  if (!dimensions.width || !dimensions.height) {
+    throw new Error(`[poster-material-invalid] 无法读取图片尺寸：${inputFile}`);
+  }
+  return dimensions;
+}
+
+export async function prepareExtractedImageVariant(
+  options: FixedImageVariantOptions & { crop: ImageCropRegion },
+): Promise<PreparedStretchedImageVariant> {
+  const sourceStat = await stat(options.inputFile).catch(() => undefined);
+  if (!sourceStat?.isFile() || sourceStat.size <= 0) {
+    throw new Error(`[poster-material-invalid] 图片文件不存在或为空：${options.inputFile}`);
+  }
+
+  const source = await readImageDimensions(options.inputFile);
+  const crop = {
+    left: Math.floor(options.crop.left),
+    top: Math.floor(options.crop.top),
+    width: Math.floor(options.crop.width),
+    height: Math.floor(options.crop.height),
+  };
+  const width = Math.floor(options.width);
+  const height = Math.floor(options.height);
+  if (
+    crop.left < 0 ||
+    crop.top < 0 ||
+    crop.width <= 0 ||
+    crop.height <= 0 ||
+    crop.left + crop.width > source.width ||
+    crop.top + crop.height > source.height
+  ) {
+    throw new Error(
+      `[image-crop-failed] 裁剪区域越界：crop=${crop.left},${crop.top},${crop.width},${crop.height} ` +
+        `source=${source.width}x${source.height} file=${options.inputFile}`,
+    );
+  }
+  if (width <= 0 || height <= 0) {
+    throw new Error(`[image-resize-failed] 目标图片宽高必须大于 0：${width}x${height}`);
+  }
+
+  const initialQuality = Math.max(80, Math.min(100, options.jpegQuality ?? 92));
+  const qualities = [initialQuality, 88, 84, 80]
+    .filter((quality, index, values) => quality <= initialQuality && values.indexOf(quality) === index)
+    .sort((left, right) => right - left);
+  let outputBuffer: Buffer | undefined;
+  let selectedQuality = initialQuality;
+  for (const quality of qualities) {
+    const candidate = await sharp(options.inputFile, { failOn: "error" })
+      .rotate()
+      .extract(crop)
+      .resize({ width, height, fit: "fill" })
+      .flatten({ background: "#ffffff" })
+      .toColourspace("srgb")
+      .jpeg({
+        quality,
+        progressive: true,
+        mozjpeg: true,
+        chromaSubsampling: "4:4:4",
+      })
+      .toBuffer();
+    if (options.maxFileBytes && candidate.length > options.maxFileBytes) continue;
+    outputBuffer = candidate;
+    selectedQuality = quality;
+    break;
+  }
+  if (!outputBuffer) {
+    throw new Error(
+      `[image-crop-failed] 在 JPEG 质量不低于 80 的前提下无法压缩到 ` +
+        `${options.maxFileBytes} 字节以内：${options.inputFile}`,
+    );
+  }
+
+  await mkdir(path.dirname(options.outputFile), { recursive: true });
+  await writeFile(options.outputFile, outputBuffer);
+  const outputStat = await stat(options.outputFile);
+  const outputMetadata = await sharp(options.outputFile, { failOn: "error" }).metadata();
+  if (outputMetadata.width !== width || outputMetadata.height !== height || outputStat.size <= 0) {
+    throw new Error(
+      `[image-crop-failed] 生成图片校验失败：expected=${width}x${height} ` +
+        `actual=${outputMetadata.width ?? 0}x${outputMetadata.height ?? 0} ` +
+        `file=${options.outputFile}`,
+    );
+  }
+  options.onLog?.(
+    `[image-crop] 主体裁剪图片完成：${options.inputFile} -> ${options.outputFile} ` +
+      `crop=${crop.left},${crop.top},${crop.width},${crop.height} ` +
+      `output=${width}x${height} quality=${selectedQuality} size=${outputStat.size}`,
+  );
+  return {
+    sourceFile: options.inputFile,
+    file: options.outputFile,
+    size: outputStat.size,
+    width,
+    height,
+    quality: selectedQuality,
+  };
 }
 
 function assertImagePolicy(policy: ImageUploadPolicy) {
