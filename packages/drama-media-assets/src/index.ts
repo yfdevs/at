@@ -56,6 +56,7 @@ export {
 } from "./video-transcode.js";
 export {
   prepareImageForUpload,
+  prepareCroppedImageVariant,
   prepareStretchedImageVariant,
   type ImageUploadPolicy,
   type PreparedImageUploadFile,

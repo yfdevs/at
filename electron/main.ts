@@ -5,6 +5,7 @@ import { fileURLToPath } from "node:url";
 import path from "node:path";
 
 import { registerAppUpdaterHandlers } from "./app-updater";
+import { registerGlobalAppConfigHandlers } from "./global-app-config";
 import {
   getMainLogDir,
   logMain,
@@ -216,6 +217,7 @@ app.whenReady().then(() => {
     logMain("info", "app ready");
     Menu.setApplicationMenu(null);
     ipcMainHandleAppRuntimeStatus();
+    registerGlobalAppConfigHandlers();
     registerWechatVideoPlatformHandlers();
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();

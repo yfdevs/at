@@ -29,6 +29,10 @@ export function createElectronPlugin(rootDir: string) {
         resolve: {
           alias: [
             {
+              find: /^@drama\/ai$/,
+              replacement: path.join(rootDir, "packages/drama-ai/src/index.ts"),
+            },
+            {
               find: /^@drama\/baidu-netdisk-automation\/download-baidu-folder$/,
               replacement: path.join(
                 rootDir,

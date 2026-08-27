@@ -14,6 +14,7 @@ import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip
 import {
   defaultRoute,
   isAppRoute,
+  platformContextRoute,
   platformForPath,
 } from "@/config/navigation";
 import {
@@ -243,7 +244,7 @@ export function AppTitlebarMemory() {
   const location = useLocation();
   const currentPath = location.pathname.replace(/^\/+/, "");
   const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
-  const activePlatform = platformForPath(activeRoute);
+  const activePlatform = platformForPath(platformContextRoute(activeRoute, location.state));
 
   useEffect(() => {
     let disposed = false;

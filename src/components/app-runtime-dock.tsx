@@ -1,11 +1,17 @@
-import { Chrome, CircleDashed, Cog, Info } from "@mynaui/icons-react";
+import { Chrome, CircleDashed, Cog, Info, UserSettings } from "@mynaui/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
 import { AppUpdateControl } from "@/components/app-update-control";
 import { Button } from "@/components/ui/button";
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
-import { defaultRoute, isAppRoute, platformForPath, routePath } from "@/config/navigation";
+import {
+  defaultRoute,
+  globalConfigRoute,
+  isAppRoute,
+  platformForPath,
+  routePath,
+} from "@/config/navigation";
 import { cn } from "@/lib/utils";
 import {
   getAppPlatformRuntime,
@@ -227,6 +233,26 @@ export function AppRuntimeDock() {
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8}>
           打开{activePlatform.title}配置
+        </TooltipContent>
+      </Tooltip>
+      <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
+              aria-label="打开全局配置"
+              size="icon-xs"
+              variant="ghost"
+              onClick={() => navigate(routePath(globalConfigRoute), {
+                state: { returnRoute: activeRoute },
+              })}
+            />
+          }
+        >
+          <UserSettings className="size-3.5" aria-hidden="true" />
+        </TooltipTrigger>
+        <TooltipContent side="top" align="end" sideOffset={8}>
+          打开全局配置
         </TooltipContent>
       </Tooltip>
 

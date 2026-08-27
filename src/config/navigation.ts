@@ -11,6 +11,7 @@ export type PlatformId =
   | "pinduoduo-drama";
 
 export type AppRoute =
+  | "app/config"
   | "wechat-drama/publish"
   | "wechat-drama/config"
   | "wechat-drama/accounts"
@@ -33,6 +34,7 @@ export type AppRoute =
   | "pinduoduo-drama/config";
 
 const appRoutes = [
+  "app/config",
   "wechat-drama/publish",
   "wechat-drama/config",
   "wechat-drama/accounts",
@@ -76,9 +78,27 @@ export type PlatformNavigationItem = {
 };
 
 export const defaultRoute: AppRoute = "wechat-drama/service";
+export const globalConfigRoute: AppRoute = "app/config";
 
 export function routePath(route: AppRoute) {
   return `/${route}`;
+}
+
+export function returnRouteFromLocationState(state: unknown): AppRoute {
+  if (!state || typeof state !== "object" || !("returnRoute" in state)) {
+    return defaultRoute;
+  }
+
+  const returnRoute = (state as { returnRoute?: unknown }).returnRoute;
+  return typeof returnRoute === "string"
+    && returnRoute !== globalConfigRoute
+    && isAppRoute(returnRoute)
+    ? returnRoute
+    : defaultRoute;
+}
+
+export function platformContextRoute(route: AppRoute, state: unknown): AppRoute {
+  return route === globalConfigRoute ? returnRouteFromLocationState(state) : route;
 }
 
 export const platformNavigation: PlatformNavigationItem[] = [

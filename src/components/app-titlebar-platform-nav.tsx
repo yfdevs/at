@@ -6,6 +6,7 @@ import { buttonVariants } from "@/components/ui/button";
 import {
   defaultRoute,
   isAppRoute,
+  platformContextRoute,
   platformForPath,
   platformNavigation,
   routePath,
@@ -39,7 +40,7 @@ export function AppTitlebarPlatformNav() {
   const navigate = useNavigate();
   const currentPath = location.pathname.replace(/^\/+/, "");
   const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
-  const activePlatform = platformForPath(activeRoute);
+  const activePlatform = platformForPath(platformContextRoute(activeRoute, location.state));
 
   useEffect(() => {
     let disposed = false;

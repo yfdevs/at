@@ -35,7 +35,7 @@ export type ConfigTextField<TConfig> = {
   key: ConfigFieldKey<TConfig>;
   label: string;
   description?: string;
-  type?: "text" | "number" | "url";
+  type?: "text" | "number" | "password" | "url";
   suffix?: string;
   directory?: boolean;
   min?: number;
@@ -147,6 +147,7 @@ export function ConfigurationPageFrame({
   loading,
   maxWidth = "max-w-[760px]",
   onDiscard,
+  onClose,
   onSave,
   restartRequired,
   title,
@@ -156,6 +157,7 @@ export function ConfigurationPageFrame({
   loading: boolean;
   maxWidth?: string;
   onDiscard: () => void;
+  onClose?: () => void;
   onSave: () => void;
   restartRequired: boolean;
   title: string;
@@ -168,7 +170,11 @@ export function ConfigurationPageFrame({
 
   const cancelConfig = () => {
     onDiscard();
-    navigate(routePath(activePlatform.serviceRoute));
+    if (onClose) {
+      onClose();
+    } else {
+      void navigate(routePath(activePlatform.serviceRoute));
+    }
   };
 
   return (
@@ -223,12 +229,14 @@ function ConfigSaveStateBadge({ hasChanges }: { hasChanges: boolean }) {
 export function ConfigSection<TConfig extends object>({
   config,
   fields,
+  footer,
   onChange,
   onSelectDirectory,
   section,
 }: {
   config: TConfig;
   fields?: ConfigFieldDefinition<TConfig>[];
+  footer?: ReactNode;
   onChange?: (key: ConfigFieldKey<TConfig>, value: string) => void;
   onSelectDirectory?: (key: ConfigFieldKey<TConfig>) => void;
   section: Pick<ConfigSectionDefinition<TConfig>, "description" | "title">;
@@ -248,6 +256,12 @@ export function ConfigSection<TConfig extends object>({
           />
         </div>
       ))}
+      {footer ? (
+        <div>
+          <Separator />
+          <div className="flex justify-end py-3">{footer}</div>
+        </div>
+      ) : null}
     </ConfigPanelSection>
   );
 }

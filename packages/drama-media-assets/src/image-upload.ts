@@ -37,7 +37,7 @@ export type PreparedStretchedImageVariant = {
   quality: number;
 };
 
-export async function prepareStretchedImageVariant(options: {
+type FixedImageVariantOptions = {
   inputFile: string;
   outputFile: string;
   width: number;
@@ -45,7 +45,12 @@ export async function prepareStretchedImageVariant(options: {
   jpegQuality?: number;
   maxFileBytes?: number;
   onLog?: (message: string) => void;
-}): Promise<PreparedStretchedImageVariant> {
+};
+
+async function prepareFixedImageVariant(
+  options: FixedImageVariantOptions,
+  fit: "cover" | "fill",
+): Promise<PreparedStretchedImageVariant> {
   const width = Math.floor(options.width);
   const height = Math.floor(options.height);
   if (width <= 0 || height <= 0) {
@@ -66,7 +71,7 @@ export async function prepareStretchedImageVariant(options: {
   for (const quality of qualities) {
     const candidate = await sharp(options.inputFile, { failOn: "error" })
       .rotate()
-      .resize({ width, height, fit: "fill" })
+      .resize({ width, height, fit, position: "centre" })
       .flatten({ background: "#ffffff" })
       .toColourspace("srgb")
       .jpeg({
@@ -97,8 +102,9 @@ export async function prepareStretchedImageVariant(options: {
         `actual=${metadata.width ?? 0}x${metadata.height ?? 0} file=${options.outputFile}`,
     );
   }
+  const operationText = fit === "cover" ? "等比裁剪" : "拉伸";
   options.onLog?.(
-    `[image-resize] 拉伸生成图片：${options.inputFile} -> ${options.outputFile} ` +
+    `[image-resize] ${operationText}生成图片：${options.inputFile} -> ${options.outputFile} ` +
       `${width}x${height} quality=${selectedQuality} size=${outputStat.size}`,
   );
   return {
@@ -109,6 +115,18 @@ export async function prepareStretchedImageVariant(options: {
     height,
     quality: selectedQuality,
   };
+}
+
+export function prepareStretchedImageVariant(
+  options: FixedImageVariantOptions,
+): Promise<PreparedStretchedImageVariant> {
+  return prepareFixedImageVariant(options, "fill");
+}
+
+export function prepareCroppedImageVariant(
+  options: FixedImageVariantOptions,
+): Promise<PreparedStretchedImageVariant> {
+  return prepareFixedImageVariant(options, "cover");
 }
 
 function orientedDimensions(metadata: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>) {

@@ -14,6 +14,12 @@ export const runConfig = {
       input: [{ auto: true }, "!packages/feishu-notifier/dist/**"],
       output: ["packages/feishu-notifier/dist/**"],
     },
+    "pkg:ai:build": {
+      command: "vp pack",
+      cwd: "packages/drama-ai",
+      input: [{ auto: true }, "!packages/drama-ai/dist/**"],
+      output: ["packages/drama-ai/dist/**"],
+    },
     "pkg:wechat:build": {
       command: "vp pack",
       cwd: "packages/wechat-drama-automation",
@@ -56,6 +62,7 @@ export const runConfig = {
     "packages:build": {
       command: "node -e \"console.log('workspace packages built')\"",
       dependsOn: [
+        "pkg:ai:build",
         "pkg:wechat:build",
         "pkg:meituan:build",
         "pkg:kuaishou:build",
@@ -68,6 +75,11 @@ export const runConfig = {
     "pkg:wechat:check": {
       command: "tsc --noEmit",
       cwd: "packages/wechat-drama-automation",
+      output: [],
+    },
+    "pkg:ai:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/drama-ai",
       output: [],
     },
     "pkg:meituan:check": {
