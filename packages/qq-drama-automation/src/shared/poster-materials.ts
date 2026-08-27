@@ -29,8 +29,14 @@ export async function prepareQqDramaPosterMaterial(
   }
 
   const selected = files[0];
+  const maximumFileBytes = 5_000_000;
+  if (selected.size <= maximumFileBytes) {
+    task.playlet.localCoverFile = selected.file;
+    return selected;
+  }
+
   if (!options.assetDownloadDir) {
-    throw new Error("QQ drama assetDownloadDir is required to prepare the cover image.");
+    throw new Error("QQ drama assetDownloadDir is required to compress the cover image.");
   }
   const outputDir = path.join(options.assetDownloadDir, "poster-upload");
   await rm(outputDir, { recursive: true, force: true });
@@ -39,14 +45,11 @@ export async function prepareQqDramaPosterMaterial(
     outputDir,
     outputFileName: "qq-cover.jpg",
     policy: {
-      maxFileBytes: 5_000_000,
+      maxFileBytes: maximumFileBytes,
       targetFileBytes: 4_700_000,
-      minimumWidth: 350,
-      minimumHeight: 500,
-      maximumWidth: 2_100,
-      maximumHeight: 3_000,
+      minimumWidth: 1,
+      minimumHeight: 1,
       minimumJpegQuality: 80,
-      targetAspectRatio: { width: 7, height: 10, tolerance: 0.02 },
     },
     onLog: (message) => log(options, `[qq-drama] ${message}`),
   });

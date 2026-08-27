@@ -15,6 +15,7 @@
     "baidu-drama:build": "pnpm --filter @drama/baidu-drama-automation build",
     "qq-drama:check": "pnpm --filter @drama/qq-drama-automation check",
     "qq-drama:build": "pnpm --filter @drama/qq-drama-automation build",
+    "release": "node scripts/create-release.mjs",
     "release:win": "node scripts/release-win.mjs",
     "prepare": "vp config"
   },

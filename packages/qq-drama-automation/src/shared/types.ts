@@ -69,7 +69,7 @@ const qqDramaPublishFormBaseSchema = z.object({
   // 受众类型：男频、女频、通用
   audienceType: z.enum(qqDramaAudienceTypeValues).describe("受众类型。"),
   localCoverFile: fileReference.describe(
-    "运行时从本地资源匹配的封面图，比例 7:10，分辨率 >= 350x500，<= 5MB。",
+    "运行时从本地资源匹配的封面图；<= 5MB 原图直传，超过时压缩，不检查比例和分辨率。",
   ),
   episodeCount: z.coerce.number().int().min(1).max(1000).describe("承诺总集数，范围 1 ~ 1000。"),
   // 更新状态：已完结、连载中
@@ -152,7 +152,7 @@ export const qqDramaTaskPayloadSchema = z
     audienceType: z.enum(qqDramaAudienceTypeValues).describe("受众类型"),
     localCoverFile: fileReference
       .optional()
-      .describe("运行时从本地资源匹配的封面图，比例 7:10，分辨率 >= 350x500，<= 5MB"),
+      .describe("运行时从本地资源匹配的封面图；<= 5MB 原图直传，超过时压缩，不检查比例和分辨率"),
     episodeCount: z.coerce.number().int().min(1).max(1000).describe("承诺总集数，范围 1 ~ 1000"),
     baiduPanResourceLink: z.string().trim().optional(),
     updateStatus: z.enum(qqDramaUpdateStatusValues).describe("更新状态"),

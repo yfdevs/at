@@ -3,6 +3,10 @@ import { access, cp, mkdir, readFile, readdir, rm, stat, writeFile } from "node:
 import path from "node:path";
 import { fileURLToPath } from "node:url";
 
+// The package contains a full Playwright Chromium runtime. Lower compression
+// avoids exhausting the Windows runner's commit memory while creating NSIS.
+process.env.ELECTRON_BUILDER_COMPRESSION_LEVEL ??= "1";
+
 const rootDir = path.resolve(fileURLToPath(new URL("..", import.meta.url)));
 const stagingDir = path.join(rootDir, ".cache", "electron-builder-hoisted-app");
 const outputDir = path.join(rootDir, "release", "${version}");
@@ -348,6 +352,12 @@ async function main() {
     validatePackagedPlaywrightInputs(),
     stageValidatedFfmpeg(sourceFfmpeg),
   ]);
+  const builderArguments = process.argv.slice(2);
+  if (!builderArguments.some(
+    (argument) => argument === "--publish" || argument.startsWith("--publish="),
+  )) {
+    builderArguments.push("--publish", "never");
+  }
   await run("pnpm", [
     "exec",
     "electron-builder",
@@ -355,7 +365,7 @@ async function main() {
     stagingDir,
     "--config",
     path.join(stagingDir, "electron-builder.json5"),
-    ...process.argv.slice(2),
+    ...builderArguments,
   ]);
   const packageJson = await readJson(packageJsonPath);
   await validatePackagedFfmpeg(packageJson.version);
