@@ -13,6 +13,8 @@ import { QqDramaConfigurationPage } from "@/pages/qq-drama/configuration"
 import { QqDramaServiceControlPage } from "@/pages/qq-drama/service-control"
 import { BaiduDramaConfigurationPage } from "@/pages/baidu-drama/configuration"
 import { BaiduDramaServiceControlPage } from "@/pages/baidu-drama/service-control"
+import { DouyinDramaConfigurationPage } from "@/pages/douyin-drama/configuration"
+import { DouyinDramaServiceControlPage } from "@/pages/douyin-drama/service-control"
 import { WechatAccountsPage } from "@/pages/wechat-drama/accounts"
 import { WechatConfigurationPage } from "@/pages/wechat-drama/configuration"
 import { WechatPublishTasksPage } from "@/pages/wechat-drama/publish-tasks"
@@ -42,6 +44,8 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "qq-drama/config": QqDramaConfigurationPage,
   "baidu-drama/service": BaiduDramaServiceControlPage,
   "baidu-drama/config": BaiduDramaConfigurationPage,
+  "douyin-drama/service": DouyinDramaServiceControlPage,
+  "douyin-drama/config": DouyinDramaConfigurationPage,
   "tiktok-drama/service": TiktokDramaCenterServiceControlPage,
   "tiktok-drama/config": TiktokDramaCenterConfigurationPage,
   "pinduoduo-drama/service": PinduoduoDramaServiceControlPage,

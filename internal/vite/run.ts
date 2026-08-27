@@ -53,6 +53,12 @@ export const runConfig = {
       input: [{ auto: true }, "!packages/tiktok-drama-automation/dist/**"],
       output: ["packages/tiktok-drama-automation/dist/**"],
     },
+    "pkg:douyin:build": {
+      command: "vp pack",
+      cwd: "packages/douyin-drama-automation",
+      input: [{ auto: true }, "!packages/douyin-drama-automation/dist/**"],
+      output: ["packages/douyin-drama-automation/dist/**"],
+    },
     "pkg:baidu:build": {
       command: "vp pack",
       cwd: "packages/baidu-netdisk-automation",
@@ -68,6 +74,7 @@ export const runConfig = {
         "pkg:kuaishou:build",
         "pkg:pinduoduo:build",
         "pkg:tiktok:build",
+        "pkg:douyin:build",
         "pkg:baidu:build",
       ],
       output: [],
@@ -100,6 +107,11 @@ export const runConfig = {
     "pkg:tiktok:check": {
       command: "tsc --noEmit",
       cwd: "packages/tiktok-drama-automation",
+      output: [],
+    },
+    "pkg:douyin:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/douyin-drama-automation",
       output: [],
     },
     "pkg:baidu:check": {
