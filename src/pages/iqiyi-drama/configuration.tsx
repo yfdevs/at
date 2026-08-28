@@ -1,5 +1,3 @@
-import { toast } from "sonner"
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -43,12 +41,6 @@ const sections: ConfigSectionDefinition<IqiyiDramaConfig>[] = [
         min: 1,
       },
       {
-        key: "localMaterialRoot",
-        label: "素材根目录",
-        description: "封面与权属文件按原始剧名建立子目录；百度网盘素材也会标准化到这里。",
-        directory: true,
-      },
-      {
         key: "baiduNetdiskDownloadRetryAttempts",
         label: "网盘下载重试",
         description: "仅重试封面和权属素材；素材与视频混放时会停止，避免下载正片。",
@@ -59,15 +51,9 @@ const sections: ConfigSectionDefinition<IqiyiDramaConfig>[] = [
     ],
   },
   {
-    title: "浏览器与运行数据",
-    description: "每个爱奇艺账号使用独立 Chromium 登录态；AI 横图模型在全局配置中统一管理。",
+    title: "浏览器与日志",
+    description: "每个爱奇艺账号使用独立 Chromium 登录态；共享目录与 AI 模型在全局配置中统一管理。",
     fields: [
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "保存账号登录态、临时素材、AI 横图缓存和运行日志。",
-        directory: true,
-      },
       {
         key: "logRetentionDays",
         label: "日志保留",
@@ -103,21 +89,6 @@ export function IqiyiDramaConfigurationPage() {
     saveConfig: iqiyiDramaService.saveConfig,
   })
 
-  const selectDirectory = async (key: keyof IqiyiDramaConfig) => {
-    try {
-      const selected = key === "runDataDir"
-        ? await iqiyiDramaService.selectRunDataDir(state.config.runDataDir)
-        : key === "localMaterialRoot"
-          ? await iqiyiDramaService.selectLocalMaterialRoot(state.config.localMaterialRoot)
-          : null
-      if (selected) state.updateConfig(key, selected)
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
   return (
     <ConfigurationPageFrame
       hasChanges={state.hasChanges}
@@ -134,7 +105,6 @@ export function IqiyiDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={state.updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

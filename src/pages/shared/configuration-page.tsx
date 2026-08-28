@@ -279,7 +279,7 @@ export function ConfigPanelSection({
     <section className="scroll-mt-28 space-y-3">
       <div className="space-y-1">
         <h2 className="text-sm font-semibold">{title}</h2>
-        <p className="text-xs text-muted-foreground sm:text-sm">{description}</p>
+        <p className="text-xs text-muted-foreground">{description}</p>
       </div>
       <Card className="rounded-lg bg-background py-0">
         <CardContent className="py-0">
@@ -309,11 +309,13 @@ function ConfigFieldControl<TConfig extends object>({
     return (
       <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-center">
         <FieldContent>
-          <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-          {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
+          <FieldLabel className="text-[13px]" htmlFor={field.key}>{field.label}</FieldLabel>
+          {field.description ? (
+            <FieldDescription className="text-xs">{field.description}</FieldDescription>
+          ) : null}
         </FieldContent>
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <span className="text-sm text-muted-foreground">
+          <span className="text-[13px] text-muted-foreground">
             {checked ? field.activeLabel : field.inactiveLabel}
           </span>
           <Switch
@@ -331,12 +333,15 @@ function ConfigFieldControl<TConfig extends object>({
   return (
     <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
       <FieldContent>
-        <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-        {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
+        <FieldLabel className="text-[13px]" htmlFor={field.key}>{field.label}</FieldLabel>
+        {field.description ? (
+          <FieldDescription className="text-xs">{field.description}</FieldDescription>
+        ) : null}
       </FieldContent>
       <div className="w-full min-w-0">
         <InputGroup>
           <InputGroupInput
+            className="text-[13px] md:text-[13px]"
             id={field.key}
             min={field.min ?? (field.type === "number" ? 0 : undefined)}
             step={field.step}
@@ -346,13 +351,14 @@ function ConfigFieldControl<TConfig extends object>({
           />
           {field.suffix ? (
             <InputGroupAddon align="inline-end">
-              <InputGroupText>{field.suffix}</InputGroupText>
+              <InputGroupText className="text-xs">{field.suffix}</InputGroupText>
             </InputGroupAddon>
           ) : null}
           {field.directory ? (
             <InputGroupAddon align="inline-end">
               <InputGroupButton
                 aria-label={`选择${field.label}`}
+                className="text-xs"
                 onClick={() => onSelectDirectory?.(field.key)}
               >
                 <Folder />
@@ -380,8 +386,8 @@ export function StoragePathRow({
   return (
     <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_360px] md:items-start">
       <FieldContent>
-        <FieldLabel>{label}</FieldLabel>
-        <FieldDescription>{description}</FieldDescription>
+        <FieldLabel className="text-[13px]">{label}</FieldLabel>
+        <FieldDescription className="text-xs">{description}</FieldDescription>
       </FieldContent>
       <div className="flex min-w-0 items-center gap-2">
         <code

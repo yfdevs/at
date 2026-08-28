@@ -12,6 +12,11 @@ import {
   selectDirectory,
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import { createElectronPlatformLogger } from "../platform-logger";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 
 type BaiduDramaAccount = {
   id: number;
@@ -137,7 +142,16 @@ function normalizeConfig(config: Partial<BaiduDramaConfig>): BaiduDramaConfig {
 }
 
 function readConfig() {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("baidu-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function storagePaths(
@@ -161,8 +175,18 @@ function storagePaths(
     credentialStatePath: path.join(accountDir, "storage-state.json"),
     assetDownloadDir: path.join(runDataDir, "assets", encodedProfileName),
     logDir,
-    logFilePath: path.join(logDir, `app-${dateKey}.jsonl`),
+    logFilePath: path.join(logDir, `app-${dateKey}.log`),
   };
+}
+
+function baiduDramaPlatformLogger(scope = "runtime") {
+  const paths = storagePaths();
+  return createElectronPlatformLogger({
+    platform: "baidu-drama",
+    scope,
+    logDir: paths.logDir,
+    retentionDays: Number.parseInt(readConfig().logRetentionDays, 10) || 3,
+  });
 }
 
 function ensureStorageDirectories(paths = storagePaths()) {
@@ -237,8 +261,10 @@ async function startRuntime() {
         episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
         taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1000,
         apiConfig: { baseUrl: config.apiBaseUrl },
-        ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
-        onLog: (message: string) => console.log(message),
+        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+          ...request,
+          requesterPlatform: "baidu-drama",
+        }),
         config: {
           browser: {
             headless: config.headless === "true",
@@ -278,7 +304,7 @@ async function startRuntime() {
     async stop() {
       running = false;
       await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
-      console.log("[baidu-drama] all account browsers stopped");
+      baiduDramaPlatformLogger("browser").info("全部账号浏览器已停止");
     },
   };
 }
@@ -350,6 +376,7 @@ export function registerBaiduDramaPlatformHandlers() {
   );
   ipcMain.handle("baidu-drama:service:status", () => status());
   ipcMain.handle("baidu-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     await runtimeController.start(startRuntime);
     return status();
   });

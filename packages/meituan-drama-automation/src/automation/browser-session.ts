@@ -1,5 +1,10 @@
-import { appendFile, mkdir, readdir, stat, unlink, writeFile } from "node:fs/promises";
+import { mkdir, writeFile } from "node:fs/promises";
 import { dirname, join } from "node:path";
+import {
+  cleanupAutomationLogFiles,
+  createAutomationLogger,
+  formatReadableLogEntry,
+} from "@drama/automation-logging";
 import type { BrowserContext, Page } from "playwright";
 import type {
   MeituanCreationLoginState,
@@ -7,8 +12,7 @@ import type {
 } from "../shared/types.js";
 
 export function log(options: MeituanCreationRuntimeOptions, message: string) {
-  options.onLog?.(message);
-  void writeLogFile(options, "info", message).catch(() => undefined);
+  runtimeLogger(options).callback()(message);
 }
 
 function diagnosticPathSegment(value: string | number) {
@@ -71,55 +75,25 @@ export async function saveTaskFailureDiagnostics(options: {
   return diagnosticDir;
 }
 
-function formatChineseDateTime(date: Date): string {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
-  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
-
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
-}
-
-async function writeLogFile(
-  options: MeituanCreationRuntimeOptions,
-  level: "info" | "warn" | "error",
-  message: string,
-) {
-  if (!options.logFilePath) return;
-
-  const record = {
-    time: formatChineseDateTime(new Date()),
-    level,
+function runtimeLogger(options: MeituanCreationRuntimeOptions) {
+  return createAutomationLogger({
     platform: "meituan-drama",
-    message,
-  };
-
-  await mkdir(dirname(options.logFilePath), { recursive: true });
-  await appendFile(options.logFilePath, `${JSON.stringify(record)}\n`, "utf8");
+    scope: "runtime",
+    context: {
+      accountId: options.meituanAccountId,
+      accountName: options.meituanAccountName,
+    },
+    logFilePath: options.logFilePath,
+    retentionDays: options.logRetentionDays,
+    onEntry: options.onLog
+      ? (entry) => options.onLog?.(formatReadableLogEntry(entry))
+      : undefined,
+  });
 }
 
 export async function cleanupOldLogFiles(options: MeituanCreationRuntimeOptions) {
   if (!options.logFilePath) return;
-
-  const retentionDays = Math.max(1, options.logRetentionDays ?? 3);
-  const logDir = dirname(options.logFilePath);
-  const cutoff = Date.now() - retentionDays * 24 * 60 * 60 * 1000;
-  await mkdir(logDir, { recursive: true });
-
-  for (const entry of await readdir(logDir, { withFileTypes: true }).catch(() => [])) {
-    if (!entry.isFile() || !/^app-\d{4}-\d{2}-\d{2}\.(?:jsonl|log)$/i.test(entry.name)) {
-      continue;
-    }
-
-    const filePath = join(logDir, entry.name);
-    const stats = await stat(filePath).catch(() => null);
-    if (stats && stats.mtimeMs < cutoff) {
-      await unlink(filePath).catch(() => undefined);
-    }
-  }
+  await cleanupAutomationLogFiles(options.logFilePath, options.logRetentionDays ?? 3);
 }
 
 export function loginStateFromUrl(url: string): MeituanCreationLoginState {

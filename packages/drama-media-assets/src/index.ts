@@ -102,6 +102,7 @@ export function isNonRetryableBaiduNetdiskResourceError(error: unknown) {
 }
 
 const knownEpisodeSubDirs = ["成片", "成品", "视频", "正片"];
+const ownershipDirectoryMarkers = ["工程", "权属", "资质", "版权"] as const;
 const ownershipImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp"]);
 const aiProductionProofExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp", ".webp", ".pdf"]);
 const invalidUploadFileNameChars = new Set(["<", ">", ":", '"', "/", "\\", "|", "?", "*"]);
@@ -115,6 +116,11 @@ function pathExists(filePath: string) {
     () => true,
     () => false,
   );
+}
+
+export function isOwnershipDirectoryName(value: string) {
+  const normalized = value.replace(/\s+/g, "");
+  return ownershipDirectoryMarkers.some((marker) => normalized.includes(marker));
 }
 
 export function playletDir(root: string, resourceName: string) {
@@ -267,7 +273,7 @@ export async function listLocalOwnershipMaterials(options: {
   for (const dir of await recursiveDirs(resourceDir)) {
     const directoryNames = [path.basename(resourceDir), ...path.relative(resourceDir, dir).split(path.sep)]
       .map((name) => name.replace(/\s+/g, ""));
-    if (!directoryNames.some((name) => name.includes("工程") || name.includes("权属"))) continue;
+    if (!directoryNames.some(isOwnershipDirectoryName)) continue;
     const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
     for (const entry of entries) {
       if (!entry.isFile() || !ownershipImageExtensions.has(path.extname(entry.name).toLowerCase())) continue;

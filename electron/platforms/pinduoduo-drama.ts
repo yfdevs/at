@@ -16,6 +16,10 @@ import {
   selectDirectory,
 } from "./shared";
 import { automationDatabasePath } from "../storage/database";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 
 type PinduoduoDramaRuntimeStatus = {
   platform: "pinduoduo-drama";
@@ -196,7 +200,16 @@ function normalizeConfig(
 }
 
 function readConfig(): PinduoduoDramaConfig {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("pinduoduo-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function writeConfig(config: PinduoduoDramaConfig) {
@@ -244,7 +257,7 @@ function formatDateKey(date = new Date()) {
 }
 
 function pinduoduoDramaLogFile(config = readConfig()) {
-  return path.join(pinduoduoDramaLogDir(config), `app-${formatDateKey()}.jsonl`);
+  return path.join(pinduoduoDramaLogDir(config), `app-${formatDateKey()}.log`);
 }
 
 function storagePaths(config = readConfig()): PinduoduoDramaStoragePaths {
@@ -269,7 +282,7 @@ function ensureStorageDirectories(paths = storagePaths()) {
 function findLatestLogPath(paths = storagePaths()) {
   mkdirSync(paths.logDir, { recursive: true });
   const latestLogFile = readdirSync(paths.logDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^app-\d{4}-\d{2}-\d{2}\.(?:jsonl|log)$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && /^app(?:-.+)?-\d{4}-\d{2}-\d{2}\.(?:log|jsonl)$/i.test(entry.name))
     .map((entry) => path.join(paths.logDir, entry.name))
     .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
 
@@ -333,10 +346,10 @@ async function startRuntime() {
     logFilePath: paths.logFilePath,
     logRetentionDays,
     ensureBaiduNetdiskResource: (request: BaiduNetdiskEnsureDownloadedRequest) =>
-      ensureBaiduNetdiskShareDownloaded(request),
-    onLog: (message: string) => {
-      console.log(message);
-    },
+      ensureBaiduNetdiskShareDownloaded({
+        ...request,
+        requesterPlatform: "pinduoduo-drama",
+      }),
     config: {
       browser: {
         headless: config.headless === "true",
@@ -422,6 +435,7 @@ export function registerPinduoduoDramaPlatformHandlers() {
   ipcMain.handle("pinduoduo-drama:service:status", () => status());
 
   ipcMain.handle("pinduoduo-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) {
       await runtimeController.stop();

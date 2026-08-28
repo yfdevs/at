@@ -8,6 +8,9 @@ import type {
   VodUploadReport,
   VodUploadSuccess,
 } from "../../shared/types.js";
+import { createLogger } from "../../shared/logger.js";
+
+const vodLogger = createLogger("upload");
 
 function parseJsonPayload(value: string | null): unknown {
   if (!value) return null;
@@ -117,7 +120,7 @@ async function readVodFinishedResponse(
 async function writeVodUploadReport(report: VodUploadReport): Promise<void> {
   const reportPath = resolveRunDataPath("episode-vod-upload-report.json");
   await writeFile(reportPath, JSON.stringify(report, null, 2), "utf8");
-  console.log(`[vod-report] saved ${reportPath}`);
+  vodLogger.info("上传诊断报告已保存", { path: reportPath });
 }
 
 export async function monitorEpisodeVodUploads(
@@ -175,7 +178,10 @@ export async function monitorEpisodeVodUploads(
 
       observationsById.set(observation.fileId, observation);
       fileNameById.set(observation.fileId, observation.fileName);
-      console.log(`[vod-report] ${observation.fileId} ${observation.fileName}`);
+      vodLogger.info("已记录上传文件", {
+        fileId: observation.fileId,
+        file: observation.fileName,
+      });
       finishIfComplete();
     };
 
@@ -194,7 +200,7 @@ export async function monitorEpisodeVodUploads(
           }
 
           successesById.set(result.fileId, result);
-          console.log(`[vod-ok] ${result.fileId} ${result.fileName}`);
+          vodLogger.info("文件上传成功", { fileId: result.fileId, file: result.fileName });
           finishIfComplete();
         })
         .catch((error: unknown) => {

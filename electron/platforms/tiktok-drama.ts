@@ -2,6 +2,11 @@ import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
+import { formatDateKey } from "@drama/automation-logging";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
@@ -124,7 +129,16 @@ function normalizeConfig(
 }
 
 function readConfig(): TiktokDramaCenterConfig {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("tiktok-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function writeConfig(config: TiktokDramaCenterConfig) {
@@ -160,7 +174,7 @@ function tiktokDramaCenterLogDir() {
 }
 
 function tiktokDramaCenterLogFile() {
-  return path.join(tiktokDramaCenterLogDir(), "app.log");
+  return path.join(tiktokDramaCenterLogDir(), `app-${formatDateKey()}.log`);
 }
 
 async function defaultStoppedStatus(): Promise<TiktokDramaCenterServiceStatus> {
@@ -198,9 +212,6 @@ async function startRuntime() {
   return startTiktokDramaCenterRuntime({
     userDataDir: tiktokDramaCenterUserDataDir(),
     credentialStatePath: tiktokDramaCenterCredentialStatePath(),
-    onLog: (message: string) => {
-      console.log(message);
-    },
     config: {
       logFile: tiktokDramaCenterLogFile(),
       feishuBotWebhookUrl: config.feishuBotWebhookUrl,
@@ -262,6 +273,7 @@ export function registerTiktokDramaCenterPlatformHandlers() {
   ipcMain.handle("tiktok-drama:service:status", () => status());
 
   ipcMain.handle("tiktok-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) {
       await runtimeController.stop();

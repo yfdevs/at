@@ -606,7 +606,10 @@ async function clearMultiSelectTags(page: Page, selectRoot: Locator) {
 async function openAndFilterMultiSelectNoScroll(selectRoot: Locator, value: string) {
   return selectRoot.evaluate((node, targetText) => {
     const root = node as HTMLElement;
-    const input = root.querySelector<HTMLInputElement>("input.ks-input__inner");
+    const input =
+      root.querySelector<HTMLInputElement>("input.ks-select__input") ??
+      Array.from(root.querySelectorAll<HTMLInputElement>("input.ks-input__inner"))
+        .find((candidate) => !candidate.readOnly);
     if (!input || input.disabled || input.readOnly) {
       return null;
     }
@@ -730,7 +733,10 @@ async function dispatchVisibleOptionClickNoScroll(
 
 async function closeMultiSelectNoScroll(selectRoot: Locator, popperId: string | null) {
   await selectRoot.evaluate((node, targetPopperId) => {
-    const input = node.querySelector<HTMLInputElement>("input.ks-input__inner");
+    const input =
+      node.querySelector<HTMLInputElement>("input.ks-select__input") ??
+      Array.from(node.querySelectorAll<HTMLInputElement>("input.ks-input__inner"))
+        .find((candidate) => !candidate.readOnly);
     const eventInit = {
       bubbles: true,
       cancelable: true,
@@ -897,7 +903,10 @@ async function trySelectMultipleNoScroll(page: Page, selectRoot: Locator, value:
 
   await page.waitForTimeout(selectChangeSettleMs);
   await selectRoot.evaluate((node) => {
-    const input = node.querySelector<HTMLInputElement>("input.ks-input__inner");
+    const input =
+      node.querySelector<HTMLInputElement>("input.ks-select__input") ??
+      Array.from(node.querySelectorAll<HTMLInputElement>("input.ks-input__inner"))
+        .find((candidate) => !candidate.readOnly);
     if (!input) {
       return;
     }

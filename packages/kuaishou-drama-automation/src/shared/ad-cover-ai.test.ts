@@ -80,5 +80,5 @@ void test("uses the original cover for ad-unlock when AI is not configured", asy
     ),
     "fallback.jpg",
   );
-  assert.match(logs.join("\n"), /using the original cover/);
+  assert.match(logs.join("\n"), /使用原始封面|using the original cover/);
 });

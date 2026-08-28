@@ -7,7 +7,7 @@ export default defineConfig({
     dts: true,
     deps: {
       onlyBundle: false,
-      alwaysBundle: ['pino', 'zod'],
+      alwaysBundle: ['zod'],
     },
   },
 });

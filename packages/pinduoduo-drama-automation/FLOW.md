@@ -77,14 +77,15 @@ Electron 侧传入的关键参数：
 - 登录态快照：`<accountDir>/storage-state.json`
 - 合同下载目录：`<accountDir>/upload-assets/contracts`
 - 日志目录：`<runDataDir>/logs`
-- 日志文件：`<runDataDir>/logs/app-YYYY-MM-DD.jsonl`
+- 可读日志：`<runDataDir>/logs/app-YYYY-MM-DD.log`
+- 结构化日志：`<runDataDir>/logs/structured/app-YYYY-MM-DD.jsonl`
 - 数据库：由 Electron 传入 `automationDatabasePath()`，当前是应用级 `automation.sqlite`
 
 日志实现：
 
-- `src/shared/logger.ts` 使用 `pino` 写 JSONL 文件。
+- `src/shared/logger.ts` 使用共享日志包写入可读日志和结构化副本。
 - `log(options, level, scope, message, fields)` 是包内统一日志入口。
-- 如果传入 `options.onLog`，同一条结构化日志也会回调给 Electron 侧。
+- 如果传入 `options.onLog`，同一条可读日志也会回调给 Electron 侧。
 - 文件日志保留天数由 `logRetentionDays` 控制，启动时执行过期日志清理。
 
 ## 4. 浏览器和登录

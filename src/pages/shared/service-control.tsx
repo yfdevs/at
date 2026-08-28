@@ -10,6 +10,19 @@ type RuntimeStatus = {
   running: boolean;
 };
 
+const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
+
+function globalDirectoriesWarning(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  const markerIndex = message.indexOf(GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE);
+  if (markerIndex < 0) return null;
+
+  return message
+    .slice(markerIndex + GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE.length)
+    .replace(/^\s*:\s*/, "")
+    .trim();
+}
+
 type RuntimeService<TStatus extends RuntimeStatus> = {
   status: () => Promise<TStatus>;
   start: () => Promise<TStatus>;
@@ -87,9 +100,16 @@ export function useServiceControl<TStatus extends RuntimeStatus>({
       applyStatus(nextStatus);
       toast.success(successMessage(nextStatus));
     } catch (error) {
-      toast.error("操作失败", {
-        description: error instanceof Error ? error.message : String(error),
-      });
+      const directoryWarning = action === "start" ? globalDirectoriesWarning(error) : null;
+      if (directoryWarning !== null) {
+        toast.warning("文件与目录未配置", {
+          description: directoryWarning,
+        });
+      } else {
+        toast.error("操作失败", {
+          description: error instanceof Error ? error.message : String(error),
+        });
+      }
     } finally {
       setPendingAction(null);
     }

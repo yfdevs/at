@@ -156,14 +156,6 @@ function numberValue(value: unknown) {
   return undefined;
 }
 
-function stringArray(value: unknown) {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => {
-    const normalized = stringValue(item);
-    return normalized ? [normalized] : [];
-  });
-}
-
 function uniqueStrings(values: string[]) {
   return [...new Set(values)];
 }
@@ -276,14 +268,12 @@ export function normalizeClaimedBaiduDramaTask(
         : [],
       copyright: {
         ...copyright,
-        productionProofFiles: uniqueStrings([
-          ...stringArray(copyright.productionProofFiles),
-          ...contractFileUrls(payload, "CONTRACT"),
-        ]),
-        licenseProofFiles: uniqueStrings([
-          ...stringArray(copyright.licenseProofFiles),
-          ...contractFileUrls(payload, "AUTHORIZATION"),
-        ]),
+        productionProofFiles: uniqueStrings(
+          contractFileUrls(payload, "CONTRACT"),
+        ),
+        licenseProofFiles: uniqueStrings(
+          contractFileUrls(payload, "AUTHORIZATION"),
+        ),
       },
       qualification,
       productionCost: {
@@ -291,15 +281,9 @@ export function normalizeClaimedBaiduDramaTask(
         amountWan:
           numberValue(productionCost.amountWan) ??
           numberValue(baiduPlaylet.productionCostWan),
-        proofFiles: uniqueStrings([
-          ...stringArray(productionCost.proofFiles),
-          ...contractFileUrls(payload, "COST_REPORT"),
-        ]),
+        proofFiles: uniqueStrings(contractFileUrls(payload, "COST_REPORT")),
       },
-      commitmentFiles: uniqueStrings([
-        ...stringArray(baiduPlaylet.commitmentFiles),
-        ...contractFileUrls(payload, "COMMITMENT"),
-      ]),
+      commitmentFiles: uniqueStrings(contractFileUrls(payload, "COMMITMENT")),
       submit: true,
     },
   });

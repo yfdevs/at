@@ -17,8 +17,8 @@
   },
   "dependencies": {
     "@drama/ai": "workspace:*",
+    "@drama/automation-logging": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
-    "pino": "^10.3.1",
     "playwright": "1.61.1",
     "sharp": "^0.35.3",
     "zod": "3.22.4"

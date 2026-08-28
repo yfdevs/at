@@ -14,6 +14,11 @@ import {
   selectDirectory,
 } from './shared'
 import { ensureBaiduNetdiskShareDownloaded } from './baidu-netdisk'
+import { createElectronPlatformLogger } from '../platform-logger'
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from '../global-app-config'
 
 type WechatVideoRuntime = {
   getStatus: () => {
@@ -229,7 +234,16 @@ function configPath() {
 }
 
 function readConfig(): WechatVideoConfig {
-  return normalizeConfig(getStore().get('config'))
+  const config = normalizeConfig(getStore().get('config'))
+  const directories = resolveGlobalPlatformDirectories('wechat-drama', {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  })
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  }
 }
 
 function writeConfig(config: WechatVideoConfig) {
@@ -311,6 +325,16 @@ function logDirPath(config = readConfig()) {
   return path.join(resolveFromAppRoot(config.runDataDir), 'logs')
 }
 
+function wechatPlatformLogger(scope = 'runtime') {
+  const config = readConfig()
+  return createElectronPlatformLogger({
+    platform: 'wechat-drama',
+    scope,
+    logDir: logDirPath(config),
+    retentionDays: Number.parseInt(config.logRetentionDays, 10) || 3,
+  })
+}
+
 function isMissingContractPathError(error: unknown) {
   return (error as NodeJS.ErrnoException)?.code === 'ENOENT'
 }
@@ -365,20 +389,16 @@ async function cleanupPreviousWechatCopyrightProofs(now = new Date()) {
 
     await rm(contractDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
     deletedCount += 1
-    console.log(`[wechat-drama] deleted previous copyright proofs: ${contractDir}`)
+    wechatPlatformLogger('storage').info('已删除过期版权材料', { path: contractDir })
   }
-  console.log(`[wechat-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`)
+  wechatPlatformLogger('storage').info('过期版权材料清理完成', { deletedCount })
 }
 
 function scheduleWechatCopyrightProofCleanup() {
   if (contractCleanupTask) return
   contractCleanupTask = cron.schedule('0 1 * * *', async () => {
     await cleanupPreviousWechatCopyrightProofs().catch((error: unknown) => {
-      console.error(
-        `[wechat-drama] previous copyright proof cleanup failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      )
+      wechatPlatformLogger('storage').error('过期版权材料清理失败', { error })
     })
   }, {
     name: 'wechat-copyright-proof-cleanup',
@@ -386,7 +406,9 @@ function scheduleWechatCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   })
-  console.log('[wechat-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai')
+  wechatPlatformLogger('storage').info('版权材料定时清理已启用', {
+    schedule: '每天 01:00',
+  })
 }
 
 function findLatestVideoAccountLogFile(videoAccountId: string) {
@@ -412,7 +434,14 @@ function findLatestVideoAccountLogFile(videoAccountId: string) {
       return rightMtime - leftMtime
     })[0]
 
-  return latestLogFile ?? logsDir
+  if (latestLogFile) return latestLogFile
+
+  const latestPlatformLog = readdirSync(logsDir, { withFileTypes: true })
+    .filter((entry) => entry.isFile() && /^app-\d{4}-\d{2}-\d{2}\.log$/i.test(entry.name))
+    .map((entry) => path.join(logsDir, entry.name))
+    .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0]
+
+  return latestPlatformLog ?? logsDir
 }
 
 function assertWechatVideoConfigReady(config = readConfig()) {
@@ -438,7 +467,10 @@ async function startRuntime() {
   const { startWechatVideoRuntime } = await import('@drama/wechat-drama-automation')
   return startWechatVideoRuntime({
     settings: readConfig(),
-    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
+    ensureBaiduNetdiskResource: (request) => ensureBaiduNetdiskShareDownloaded({
+      ...request,
+      requesterPlatform: "wechat-drama",
+    }),
   })
 }
 
@@ -484,6 +516,7 @@ export function registerWechatVideoPlatformHandlers() {
   ipcMain.handle('wechat-drama:service:status', () => status())
 
   ipcMain.handle('wechat-drama:service:start', async () => {
+    assertGlobalDirectoriesConfigured()
     assertWechatVideoConfigReady()
     await runtimeController.start(startRuntime)
     return status()

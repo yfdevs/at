@@ -2,6 +2,12 @@ import type { UserConfig } from "vite-plus";
 
 export const runConfig = {
   tasks: {
+    "pkg:logging:build": {
+      command: "vp pack",
+      cwd: "packages/automation-logging",
+      input: [{ auto: true }, "!packages/automation-logging/dist/**"],
+      output: ["packages/automation-logging/dist/**"],
+    },
     "pkg:axios:build": {
       command: "vp pack",
       cwd: "packages/axios",
@@ -23,45 +29,70 @@ export const runConfig = {
     "pkg:wechat:build": {
       command: "vp pack",
       cwd: "packages/wechat-drama-automation",
-      dependsOn: ["pkg:axios:build", "pkg:feishu:build"],
+      dependsOn: ["pkg:axios:build", "pkg:feishu:build", "pkg:logging:build"],
       input: [{ auto: true }, "!packages/wechat-drama-automation/dist/**"],
       output: ["packages/wechat-drama-automation/dist/**"],
     },
     "pkg:meituan:build": {
       command: "vp pack",
       cwd: "packages/meituan-drama-automation",
+      dependsOn: ["pkg:logging:build"],
       input: [{ auto: true }, "!packages/meituan-drama-automation/dist/**"],
       output: ["packages/meituan-drama-automation/dist/**"],
     },
     "pkg:kuaishou:build": {
       command: "vp pack",
       cwd: "packages/kuaishou-drama-automation",
+      dependsOn: ["pkg:logging:build"],
       input: [{ auto: true }, "!packages/kuaishou-drama-automation/dist/**"],
       output: ["packages/kuaishou-drama-automation/dist/**"],
+    },
+    "pkg:qq:build": {
+      command: "vp pack",
+      cwd: "packages/qq-drama-automation",
+      dependsOn: ["pkg:logging:build"],
+      input: [{ auto: true }, "!packages/qq-drama-automation/dist/**"],
+      output: ["packages/qq-drama-automation/dist/**"],
+    },
+    "pkg:iqiyi:build": {
+      command: "vp pack",
+      cwd: "packages/iqiyi-drama-automation",
+      dependsOn: ["pkg:logging:build"],
+      input: [{ auto: true }, "!packages/iqiyi-drama-automation/dist/**"],
+      output: ["packages/iqiyi-drama-automation/dist/**"],
+    },
+    "pkg:baidu-drama:build": {
+      command: "vp pack",
+      cwd: "packages/baidu-drama-automation",
+      dependsOn: ["pkg:logging:build"],
+      input: [{ auto: true }, "!packages/baidu-drama-automation/dist/**"],
+      output: ["packages/baidu-drama-automation/dist/**"],
     },
     "pkg:pinduoduo:build": {
       command: "vp pack",
       cwd: "packages/pinduoduo-drama-automation",
-      dependsOn: ["pkg:axios:build"],
+      dependsOn: ["pkg:axios:build", "pkg:logging:build"],
       input: [{ auto: true }, "!packages/pinduoduo-drama-automation/dist/**"],
       output: ["packages/pinduoduo-drama-automation/dist/**"],
     },
     "pkg:tiktok:build": {
       command: "vp pack",
       cwd: "packages/tiktok-drama-automation",
-      dependsOn: ["pkg:feishu:build"],
+      dependsOn: ["pkg:feishu:build", "pkg:logging:build"],
       input: [{ auto: true }, "!packages/tiktok-drama-automation/dist/**"],
       output: ["packages/tiktok-drama-automation/dist/**"],
     },
     "pkg:douyin:build": {
       command: "vp pack",
       cwd: "packages/douyin-drama-automation",
+      dependsOn: ["pkg:logging:build"],
       input: [{ auto: true }, "!packages/douyin-drama-automation/dist/**"],
       output: ["packages/douyin-drama-automation/dist/**"],
     },
     "pkg:baidu:build": {
       command: "vp pack",
       cwd: "packages/baidu-netdisk-automation",
+      dependsOn: ["pkg:logging:build"],
       input: [{ auto: true }, "!packages/baidu-netdisk-automation/dist/**"],
       output: ["packages/baidu-netdisk-automation/dist/**"],
     },
@@ -69,9 +100,13 @@ export const runConfig = {
       command: "node -e \"console.log('workspace packages built')\"",
       dependsOn: [
         "pkg:ai:build",
+        "pkg:logging:build",
         "pkg:wechat:build",
         "pkg:meituan:build",
         "pkg:kuaishou:build",
+        "pkg:qq:build",
+        "pkg:iqiyi:build",
+        "pkg:baidu-drama:build",
         "pkg:pinduoduo:build",
         "pkg:tiktok:build",
         "pkg:douyin:build",
@@ -82,6 +117,11 @@ export const runConfig = {
     "pkg:wechat:check": {
       command: "tsc --noEmit",
       cwd: "packages/wechat-drama-automation",
+      output: [],
+    },
+    "pkg:logging:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/automation-logging",
       output: [],
     },
     "pkg:ai:check": {
@@ -122,6 +162,16 @@ export const runConfig = {
     "pkg:qq:check": {
       command: "tsc --noEmit",
       cwd: "packages/qq-drama-automation",
+      output: [],
+    },
+    "pkg:iqiyi:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/iqiyi-drama-automation",
+      output: [],
+    },
+    "pkg:baidu-drama:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/baidu-drama-automation",
       output: [],
     },
     "app:typecheck": {

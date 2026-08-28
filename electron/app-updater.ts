@@ -159,7 +159,7 @@ function getAutoUpdater() {
   } catch (error) {
     autoUpdaterInstance = null;
     autoUpdaterLoadError = readableError(error);
-    logMain("error", "auto updater module load failed", error);
+    logMain("error", "自动更新模块加载失败", error);
   }
 
   return autoUpdaterInstance;
@@ -448,7 +448,7 @@ function applySelectedUpdateSource(
     url: source.url,
     channel: "latest",
   });
-  logMain("info", "app update source configured", {
+  logMain("info", "应用更新源已配置", {
     sourceId: source.id,
     url: source.url,
   });

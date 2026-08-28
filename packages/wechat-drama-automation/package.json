@@ -17,6 +17,7 @@
   },
   "dependencies": {
     "@drama/axios": "workspace:*",
+    "@drama/automation-logging": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "@drama/feishu-notifier": "workspace:*",
     "p-queue": "^9.3.3",
@@ -26,7 +27,6 @@
     "@types/fs-extra": "^11.0.4",
     "@types/node": "latest",
     "fast-glob": "^3.3.3",
-    "pino": "^10.3.1",
     "tsx": "latest",
     "typescript": "^6.0.3",
     "vite": "catalog:"

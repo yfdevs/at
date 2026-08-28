@@ -11,6 +11,7 @@ import {
   type BaiduNetdiskDownloadState,
 } from "../storage/baidu-netdisk";
 import { resolveFromAppRoot } from "./shared";
+import { createElectronPlatformLogger } from "../platform-logger";
 
 export type BaiduNetdiskConfig = {
   debugPort: string;
@@ -103,6 +104,7 @@ type BaiduNetdiskShareDownloadRequest = {
 export type { BaiduNetdiskDownloadRecord, BaiduNetdiskDownloadState };
 
 export type BaiduNetdiskEnsureDownloadedRequest = {
+  requesterPlatform?: string;
   shareText: string;
   resourceName: string;
   localEpisodeVideoRoot: string;
@@ -130,6 +132,19 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
     modifiedAtMs: number;
   }>) => void;
 };
+
+function baiduNetdiskLogger(
+  scope = "netdisk",
+  context?: Record<string, unknown>,
+) {
+  return createElectronPlatformLogger({
+    platform: "baidu-netdisk",
+    scope,
+    context,
+    logDir: resolveFromAppRoot(".drama-runs/baidu-netdisk/logs"),
+    retentionDays: 3,
+  });
+}
 
 export type BaiduNetdiskDownloadRecordResult = {
   records: BaiduNetdiskDownloadRecord[];
@@ -203,7 +218,7 @@ async function driveDUsageRatio() {
 
 async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: Set<string>) {
   if (!isSafeEpisodeVideoRootOnDriveD(rootPath)) {
-    console.warn(`[disk-cleanup] 跳过不在 D 盘或范围过大的剧集保存目录：${rootPath}`);
+    baiduNetdiskLogger("storage").warn("已跳过不安全的剧集目录清理", { path: rootPath });
     return;
   }
 
@@ -215,9 +230,10 @@ async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: 
   const cutoffMs = Date.now() - stalePlayletAgeMs;
   let deletedCount = 0;
 
-  console.warn(
-    `[disk-cleanup] D盘使用率=${(usageRatio * 100).toFixed(1)}%，开始清理两小时前的剧目目录：${resolvedRoot}`,
-  );
+  baiduNetdiskLogger("storage").warn("磁盘空间不足，开始清理过期剧目目录", {
+    path: resolvedRoot,
+    usedPercent: Number((usageRatio * 100).toFixed(1)),
+  });
 
   for (const entry of entries) {
     if (!entry.isDirectory() || entry.isSymbolicLink()) continue;
@@ -235,12 +251,16 @@ async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: 
 
     await rm(candidate, { recursive: true, force: true });
     deletedCount += 1;
-    console.warn(
-      `[disk-cleanup] 已删除过期剧目目录：${candidate}；最后修改=${new Date(latestModifiedAtMs).toISOString()}`,
-    );
+    baiduNetdiskLogger("storage").warn("已删除过期剧目目录", {
+      path: candidate,
+      lastModifiedAt: new Date(latestModifiedAtMs).toISOString(),
+    });
   }
 
-  console.warn(`[disk-cleanup] 清理完成：root=${resolvedRoot} deleted=${deletedCount}`);
+  baiduNetdiskLogger("storage").info("过期剧目目录清理完成", {
+    path: resolvedRoot,
+    deletedCount,
+  });
 }
 
 function runDiskCleanup(protectedExtraPaths: string[] = []) {
@@ -252,7 +272,10 @@ function runDiskCleanup(protectedExtraPaths: string[] = []) {
   diskCleanupOperation = (async () => {
     for (const rootPath of monitoredEpisodeVideoRoots) {
       await cleanupStalePlayletDirectories(rootPath, protectedPaths).catch((error) => {
-        console.warn(`[disk-cleanup] 检查或清理失败：root=${rootPath}；${readableError(error)}`);
+        baiduNetdiskLogger("storage").warn("剧目目录检查或清理失败", {
+          path: rootPath,
+          error,
+        });
       });
     }
   })().finally(() => {
@@ -273,19 +296,22 @@ function runBaiduCdpOperationExclusive<T>(label: string, operation: () => Promis
   queuedBaiduCdpOperations += 1;
   const queuePosition = queuedBaiduCdpOperations;
   if (queuePosition > 1) {
-    console.log(`[baidu] CDP操作排队中：${label}，前方${queuePosition - 1}个任务`);
+    baiduNetdiskLogger("netdisk").info("网盘操作正在排队", {
+      action: label,
+      ahead: queuePosition - 1,
+    });
   }
 
   const previous = baiduCdpOperationTail;
   const current = previous
     .catch(() => undefined)
     .then(async () => {
-      console.log(`[baidu] CDP操作开始：${label}`);
+      baiduNetdiskLogger("netdisk").info("网盘操作开始", { action: label });
       try {
         return await operation();
       } finally {
         queuedBaiduCdpOperations = Math.max(0, queuedBaiduCdpOperations - 1);
-        console.log(`[baidu] CDP操作结束：${label}`);
+        baiduNetdiskLogger("netdisk").info("网盘操作结束", { action: label });
       }
     });
   baiduCdpOperationTail = current.then(
@@ -430,7 +456,7 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
   try {
     assertDisposableBaiduDownloadDir(options.downloadDir);
   } catch (error) {
-    console.warn(`[baidu] 跳过不安全的临时目录清理：${readableError(error)}`);
+    baiduNetdiskLogger("storage").warn("已跳过不安全的临时目录清理", { error });
     return;
   }
 
@@ -460,9 +486,10 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
       // A material category may not have created its own native download task.
     }
   }
-  console.log(
-    `[baidu] 百度客户端下载任务已尝试清理：${options.targetName}，匹配调用=${cleanupAttemptCount}`,
-  );
+  baiduNetdiskLogger("download").info("百度客户端下载任务清理完成", {
+    resourceName: options.targetName,
+    cleanupAttemptCount,
+  });
 
   try {
     let timeout: ReturnType<typeof setTimeout> | undefined;
@@ -484,9 +511,12 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
-    console.log(`[baidu] 已清理临时下载目录：${options.downloadDir}`);
+    baiduNetdiskLogger("storage").info("临时下载目录已清理", { path: options.downloadDir });
   } catch (error) {
-    console.warn(`[baidu] 清理临时下载目录失败：${options.downloadDir}；${readableError(error)}`);
+    baiduNetdiskLogger("storage").warn("临时下载目录清理失败", {
+      path: options.downloadDir,
+      error,
+    });
   }
 }
 
@@ -506,13 +536,13 @@ function normalizeEnsureDownloadRequest(
     throw new Error("百度网盘资源名称不能为空。");
   }
   if (!localEpisodeVideoRoot) {
-    throw new Error("微信剧集视频根目录不能为空。");
+    throw new Error("本地剧集视频根目录不能为空。");
   }
   if (
     !Number.isInteger(episodeCount)
     || (downloadEpisodeVideos ? episodeCount <= 0 : episodeCount < 0)
   ) {
-    throw new Error("微信剧集集数必须是正整数。");
+    throw new Error("剧集数量必须是正整数。");
   }
 
   return {
@@ -527,6 +557,7 @@ function normalizeEnsureDownloadRequest(
     requiredPosterImages: request.requiredPosterImages,
     requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
+    requesterPlatform: request.requesterPlatform,
     videoTranscode: request.videoTranscode,
     onStableEpisodeFiles: request.onStableEpisodeFiles,
   };
@@ -538,7 +569,7 @@ function appVideoTranscodeQueue(concurrency: number) {
   if (!queue) {
     queue = new VideoTranscodeQueue({
       concurrency: normalizedConcurrency,
-      onLog: (message) => console.log(`[baidu] ${message}`),
+      onLog: baiduNetdiskLogger("download").callback("download"),
     });
     appVideoTranscodeQueues.set(normalizedConcurrency, queue);
   }
@@ -567,10 +598,11 @@ function withAppVideoTranscode(
     onStableEpisodeFiles: (files) => {
       for (const file of files) {
         if (file.size <= maxFileBytes) continue;
-        console.log(
-          `[baidu] 下载扫描发现超限视频，加入转码队列：第${file.index}集 ` +
-            `${file.size} > ${maxFileBytes}`,
-        );
+        baiduNetdiskLogger("download").info("视频超过大小限制，已加入转码队列", {
+          episode: file.index,
+          size: file.size,
+          maxFileBytes,
+        });
         void queue.add({
           inputFile: file.file,
           cacheRootDir,
@@ -582,11 +614,10 @@ function withAppVideoTranscode(
           },
           replaceSource: true,
         }).catch((error) => {
-          console.error(
-            `[baidu] 下载期视频转码失败：第${file.index}集；${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+          baiduNetdiskLogger("download").error("下载期间视频转码失败", {
+            episode: file.index,
+            error,
+          });
         });
       }
     },
@@ -779,6 +810,10 @@ export async function ensureBaiduNetdiskShareDownloaded(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): Promise<BaiduNetdiskDownloadRecord> {
   const normalizedRequest = normalizeEnsureDownloadRequest(request);
+  const requestLogger = baiduNetdiskLogger("netdisk", {
+    requesterPlatform: normalizedRequest.requesterPlatform,
+    resourceName: normalizedRequest.resourceName,
+  });
   const shareKey = shareKeyFromText(normalizedRequest.shareText);
   const id = createRecordId(shareKey, normalizedRequest.resourceName);
   const localPath = playletDir(
@@ -792,9 +827,7 @@ export async function ensureBaiduNetdiskShareDownloaded(
   if (activeOperation) {
     if (normalizedRequest.onStableEpisodeFiles) {
       activeOperation.stableEpisodeFilesListeners.add(normalizedRequest.onStableEpisodeFiles);
-      console.log(
-        `[baidu] 已将素材处理器附加到正在下载的任务：${normalizedRequest.resourceName}`,
-      );
+      requestLogger.info("已将素材处理器附加到进行中的下载任务");
     }
     return activeOperation.promise;
   }
@@ -815,19 +848,15 @@ export async function ensureBaiduNetdiskShareDownloaded(
     ...normalizedRequest,
     onStableEpisodeFiles: (files) => {
       if (stableEpisodeFilesListeners.size > 0) {
-        console.log(
-          `[baidu] 通知素材处理器：稳定剧集=${files.map((file) => file.index).join(",")}`,
-        );
+        requestLogger.info("已通知素材处理器", {
+          episodes: files.map((file) => file.index),
+        });
       }
       for (const listener of stableEpisodeFilesListeners) {
         try {
           listener(files);
         } catch (error) {
-          console.warn(
-            `[baidu] 素材处理器接收稳定剧集失败：${
-              error instanceof Error ? error.message : String(error)
-            }`,
-          );
+          requestLogger.warn("素材处理器接收稳定剧集失败", { error });
         }
       }
     },
@@ -923,7 +952,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           targetName: statusRequest.targetName,
         }),
       onStableEpisodeFiles: request.onStableEpisodeFiles,
-      onLog: (message) => console.log(message.replace("[video-assets]", "[baidu]")),
+      onLog: baiduNetdiskLogger("download", {
+        requesterPlatform: request.requesterPlatform,
+        resourceName: request.resourceName,
+      }).callback("download"),
       onProgress: (progress) => {
         record = upsertDownloadRecord({
           ...record,
@@ -946,9 +978,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     const completedLocalPath = result.localPath || localPath;
     const completedAt = new Date();
     await utimes(completedLocalPath, completedAt, completedAt).catch((error) => {
-      console.warn(
-        `[disk-cleanup] 无法刷新剧目目录保留时间：${completedLocalPath}；${readableError(error)}`,
-      );
+      baiduNetdiskLogger("storage").warn("无法刷新剧目目录保留时间", {
+        path: completedLocalPath,
+        error,
+      });
     });
 
     return upsertDownloadRecord({
@@ -975,9 +1008,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       targetName: request.resourceName,
       port,
     }).catch((error) => {
-      console.warn(
-        `[baidu] 后台清理下载临时资源失败：${request.resourceName}；${readableError(error)}`,
-      );
+      baiduNetdiskLogger("storage", {
+        requesterPlatform: request.requesterPlatform,
+        resourceName: request.resourceName,
+      }).warn("清理下载临时资源失败", { error });
     });
   }
 }

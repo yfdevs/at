@@ -6,6 +6,9 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { resolveFromRoot } from "../shared/config.js";
 import { minutesToMs } from "../shared/settings-value.js";
 import type { Config, TaskRunOptions } from "../shared/types.js";
+import { createLogger } from "../shared/logger.js";
+
+const authLogger = createLogger("auth");
 
 export async function launchContext(playletConfig: Config): Promise<BrowserContext> {
   const userDataDir = resolveFromRoot(playletConfig.browser?.userDataDir ?? ".auth/weixin-video-channel");
@@ -52,10 +55,10 @@ export async function waitForLoginIfNeeded(
   await onLoginRequired?.();
 
   const label = accountLabel ? ` ${accountLabel}` : "";
-  console.log(`[login]${label} Please scan and confirm in WeChat. Waiting for platform page...`);
+  authLogger.info("请使用微信扫码并确认登录", { accountName: label.trim() || undefined });
   await page.waitForURL((url) => !isLoginUrl(url.href), { timeout: minutesToMs(10) });
   await page.waitForLoadState("domcontentloaded");
-  console.log(`[login]${label} login completed`);
+  authLogger.info("登录成功", { accountName: label.trim() || undefined });
   return true;
 }
 

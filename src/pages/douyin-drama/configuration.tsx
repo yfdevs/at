@@ -1,5 +1,3 @@
-import { toast } from "sonner"
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -45,12 +43,6 @@ const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
         inactiveLabel: "已关闭",
       },
       {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "百度网盘资源与本地剧集按原始剧名建立子目录。",
-        directory: true,
-      },
-      {
         key: "taskPollIntervalSeconds",
         label: "任务轮询间隔",
         description: "空闲或任务结束后再次调用领取接口的等待时间。",
@@ -77,19 +69,13 @@ const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
     ],
   },
   {
-    title: "浏览器与运行数据",
-    description: "抖音短剧使用独立 Chromium 登录态；日志和动态下拉记录保存在运行目录。",
+    title: "浏览器与日志",
+    description: "抖音短剧使用独立 Chromium 登录态；共享目录在全局配置中统一管理。",
     fields: [
       {
         key: "accountProfileName",
         label: "账号配置名",
         description: "用于隔离浏览器登录态目录。",
-      },
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "保存登录态、素材缓存、日志与 dropdown-options.json。",
-        directory: true,
       },
       {
         key: "logRetentionDays",
@@ -126,21 +112,6 @@ export function DouyinDramaConfigurationPage() {
     saveConfig: douyinDramaService.saveConfig,
   })
 
-  const selectDirectory = async (key: Extract<keyof DouyinDramaConfig, string>) => {
-    try {
-      const selected = key === "runDataDir"
-        ? await douyinDramaService.selectRunDataDir(configState.config.runDataDir)
-        : await douyinDramaService.selectLocalEpisodeVideoRoot(
-            configState.config.localEpisodeVideoRoot,
-          )
-      if (selected) configState.updateConfig(key, selected)
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
   return (
     <ConfigurationPageFrame
       hasChanges={configState.hasChanges}
@@ -157,7 +128,6 @@ export function DouyinDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={configState.updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

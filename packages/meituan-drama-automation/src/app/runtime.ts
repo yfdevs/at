@@ -54,11 +54,9 @@ function accountRuntimeOptions(
     assetDownloadDir: options.assetDownloadRoot
       ? path.join(options.assetDownloadRoot, accountPathSegment(account.accountId), "covers")
       : undefined,
-    onLog: (message) => {
-      options.onLog?.(
-        `[accountId=${account.accountId} accountName=${account.accountName}] ${message}`,
-      );
-    },
+    meituanAccountId: account.accountId,
+    meituanAccountName: account.accountName,
+    onLog: options.onLog,
   };
 }
 

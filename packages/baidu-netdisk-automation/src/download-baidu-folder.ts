@@ -21,7 +21,7 @@ import {
   REMOTE_VIDEO_SCAN_MAX_DIRS,
   SHARE_LIST_MAX_PAGES,
 } from "./constants.js";
-import { log, logRemoteVideoScanDetails } from "./logging.js";
+import { errorLog, log, logRemoteVideoScanDetails, warn } from "./logging.js";
 import { parseBaiduNetdiskShareText, readShareInfo, sanitizeWindowsName } from "./share-text.js";
 import type {
   BaiduNetdiskDownloadTaskStatus,
@@ -687,10 +687,14 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   return withPage(target, async (page) => {
     log(options.isolatedRoot ? "保存分享目录到干净的网盘中转目录" : "保存分享目录到我的网盘");
     const stopConsoleForwarding = page.onConsole((message) => {
-      const prefix = "[baidu-transfer] ";
-      if (message.startsWith(prefix)) log(message.slice(prefix.length));
+      const prefix = ["[baidu-transfer] ", "[baidu] "].find((candidate) => message.startsWith(candidate));
+      if (!prefix) return;
+      const forwardedMessage = message.slice(prefix.length);
+      if (/失败|超时|未匹配|重试/.test(forwardedMessage)) warn(forwardedMessage);
+      else log(forwardedMessage);
     });
     try {
+      // The console calls inside this injected script are its message bridge back to the logger above.
       const result = await page.evaluate<SavedShareResult>(
       `
 (async () => {
@@ -2896,12 +2900,12 @@ function isCliEntrypoint() {
 async function main() {
   const args = process.argv.slice(2).filter((arg) => arg !== "--");
   await downloadBaiduNetdiskShare(parseCliOptions(args));
-  console.log("成功");
+  log("下载完成");
 }
 
 if (isCliEntrypoint()) {
   main().catch((error) => {
-    console.error(error instanceof Error ? error.message : error);
+    errorLog("下载失败", { error });
     process.exit(1);
   });
 }

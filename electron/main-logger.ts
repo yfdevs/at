@@ -1,13 +1,16 @@
 import { app, shell } from "electron";
-import { appendFileSync, existsSync, mkdirSync, renameSync, rmSync, statSync } from "node:fs";
+import { mkdirSync } from "node:fs";
 import os from "node:os";
 import path from "node:path";
-import util from "node:util";
+import {
+  createAutomationLogger,
+  formatDateKey,
+  type AutomationLogFields,
+  type AutomationLogLevel,
+} from "@drama/automation-logging";
 
-type MainLogLevel = "debug" | "info" | "warn" | "error";
+type MainLogLevel = Exclude<AutomationLogLevel, "debug"> | "debug";
 
-const maxLogSizeBytes = 2 * 1024 * 1024;
-const logFileName = "main.log";
 let processLoggingRegistered = false;
 
 export function getMainLogDir() {
@@ -17,109 +20,88 @@ export function getMainLogDir() {
 export function getMainLogFilePath() {
   const logDir = getMainLogDir();
   mkdirSync(logDir, { recursive: true });
-
-  const logFilePath = path.join(logDir, logFileName);
-  rotateLogFile(logFilePath);
-
-  return logFilePath;
+  return path.join(logDir, `app-${formatDateKey()}.log`);
 }
 
 export async function openMainLogDir() {
   const logDir = getMainLogDir();
   mkdirSync(logDir, { recursive: true });
-
   const errorMessage = await shell.openPath(logDir);
-
-  if (errorMessage) {
-    throw new Error(errorMessage);
-  }
-
+  if (errorMessage) throw new Error(errorMessage);
   return logDir;
 }
 
 export function logMain(level: MainLogLevel, message: string, detail?: unknown) {
   try {
-    const record: Record<string, unknown> = {
-      timestamp: formatChineseDateTime(new Date()),
-      level,
-      pid: process.pid,
-      message,
-    };
-
-    if (detail !== undefined) {
-      record.detail = serializeLogValue(detail);
-    }
-
-    appendFileSync(getMainLogFilePath(), `${JSON.stringify(record)}\n`, "utf8");
+    const logger = createAutomationLogger({
+      platform: "app",
+      scope: "system",
+      logFilePath: getMainLogFilePath(),
+      retentionDays: 7,
+    });
+    logger[level](message, detailFields(detail));
   } catch {
     // Logging must never break application startup.
   }
 }
 
-function formatChineseDateTime(date: Date) {
-  const year = date.getFullYear();
-  const month = String(date.getMonth() + 1).padStart(2, "0");
-  const day = String(date.getDate()).padStart(2, "0");
-  const hours = String(date.getHours()).padStart(2, "0");
-  const minutes = String(date.getMinutes()).padStart(2, "0");
-  const seconds = String(date.getSeconds()).padStart(2, "0");
-  const milliseconds = String(date.getMilliseconds()).padStart(3, "0");
-
-  return `${year}-${month}-${day} ${hours}:${minutes}:${seconds}.${milliseconds}`;
-}
-
 export function registerMainProcessLogging() {
-  if (processLoggingRegistered) {
-    return;
-  }
-
+  if (processLoggingRegistered) return;
   processLoggingRegistered = true;
 
   process.on("uncaughtException", (error) => {
-    logMain("error", "uncaught exception", error);
+    logMain("error", "主进程发生未捕获异常", { error });
   });
 
   process.on("unhandledRejection", (reason) => {
-    logMain("error", "unhandled promise rejection", reason);
+    logMain("error", "主进程发生未处理的异步异常", { error: reason });
   });
 
   app.on("web-contents-created", (_event, webContents) => {
     webContents.on("did-fail-load", (_loadEvent, errorCode, errorDescription, validatedURL, isMainFrame) => {
-      logMain("error", "renderer did fail load", {
+      logMain("error", "页面加载失败", {
         errorCode,
         errorDescription,
-        validatedURL,
+        url: validatedURL,
         isMainFrame,
       });
     });
 
     webContents.on("preload-error", (_preloadEvent, preloadPath, error) => {
-      logMain("error", "renderer preload error", { preloadPath, error: serializeLogValue(error) });
+      logMain("error", "页面预加载失败", { path: preloadPath, error });
     });
 
     webContents.on("render-process-gone", (_goneEvent, details) => {
-      logMain("error", "renderer process gone", details);
+      logMain("error", "页面进程已退出", details);
     });
 
     webContents.on("console-message", (_consoleEvent, level, message, line, sourceId) => {
-      if (level >= 2) {
-        logMain(level >= 3 ? "error" : "warn", "renderer console message", {
-          level,
-          message,
-          line,
-          sourceId,
-        });
-      }
+      if (level < 2) return;
+      logMain(level >= 3 ? "error" : "warn", "页面控制台报告异常", {
+        level,
+        message,
+        line,
+        sourceId,
+      });
     });
   });
 
   app.on("child-process-gone", (_event, details) => {
-    logMain("error", "child process gone", details);
+    logMain("error", "子进程已退出", details);
   });
 
-  app.on("will-quit", (_event) => {
-    logMain("info", "app will quit");
+  app.on("will-quit", () => {
+    logMain("info", "应用即将退出");
   });
+}
+
+function detailFields(detail: unknown): AutomationLogFields | undefined {
+  if (detail === undefined) return undefined;
+  if (detail instanceof Error) return { error: detail };
+  if (detail && typeof detail === "object" && !Array.isArray(detail)) {
+    return detail as AutomationLogFields;
+  }
+  return { detail };
 }
 
 function getUserDataPath() {
@@ -129,40 +111,4 @@ function getUserDataPath() {
     const appDataPath = process.env.APPDATA || path.join(os.homedir(), "AppData", "Roaming");
     return path.join(appDataPath, "AutoDrama");
   }
-}
-
-function rotateLogFile(logFilePath: string) {
-  if (!existsSync(logFilePath)) {
-    return;
-  }
-
-  const size = statSync(logFilePath).size;
-
-  if (size <= maxLogSizeBytes) {
-    return;
-  }
-
-  const previousLogFilePath = path.join(path.dirname(logFilePath), "main.previous.log");
-  rmSync(previousLogFilePath, { force: true });
-  renameSync(logFilePath, previousLogFilePath);
-}
-
-function serializeLogValue(value: unknown): unknown {
-  if (value instanceof Error) {
-    return {
-      name: value.name,
-      message: value.message,
-      stack: value.stack,
-    };
-  }
-
-  if (typeof value === "object" && value !== null) {
-    return util.inspect(value, {
-      breakLength: 180,
-      depth: 6,
-      maxArrayLength: 50,
-    });
-  }
-
-  return value;
 }

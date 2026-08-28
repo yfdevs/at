@@ -7,7 +7,7 @@ export default defineConfig({
     dts: true,
     deps: {
       onlyBundle: false,
-      alwaysBundle: ["@drama/axios", "pino"],
+      alwaysBundle: ["@drama/axios"],
     },
   },
 });

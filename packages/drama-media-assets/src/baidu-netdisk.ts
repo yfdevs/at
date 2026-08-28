@@ -6,6 +6,7 @@ import {
   episodeFileSummary,
   fileSetSignature,
   hasRequiredOwnershipMaterials,
+  isOwnershipDirectoryName,
   isCompleteEpisodeFileSet,
   listDirectLocalEpisodeFiles,
   listLocalEpisodeFiles,
@@ -77,6 +78,8 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   requiredOwnershipFiles?: number;
   requiredPosterImages?: number;
   requiredAiProductionProofFiles?: number;
+  /** Wait for every remotely discovered optional asset instead of only caller requirements. */
+  requireAllDiscoveredAssets?: boolean;
   mergeOwnershipMaterials?: boolean;
   downloadDir?: string;
   downloadTaskName?: string;
@@ -108,6 +111,46 @@ export type EnsureBaiduNetdiskEpisodeVideosResult = {
   skippedExisting: boolean;
   completed: boolean;
 };
+
+export function resolveBaiduNetdiskAssetCompletionRequirements(options: {
+  requiredOwnershipImages?: number;
+  requiredOwnershipFiles?: number;
+  requiredPosterImages?: number;
+  requiredAiProductionProofFiles?: number;
+  discoveredOwnershipImages?: number;
+  discoveredOwnershipFiles?: number;
+  discoveredPosterImages?: number;
+  discoveredAiProductionProofFiles?: number;
+  requireAllDiscoveredAssets?: boolean;
+}) {
+  const count = (value: number | undefined) =>
+    Number.isFinite(value) ? Math.max(0, Math.floor(value!)) : 0;
+  const requiredCount = (required: number | undefined, discovered: number | undefined) => {
+    const normalizedRequired = count(required);
+    return options.requireAllDiscoveredAssets
+      ? Math.max(normalizedRequired, count(discovered))
+      : normalizedRequired;
+  };
+
+  return {
+    ownershipImages: requiredCount(
+      options.requiredOwnershipImages,
+      options.discoveredOwnershipImages,
+    ),
+    ownershipFiles: requiredCount(
+      options.requiredOwnershipFiles,
+      options.discoveredOwnershipFiles,
+    ),
+    posterImages: requiredCount(
+      options.requiredPosterImages,
+      options.discoveredPosterImages,
+    ),
+    aiProductionProofFiles: requiredCount(
+      options.requiredAiProductionProofFiles,
+      options.discoveredAiProductionProofFiles,
+    ),
+  };
+}
 
 function taskProgressPercent(finishSize?: number, size?: number) {
   if (!Number.isFinite(finishSize) || !Number.isFinite(size) || !size || size <= 0) {
@@ -294,7 +337,7 @@ async function listCurrentRawOwnershipFiles(
       if (entry.isDirectory()) {
         await walk(
           file,
-          inOwnershipDirectory || /工程|权属|资质|版权/.test(entry.name),
+          inOwnershipDirectory || isOwnershipDirectoryName(entry.name),
           depth + 1,
         );
       } else if (
@@ -314,7 +357,7 @@ async function listCurrentRawOwnershipFiles(
     }
   };
   for (const root of roots) {
-    await walk(root, /工程|权属|资质|版权/.test(path.basename(root)), 0);
+    await walk(root, isOwnershipDirectoryName(path.basename(root)), 0);
   }
   return [...files.values()].sort((left, right) =>
     left.file.localeCompare(right.file, "zh-CN", { numeric: true })
@@ -542,6 +585,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  requireAllDiscoveredAssets?: boolean;
   timeoutMs: number;
   pollIntervalMs: number;
   stableCompletePolls: number;
@@ -551,6 +595,17 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   onLog?: EnsureBaiduNetdiskEpisodeVideosOptions["onLog"];
 }) {
   const startedAt = Date.now();
+  const assetRequirements = resolveBaiduNetdiskAssetCompletionRequirements({
+    requiredOwnershipImages: options.ownershipRequirements.minimumImages,
+    requiredOwnershipFiles: options.requiredOwnershipFiles,
+    requiredPosterImages: options.requiredPosterImages,
+    requiredAiProductionProofFiles: options.requiredAiProductionProofFiles,
+    discoveredOwnershipImages: options.expectedOwnershipImages,
+    discoveredOwnershipFiles: options.expectedOwnershipFiles,
+    discoveredPosterImages: options.expectedPosterImages,
+    discoveredAiProductionProofFiles: options.expectedAiProductionProofFiles,
+    requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
+  });
   const stableSignatures = new Map<string, { signature: string; count: number }>();
   const stableEpisodeFiles = new Map<string, {
     signature: string;
@@ -631,26 +686,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     };
     stableSignatures.set(stableKey, nextStable);
 
-    const expectedOwnershipImages = Math.max(
-      options.ownershipRequirements.minimumImages ?? 0,
-      options.expectedOwnershipImages ?? 0,
-    );
-    const expectedOwnershipFiles = Math.max(
-      options.requiredOwnershipFiles,
-      options.expectedOwnershipFiles ?? 0,
-    );
-    const expectedPosterImages = Math.max(
-      options.requiredPosterImages,
-      options.expectedPosterImages ?? 0,
-    );
-    const expectedAiProductionProofFiles = Math.max(
-      options.requiredAiProductionProofFiles,
-      options.expectedAiProductionProofFiles ?? 0,
-    );
-    const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages
-      && ownershipSourceFiles.length >= expectedOwnershipFiles;
-    const posterDownloadComplete = posters.length >= expectedPosterImages;
-    const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
+    const ownershipDirectoryComplete =
+      rawOwnershipFiles.length >= assetRequirements.ownershipImages
+      && ownershipSourceFiles.length >= assetRequirements.ownershipFiles;
+    const posterDownloadComplete = posters.length >= assetRequirements.posterImages;
+    const aiProductionProofDownloadComplete =
+      aiProductionProofs.length >= assetRequirements.aiProductionProofFiles;
     if (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && aiProductionProofsComplete && aiProductionProofDownloadComplete && nextStable.count >= options.stableCompletePolls) {
       const completedPath = await standardizeCompleteResources({
         files,
@@ -745,8 +786,9 @@ async function waitForCompleteLocalEpisodeVideos(options: {
                     : "")
                 : "") +
               ` 权属图片=${ownership.length}/${options.ownershipRequirements.minimumImages ?? 0}` +
-              ` 权属原始文件=${rawOwnershipFiles.length}/${expectedOwnershipImages}` +
-              ` 权属全部文件=${ownershipSourceFiles.length}/${expectedOwnershipFiles}` +
+              ` 权属原始图片=${rawOwnershipFiles.length}/${assetRequirements.ownershipImages}` +
+              ` 权属全部文件=${ownershipSourceFiles.length}/${assetRequirements.ownershipFiles}` +
+              ` 权属远端发现=${options.expectedOwnershipImages ?? 0}图/${options.expectedOwnershipFiles ?? 0}文件` +
               ` 海报封面=${posters.length}/${options.requiredPosterImages}` +
               ` AI制作证明=${aiProductionProofs.length}/${options.requiredAiProductionProofFiles}` +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
@@ -755,10 +797,12 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           lastProgressLogAt = Date.now();
         }
 
-        const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages
-          && ownershipSourceFiles.length >= expectedOwnershipFiles;
-        const posterDownloadComplete = posters.length >= expectedPosterImages;
-        const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
+        const ownershipDirectoryComplete =
+          rawOwnershipFiles.length >= assetRequirements.ownershipImages
+          && ownershipSourceFiles.length >= assetRequirements.ownershipFiles;
+        const posterDownloadComplete = posters.length >= assetRequirements.posterImages;
+        const aiProductionProofDownloadComplete =
+          aiProductionProofs.length >= assetRequirements.aiProductionProofFiles;
         if (taskStatus.completed && ownershipDirectoryComplete && !ownershipComplete) {
           throw new Error(
             `百度网盘权属材料筛选后数量不足。至少需要${options.ownershipRequirements.minimumImages ?? 0}张非竖图，实际找到${ownership.length}张；高度大于宽度的图片不会作为权属文件。`,
@@ -925,6 +969,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     expectedOwnershipFiles: result.expectedOwnershipFiles,
     expectedPosterImages: result.expectedPosterImages,
     expectedAiProductionProofFiles: result.expectedAiProductionProofFiles,
+    requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
     episodeCount: options.episodeCount,
     requireEpisodeVideos: downloadEpisodeVideos,
     ownershipRequirements,

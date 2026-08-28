@@ -1,5 +1,3 @@
-import { toast } from "sonner"
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -45,12 +43,6 @@ const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
         min: 1,
       },
       {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "百度网盘下载和本地视频匹配会使用该目录，目录下按剧名建立子目录。",
-        directory: true,
-      },
-      {
         key: "baiduNetdiskDownloadRetryAttempts",
         label: "网盘下载重试",
         description: "任务包含百度网盘链接时，下载失败后的重试次数。",
@@ -77,15 +69,9 @@ const configSections: ConfigSectionDefinition<QqDramaConfig>[] = [
     ],
   },
   {
-    title: "浏览器与运行数据",
-    description: "QQ 短剧平台使用 Playwright 安装的 Chromium，并保存独立浏览器登录态和素材缓存。",
+    title: "浏览器与日志",
+    description: "QQ 短剧使用独立 Chromium 登录态；共享目录在全局配置中统一管理。",
     fields: [
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "每个账号的浏览器登录态保存在 auth/accounts/<accountId> 子目录。",
-        directory: true,
-      },
       {
         key: "logRetentionDays",
         label: "日志保留",
@@ -129,24 +115,6 @@ export function QqDramaConfigurationPage() {
     saveConfig: qqDramaService.saveConfig,
   })
 
-  const selectDirectory = async (key: keyof QqDramaConfig & string) => {
-    try {
-      const selectedPath =
-        key === "runDataDir"
-          ? await qqDramaService.selectRunDataDir(config.runDataDir)
-          : key === "localEpisodeVideoRoot"
-            ? await qqDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-            : null
-      if (selectedPath) {
-        updateConfig(key, selectedPath)
-      }
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
   return (
     <ConfigurationPageFrame
       hasChanges={hasChanges}
@@ -163,7 +131,6 @@ export function QqDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

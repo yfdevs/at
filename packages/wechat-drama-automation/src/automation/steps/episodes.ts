@@ -20,10 +20,12 @@ interface EpisodeUploadStepOptions {
 
 const uploadLogger = createLogger("upload");
 async function cleanupEpisodeUploadDir(uploadDir: string, videoAccountLabel?: string): Promise<void> {
-  const accountLogPrefix = formatAccountLogPrefix(videoAccountLabel);
   await cleanupEpisodeUploadFiles({ uploadDir, files: [] }).catch((error: unknown) => {
-    const message = error instanceof Error ? error.message : String(error);
-    uploadLogger.warn(`[cleanup] ${accountLogPrefix}临时剧集目录清理失败: ${uploadDir} ${message}`);
+    uploadLogger.warn("临时剧集目录清理失败", {
+      accountName: videoAccountLabel,
+      path: uploadDir,
+      error,
+    });
   });
 }
 
@@ -56,10 +58,6 @@ async function assertNoEpisodeUploadTopTipErrors(page: Page): Promise<void> {
   }
 }
 
-function formatAccountLogPrefix(videoAccountLabel?: string): string {
-  return videoAccountLabel ? `[${videoAccountLabel}] ` : "";
-}
-
 function episodeUploadWaitTimeoutMs(): number {
   return secondsSettingToMs(getWechatVideoRuntimeSettings().episodeUploadWaitTimeoutSeconds, 240 * 60);
 }
@@ -74,7 +72,6 @@ async function retryFailedEpisodeRows(
   videoAccountLabel?: string,
   maxRetryAttempts = episodeUploadFailedRetryAttempts(),
 ): Promise<void> {
-  const accountLogPrefix = formatAccountLogPrefix(videoAccountLabel);
   while (true) {
     const failureStatus = app.locator("div.status-error:visible")
       .filter({ hasText: "未能上传" })
@@ -95,10 +92,15 @@ async function retryFailedEpisodeRows(
 
     const nextAttempt = attempts + 1;
     retryAttemptsByFile.set(fileName, nextAttempt);
-    uploadLogger.warn(`[upload-retry] ${accountLogPrefix}检测到未能上传：${fileName}，准备第 ${nextAttempt}/${maxRetryAttempts} 次重试`);
+    uploadLogger.warn("剧集上传失败，准备重试", {
+      accountName: videoAccountLabel,
+      fileName,
+      attempt: nextAttempt,
+      maxAttempts: maxRetryAttempts,
+    });
     await retryLink.scrollIntoViewIfNeeded();
     await retryLink.click({ timeout: 10000 });
-    uploadLogger.info(`[upload-retry] ${accountLogPrefix}已点击重试：${fileName}`);
+    uploadLogger.info("已点击重新上传", { accountName: videoAccountLabel, fileName });
 
     const leftFailureState = await failureStatus.waitFor({
       state: "hidden",
@@ -118,8 +120,10 @@ async function waitForEpisodeUploadResult(
   timeout = episodeUploadWaitTimeoutMs(),
 ): Promise<void> {
   const deadline = Date.now() + timeout;
-  const accountLogPrefix = formatAccountLogPrefix(videoAccountLabel);
-  uploadLogger.info(`[wait] ${accountLogPrefix}剧集上传最长等待 ${Math.round(timeout / 60 / 1000)} 分钟`);
+  uploadLogger.info("正在等待剧集上传完成", {
+    accountName: videoAccountLabel,
+    timeoutMinutes: Math.round(timeout / 60 / 1000),
+  });
   const app = page.locator("wujie-app:visible").first();
   const status = app.locator(".table-operation-left:visible").last();
   const retryAttemptsByFile = new Map<string, number>();
@@ -134,7 +138,10 @@ async function waitForEpisodeUploadResult(
       .filter(Boolean);
 
     if (statusText && statusText !== lastStatusText) {
-      uploadLogger.info(`[upload-status] ${accountLogPrefix}${statusText}`);
+      uploadLogger.info("剧集上传状态已更新", {
+        accountName: videoAccountLabel,
+        status: statusText,
+      });
       lastStatusText = statusText;
     }
 
@@ -152,7 +159,10 @@ async function waitForEpisodeUploadResult(
       && failedCount === 0;
 
     if (succeeded) {
-      uploadLogger.info(`[status-ok] ${accountLogPrefix}检测到当前剧集上传组件提示：${statusText}`);
+      uploadLogger.info("剧集上传完成", {
+        accountName: videoAccountLabel,
+        status: statusText,
+      });
       return;
     }
 
@@ -229,13 +239,13 @@ async function clickConfirmReviewButton(page: Page): Promise<void> {
   await button.waitFor({ state: "visible", timeout: 30000 });
   await button.scrollIntoViewIfNeeded();
   await button.click({ timeout: 30000 });
-  console.log("[action] 已点击“确认提审”");
+  uploadLogger.info("已点击确认提审");
 
   await page.waitForTimeout(1000);
   await assertNoConfirmReviewErrors(page);
 
   const nextStepText = await waitForReviewConfirmStep(page);
-  console.log(`[step] transitioned from 剧集文件选取 to ${nextStepText}`);
+  uploadLogger.info("剧集上传步骤已完成", { nextStep: nextStepText });
 }
 
 export async function uploadEpisodeFilesStep(
@@ -243,7 +253,6 @@ export async function uploadEpisodeFilesStep(
   config: Config,
   options: EpisodeUploadStepOptions = {},
 ): Promise<void> {
-  const accountLogPrefix = formatAccountLogPrefix(options.videoAccountLabel);
   await page.waitForTimeout(1000);
   await page.locator("div")
     .filter({ hasText: /^请选择要上传的视频文件$/ })
@@ -270,7 +279,9 @@ export async function uploadEpisodeFilesStep(
     await setInputFilesByLocator(videoInput, videoFiles, "剧集视频", 120000);
     await assertNoEpisodeUploadTopTipErrors(page);
 
-    uploadLogger.info(`[wait] ${accountLogPrefix}视频文件已提交，正在等待微信上传结果文字...`);
+    uploadLogger.info("视频文件已提交，正在等待上传结果", {
+      accountName: options.videoAccountLabel,
+    });
     await waitForEpisodeUploadResult(page, expectedCount, options.videoAccountLabel);
 
     await page.waitForTimeout(3000);

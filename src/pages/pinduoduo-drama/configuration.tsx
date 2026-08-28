@@ -1,5 +1,3 @@
-import { toast } from "sonner";
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -26,24 +24,12 @@ const emptyConfig: PinduoduoDramaConfig = {
 const sections: ConfigSectionDefinition<PinduoduoDramaConfig>[] = [
   {
     title: "浏览器与账号",
-    description: "拼多多登录态和运行数据按账号配置独立保存。",
+    description: "拼多多登录态按账号隔离；共享目录在全局配置中统一管理。",
     fields: [
       {
         key: "accountProfileName",
         label: "账号配置名",
         description: "用于区分不同拼多多 MCN 登录态。",
-      },
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "浏览器登录态、日志和运行文件保存到该目录。",
-        directory: true,
-      },
-      {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "审核通过后，百度网盘资源会下载并标准化到该目录下的剧名子目录。",
-        directory: true,
       },
       {
         key: "operationDelaySeconds",
@@ -107,26 +93,6 @@ export function PinduoduoDramaConfigurationPage() {
     saveConfig: (nextConfig) => pinduoduoDramaService.saveConfig(nextConfig),
   });
 
-  const selectDirectory = async (key: string) => {
-    try {
-      const selectedPath =
-        key === "runDataDir"
-          ? await pinduoduoDramaService.selectRunDataDir(config.runDataDir)
-          : key === "localEpisodeVideoRoot"
-            ? await pinduoduoDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-            : null;
-      if (selectedPath) {
-        if (key === "runDataDir" || key === "localEpisodeVideoRoot") {
-          updateConfig(key, selectedPath);
-        }
-      }
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
   return (
     <ConfigurationPageFrame
       hasChanges={hasChanges}
@@ -143,7 +109,6 @@ export function PinduoduoDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

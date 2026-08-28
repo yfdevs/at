@@ -1,12 +1,14 @@
 import { mkdir } from 'node:fs/promises';
 import { FeishuNotifier } from '@drama/feishu-notifier';
 import path from 'node:path';
+import { formatDateKey } from '@drama/automation-logging';
 import { chromium, type BrowserContext, type Page } from 'playwright';
 import {
   config,
   configureTiktokDramaCenterRuntimeSettings,
   logger,
 } from '../config.js';
+import { formatReadableLogEntry } from '@drama/automation-logging';
 import { claimNextTiktokDramaTaskApi } from '../api/index.js';
 import { fillDraft, waitForDraftPage } from '../draft-form.js';
 import { matchVideos, resolveCoverFile } from '../media.js';
@@ -74,11 +76,13 @@ export async function startTiktokDramaCenterRuntime(
     ...runtimeSettings,
     userDataDir,
     headless: browser?.headless ?? runtimeSettings.headless ?? false,
-    logFile: runtimeSettings.logFile ?? path.join(runDataDir, 'logs', 'app.log'),
+    logFile: runtimeSettings.logFile ?? path.join(runDataDir, 'logs', `app-${formatDateKey()}.log`),
     schemeFile: runtimeSettings.schemeFile ?? path.join(runDataDir, 'scheme.local.json'),
     tempDir: runtimeSettings.tempDir ?? path.join(runDataDir, 'tmp'),
     videoDir: runtimeSettings.videoDir ?? path.join(runDataDir, 'videos'),
-  });
+  }, options.onLog
+    ? (entry) => options.onLog?.(formatReadableLogEntry(entry))
+    : undefined);
   const notifier = new FeishuNotifier({
     channelIdLabel: 'platform',
     channelLabel: 'TikTok',
@@ -283,8 +287,7 @@ function runDataDirFromUserDataDir(userDataDir: string) {
   return path.basename(parent) === 'auth' ? path.dirname(parent) : parent;
 }
 
-function log(options: TiktokDramaCenterRuntimeOptions, message: string) {
-  options.onLog?.(message);
+function log(_options: TiktokDramaCenterRuntimeOptions, message: string) {
   logger.info(message);
 }
 

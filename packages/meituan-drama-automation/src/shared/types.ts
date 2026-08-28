@@ -294,6 +294,8 @@ export type MeituanCreationRuntimeOptions = {
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;
+  meituanAccountId?: string;
+  meituanAccountName?: string;
   logFilePath?: string;
   logRetentionDays?: number;
   baiduNetdiskDownloadRetryAttempts?: number;
@@ -307,6 +309,7 @@ export type MeituanCreationRuntimeOptions = {
     requiredOwnership?: {
       minimumImages?: number;
     };
+    requiredOwnershipFiles?: number;
     requiredPosterImages?: number;
   }) => Promise<unknown>;
   onLog?: (message: string) => void;

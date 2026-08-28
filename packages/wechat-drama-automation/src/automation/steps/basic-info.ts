@@ -16,6 +16,9 @@ import {
   prepareUploadFiles,
   uploadInGroup,
 } from "../upload/upload-helpers.js";
+import { createLogger } from "../../shared/logger.js";
+
+const formLogger = createLogger("form");
 
 async function fillFirstMatchingField(
   page: Page,
@@ -26,7 +29,7 @@ async function fillFirstMatchingField(
   const fieldLocator = page.locator(fieldSelector).first();
   await fieldLocator.waitFor({ state: "visible", timeout: 20000 });
   await fieldLocator.fill(String(fieldValue));
-  console.log(`[fill] ${fieldLabel}`);
+  formLogger.info("字段已填写", { field: fieldLabel });
 }
 
 function sanitizeDramaText(value: string, label: string): string {
@@ -44,7 +47,7 @@ function sanitizeDramaText(value: string, label: string): string {
     throw new Error(`data.playlet.${label} is empty after removing unsupported characters.`);
   }
   if (sanitized !== value) {
-    console.warn(`[warn] ${label} 包含空格或不支持字符，已清洗为: ${sanitized}`);
+    formLogger.warn("字段包含不支持字符，已自动清理", { field: label, value: sanitized });
   }
   return sanitized;
 }
@@ -85,7 +88,7 @@ async function selectCheckboxOrRadioLocator(
   inputLabel: string,
 ): Promise<void> {
   if ((await hiddenInput.count()) === 0) {
-    console.warn(`[skip] selector not found for ${inputLabel}`);
+    formLogger.warn("未找到字段，已跳过", { field: inputLabel });
     return;
   }
 
@@ -104,9 +107,9 @@ async function selectCheckboxOrRadioLocator(
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    console.warn(`[warn] fallback checked ${inputLabel}: ${message}`);
+    formLogger.warn("字段已使用兼容方式选中", { field: inputLabel, message });
   }
-  console.log(`[check] ${inputLabel}`);
+  formLogger.info("选项已选择", { field: inputLabel });
 }
 
 async function fillFieldInsideLabeledGroup(
@@ -123,12 +126,12 @@ async function fillFieldInsideLabeledGroup(
     .locator("input:not([type]), input[type='text'], input[type='number'], textarea")
     .first();
   if ((await inputOrTextarea.count()) === 0) {
-    console.warn(`[skip] input not found for ${fieldLabel}`);
+    formLogger.warn("未找到字段，已跳过", { field: fieldLabel });
     return false;
   }
 
   await inputOrTextarea.fill(String(fieldValue), { timeout: 15000 });
-  console.log(`[fill] ${fieldLabel}`);
+  formLogger.info("字段已填写", { field: fieldLabel });
   return true;
 }
 
@@ -149,7 +152,7 @@ async function fillInGroupByPlaceholder(
 
   const inputWithPlaceholder = group.locator(`input[placeholder="${placeholder}"]`).first();
   await inputWithPlaceholder.fill(String(fieldValue), { timeout: 15000 });
-  console.log(`[fill] ${label}`);
+  formLogger.info("字段已填写", { field: label });
   return true;
 }
 
@@ -160,7 +163,7 @@ async function selectCheckboxOrRadio(
 ): Promise<void> {
   const hiddenInput = page.locator(inputSelector).first();
   if ((await hiddenInput.count()) === 0) {
-    console.warn(`[skip] selector not found for ${inputLabel}: ${inputSelector}`);
+    formLogger.warn("未找到字段，已跳过", { field: inputLabel, selector: inputSelector });
     return;
   }
 
@@ -179,16 +182,16 @@ async function selectCheckboxOrRadio(
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
     const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    console.warn(`[warn] fallback checked ${inputLabel}: ${message}`);
+    formLogger.warn("字段已使用兼容方式选中", { field: inputLabel, message });
   }
-  console.log(`[check] ${inputLabel}`);
+  formLogger.info("选项已选择", { field: inputLabel });
 }
 
 async function clickExactText(page: Page, text: string, label: string): Promise<boolean> {
   const locator = page.getByText(text, { exact: true }).first();
   if ((await locator.count()) === 0) return false;
   await locator.click({ timeout: 15000 });
-  console.log(`[check] ${label}: ${text}`);
+  formLogger.info("选项已选择", { field: label, value: text });
   return true;
 }
 
@@ -201,7 +204,7 @@ async function checkRadioByLabel<Value extends string>(
 ): Promise<void> {
   const radioGroup = await findVisibleLabeledGroup(page, labelPrefix, 'input[type="radio"]');
   if (!radioGroup) {
-    console.warn(`[skip] control group not found for ${labelPrefix}`);
+    formLogger.warn("未找到选项组，已跳过", { field: labelPrefix });
     return;
   }
 
@@ -219,7 +222,7 @@ async function uploadMaterial(
   remoteDirectoryName?: string,
 ): Promise<void> {
   const prefixes = Array.isArray(labelPrefixes) ? labelPrefixes : [labelPrefixes];
-  console.log(`[upload-plan] ${label}: ${filePaths.filter(Boolean).length} file(s)`);
+  formLogger.info("素材上传计划已生成", { field: label, fileCount: filePaths.filter(Boolean).length });
   if (!filePaths.some(Boolean)) return;
   await uploadByAnyLabelPrefix(page, prefixes, filePaths, label, remoteDirectoryName);
 }
@@ -256,7 +259,7 @@ async function uploadByLabeledGroupFileInput(
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
-    console.warn(`[skip] ${label}: no existing file`);
+    formLogger.warn("没有可用文件，已跳过", { field: label });
     return;
   }
 
@@ -332,7 +335,7 @@ async function fillProducerName(page: Page, value: string): Promise<void> {
   const textbox = page.getByRole("textbox", { name: "请填写待提审剧目的制作方主体名称" }).first();
   if ((await textbox.count()) > 0) {
     await textbox.fill(value, { timeout: 15000 });
-    console.log("[fill] 制作方名称");
+    formLogger.info("字段已填写", { field: "制作方名称" });
     return;
   }
 
@@ -343,7 +346,7 @@ async function fillProducerName(page: Page, value: string): Promise<void> {
   if ((await page.locator(selectors.producerName).count()) > 0) {
     await fillFirstMatchingField(page, selectors.producerName, value, "制作方名称");
   } else {
-    console.warn(`[skip] selector not found for 制作方名称: ${selectors.producerName}`);
+    formLogger.warn("未找到字段，已跳过", { field: "制作方名称", selector: selectors.producerName });
   }
 }
 
@@ -355,7 +358,7 @@ async function fillProductionCost(page: Page, value: number): Promise<void> {
     .first();
   if ((await textbox.count()) > 0) {
     await textbox.fill(String(value), { timeout: 15000 });
-    console.log("[fill] 剧目制作成本");
+    formLogger.info("字段已填写", { field: "剧目制作成本" });
     return;
   }
 
@@ -413,7 +416,7 @@ async function assertNoBasicInfoValidationErrors(page: Page): Promise<void> {
   if (errors.length === 0) return;
 
   const message = `[basic-info-validation-failed] ${errors.join("；")}`;
-  console.error(message);
+  formLogger.error("表单校验失败", { errorMessage: message });
   throw new Error(message);
 }
 
@@ -561,8 +564,9 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
   );
   if (playlet.productionCost) {
     await fillProductionCost(page, playlet.productionCost.amountWan);
-    console.log(
-      `[upload-plan] 剧目制作成本证明材料: ${(playlet.productionCost.proofFiles ?? []).filter(Boolean).length} file(s)`,
+    formLogger.info(
+      "准备上传剧目制作成本证明",
+      { fileCount: (playlet.productionCost.proofFiles ?? []).filter(Boolean).length },
     );
     await uploadByLabeledGroupFileInput(
       page,

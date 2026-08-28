@@ -16,6 +16,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@drama/automation-logging": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "dayjs": "^1.11.21",
     "playwright": "1.61.1",

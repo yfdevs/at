@@ -8,6 +8,16 @@ import {
 import { log } from "./logger.js";
 import type { BaiduDramaRuntimeOptions, ClaimedBaiduDramaTask } from "./types.js";
 
+export const BAIDU_DRAMA_LANDSCAPE_COVER_SIZE = {
+  width: 1_280,
+  height: 720,
+} as const;
+
+export const BAIDU_DRAMA_PORTRAIT_COVER_SIZE = {
+  width: 1_200,
+  height: 1_600,
+} as const;
+
 export function baiduDramaResourceName(task: ClaimedBaiduDramaTask) {
   return task.originalTitle.trim();
 }
@@ -69,6 +79,35 @@ async function prepareMaterialReferences(
   }));
 }
 
+export async function prepareBaiduDramaCoverVariants(options: {
+  sourceFile: string;
+  landscapeSourceFile?: string;
+  portraitSourceFile?: string;
+  outputDir: string;
+  onLog?: (message: string) => void;
+}) {
+  await rm(options.outputDir, { recursive: true, force: true });
+  const [landscape, portrait] = await Promise.all([
+    prepareStretchedImageVariant({
+      inputFile: options.landscapeSourceFile ?? options.sourceFile,
+      outputFile: path.join(options.outputDir, "baidu-cover-landscape-1280x720.jpg"),
+      ...BAIDU_DRAMA_LANDSCAPE_COVER_SIZE,
+      jpegQuality: 92,
+      maxFileBytes: 4_700_000,
+      onLog: options.onLog,
+    }),
+    prepareStretchedImageVariant({
+      inputFile: options.portraitSourceFile ?? options.sourceFile,
+      outputFile: path.join(options.outputDir, "baidu-cover-portrait-1200x1600.jpg"),
+      ...BAIDU_DRAMA_PORTRAIT_COVER_SIZE,
+      jpegQuality: 92,
+      maxFileBytes: 4_700_000,
+      onLog: options.onLog,
+    }),
+  ]);
+  return { landscape, portrait };
+}
+
 export async function prepareBaiduDramaResources(
   task: ClaimedBaiduDramaTask,
   options: BaiduDramaRuntimeOptions,
@@ -127,39 +166,26 @@ export async function prepareBaiduDramaResources(
   if (posters.length === 0) {
     throw new Error("[poster-material-invalid] 未找到文件名或目录名包含“封面”或“海报”的图片");
   }
+  const coverSource = posters[0];
   const landscapeSource = posters.find((poster) => (
     poster.width !== undefined && poster.height !== undefined && poster.width >= poster.height
-  )) ?? posters[0];
+  )) ?? coverSource;
   const portraitSource = posters.find((poster) => (
     poster.width !== undefined && poster.height !== undefined && poster.height > poster.width
-  )) ?? posters[0];
+  )) ?? coverSource;
   const outputDir = path.join(
     options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/baidu-drama/assets"),
     "poster-upload",
   );
-  await rm(outputDir, { recursive: true, force: true });
   const onResizeLog = (message: string) =>
     log(options, `[baidu-drama] ${message}`, undefined, "resources");
-  const [landscape, portrait] = await Promise.all([
-    prepareStretchedImageVariant({
-      inputFile: landscapeSource.file,
-      outputFile: path.join(outputDir, "baidu-cover-landscape-1242x699.jpg"),
-      width: 1_242,
-      height: 699,
-      jpegQuality: 92,
-      maxFileBytes: 4_700_000,
-      onLog: onResizeLog,
-    }),
-    prepareStretchedImageVariant({
-      inputFile: portraitSource.file,
-      outputFile: path.join(outputDir, "baidu-cover-portrait-1242x1656.jpg"),
-      width: 1_242,
-      height: 1_656,
-      jpegQuality: 92,
-      maxFileBytes: 4_700_000,
-      onLog: onResizeLog,
-    }),
-  ]);
+  const { landscape, portrait } = await prepareBaiduDramaCoverVariants({
+    sourceFile: coverSource.file,
+    landscapeSourceFile: landscapeSource.file,
+    portraitSourceFile: portraitSource.file,
+    outputDir,
+    onLog: onResizeLog,
+  });
   task.playlet.localCoverFile = landscape.file;
   task.playlet.localLandscapeCoverFile = landscape.file;
   task.playlet.localPortraitCoverFile = portrait.file;

@@ -4,6 +4,9 @@ import { numberSetting, secondsSettingToMs } from "./settings-value.js";
 import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
 import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
+import { createLogger } from "./logger.js";
+
+const configLogger = createLogger("config");
 
 const serviceBrowserHeadless = false;
 const serviceBrowserSlowMo = 20;
@@ -64,7 +67,7 @@ export function filterVideoAccountsByContractSubjects(
     isLegacyUnscopedContractSubject(account.contractSubject)
   ));
   if (legacyUnscopedAccounts.length > 0) {
-    console.warn("[config] no exact contract subject matches; using legacy unscoped video accounts", {
+    configLogger.warn("未找到完全匹配的主体，已使用未分组账号", {
       selectedContractSubjects: Array.from(contractSubjects),
       legacyUnscopedCount: legacyUnscopedAccounts.length,
     });
@@ -128,7 +131,7 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   const allVideoAccounts = await fetchVideoAccountsApi();
   const videoAccounts = filterVideoAccountsByContractSubjects(allVideoAccounts, settings.videoAccountContractSubjects);
   const accountIds = videoAccounts.map((account) => account.id);
-  console.log("[config] fetched video accounts", {
+  configLogger.info("账号列表已更新", {
     selectedContractSubjects: settings.videoAccountContractSubjects,
     totalCount: allVideoAccounts.length,
     filteredCount: videoAccounts.length,

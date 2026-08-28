@@ -63,21 +63,9 @@ const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
     ],
   },
   {
-    title: "浏览器与运行数据",
-    description: "登录态和临时文件由快手短剧平台独立管理。",
+    title: "浏览器与上传",
+    description: "快手使用独立登录态；共享目录在全局配置中统一管理。",
     fields: [
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "保存账号登录态、日志、素材缓存和调试快照。",
-        directory: true,
-      },
-      {
-        key: "localEpisodeVideoRoot",
-        label: "本地剧集视频目录",
-        description: "百度网盘资源下载到该目录，并按原剧名建立子目录；上剧前校验第1集至最后一集。",
-        directory: true,
-      },
       {
         key: "baiduNetdiskDownloadRetryAttempts",
         label: "网盘下载重试",
@@ -180,24 +168,6 @@ export function KuaishouDramaConfigurationPage() {
     },
   });
 
-  const selectDirectory = async (key: keyof KuaishouDramaConfig & string) => {
-    try {
-      const selectedPath =
-        key === "runDataDir"
-          ? await kuaishouDramaService.selectRunDataDir(config.runDataDir)
-          : key === "localEpisodeVideoRoot"
-            ? await kuaishouDramaService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-            : null;
-      if (selectedPath) {
-        updateConfig(key, selectedPath);
-      }
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
   const openStoragePath = async (key: KuaishouDramaStoragePathKey) => {
     try {
       await kuaishouDramaService.openStoragePath(key);
@@ -224,7 +194,6 @@ export function KuaishouDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
 

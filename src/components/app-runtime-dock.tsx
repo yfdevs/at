@@ -212,7 +212,7 @@ export function AppRuntimeDock() {
           }
         >
           <CircleDashed className="size-3.5 text-yellow-500" aria-hidden="true" />
-          <span>{openingLogs ? "打开中" : "日志"}</span>
+          <span>{openingLogs ? "打开中…" : "日志目录"}</span>
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8}>
           打开{activePlatform.title}日志目录

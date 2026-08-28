@@ -8,11 +8,13 @@ import { confirmAndMaybeSubmitStep } from "./steps/confirm.js";
 import { uploadEpisodeFilesStep } from "./steps/episodes.js";
 import { loadConfigFromDramaAiRpa, resolveRunDataPath } from "../shared/config.js";
 import type { TaskRunOptions } from "../shared/types.js";
-import { runWithLogContext } from "../shared/logger.js";
+import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { attachFailStage } from "../shared/errors.js";
 import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { booleanSetting, secondsSettingToMs } from "../shared/settings-value.js";
 import { cleanupWechatProductionProofMaterials } from "../shared/production-proof-materials.js";
+
+const publishLogger = createLogger("publish");
 
 function shouldCloseFailedTaskPages(): boolean {
   return booleanSetting(getWechatVideoRuntimeSettings().closeFailedTaskPages);
@@ -51,10 +53,10 @@ async function runStepWithTimeout<T>(
 }
 
 async function closeTimedOutTaskPage(page: Page, stepName: string): Promise<void> {
-  console.warn(`[step-timeout] closing task page to stop pending Playwright operations: ${stepName}`);
+  publishLogger.warn("步骤执行超时，正在关闭任务页", { step: stepName });
   await page.close({ runBeforeUnload: false }).catch((error: unknown) => {
     const message = error instanceof Error ? error.message : String(error);
-    console.warn(`[step-timeout] failed to close task page after ${stepName}: ${message}`);
+    publishLogger.warn("步骤超时后关闭任务页失败", { step: stepName, errorMessage: message });
   });
 }
 
@@ -64,7 +66,7 @@ async function openManagedTaskPage(browserContext: BrowserContext): Promise<Page
   if (shouldCloseFailedTaskPages()) {
     await Promise.all(previousPages.map((previousPage) => previousPage.close().catch(() => undefined)));
   } else if (previousPages.length > 0) {
-    console.log(`[debug] Preserved ${previousPages.length} task page(s) because closeFailedTaskPages=false.`);
+    publishLogger.info("已保留失败任务页", { count: previousPages.length });
   }
   return page;
 }
@@ -107,7 +109,7 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
       await page.goto(playletUrl, { waitUntil: "domcontentloaded" });
       const loggedIn = await waitForLoginIfNeeded(page);
       if (loggedIn && runOptions.channelId) {
-        console.log(`[login] persisted videoAccountId=${runOptions.channelId}`);
+        publishLogger.info("登录状态已保存", { accountId: runOptions.channelId });
       }
     } catch (error) {
       throw attachFailStage(error, "LOGIN");
@@ -121,7 +123,7 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
       throw new Error("playletConfig or dramaAiRpaId is required to start a run task.");
     }
 
-    console.log("[task] start fillBasicInfoStep");
+    publishLogger.info("开始填写基本信息");
     try {
       await runStepWithTimeout(
         "fillBasicInfoStep",
@@ -132,7 +134,7 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
     } catch (error) {
       throw attachFailStage(error, "FILL_FORM");
     }
-    console.log("[task] start uploadEpisodeFilesStep");
+    publishLogger.info("开始上传剧集");
     try {
       await uploadEpisodeFilesStep(page, playletConfig, {
         episodeVideos: runOptions.preparedEpisodeVideos,
@@ -143,7 +145,7 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
     } catch (error) {
       throw attachFailStage(error, "UPLOAD_FILE");
     }
-    console.log("[task] start confirmAndMaybeSubmitStep");
+    publishLogger.info("开始检查并提交");
     try {
       await confirmAndMaybeSubmitStep(page);
     } catch (error) {
@@ -164,9 +166,9 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
       await browserContext.close();
     } else {
       if (shouldCloseFailedTaskPages()) {
-        console.log("[browser] Task page will be closed when the next task opens.");
+        publishLogger.info("当前任务页将在下个任务开始时关闭");
       } else {
-        console.log("[browser] Task page is kept open because closeFailedTaskPages=false.");
+        publishLogger.info("已保留当前任务页以便检查");
       }
     }
   }

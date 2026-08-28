@@ -12,6 +12,10 @@ import {
   selectDirectory,
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 
 type DouyinDramaRuntimeStatus = {
   platform: "douyin-drama";
@@ -125,7 +129,16 @@ function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig 
 }
 
 function readConfig() {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("douyin-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function storagePaths(config = readConfig()): DouyinDramaStoragePaths {
@@ -150,7 +163,7 @@ function storagePaths(config = readConfig()): DouyinDramaStoragePaths {
     credentialStatePath: path.join(accountDir, "storage-state.json"),
     assetDownloadDir: path.join(runDataDir, "assets", encodeURIComponent(config.accountProfileName)),
     logDir,
-    logFilePath: path.join(logDir, `app-${dateKey}.jsonl`),
+    logFilePath: path.join(logDir, `app-${dateKey}.log`),
   };
 }
 
@@ -218,8 +231,10 @@ async function startRuntime() {
     ),
     episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
     taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
-    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
-    onLog: (message: string) => console.log(message),
+    ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+      ...request,
+      requesterPlatform: "douyin-drama",
+    }),
     config: {
       browser: {
         headless: config.headless === "true",
@@ -291,6 +306,7 @@ export function registerDouyinDramaPlatformHandlers() {
   );
   ipcMain.handle("douyin-drama:service:status", () => status());
   ipcMain.handle("douyin-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     await runtimeController.start(startRuntime);
     return status();
   });

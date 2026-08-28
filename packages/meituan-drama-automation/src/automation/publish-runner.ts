@@ -49,6 +49,9 @@ async function ensureBaiduNetdiskResourceReady(
         resourceName,
         localEpisodeVideoRoot,
         episodeCount,
+        // Meituan copyright proofs come from the task payload, not the netdisk share.
+        requiredOwnership: { minimumImages: 0 },
+        requiredOwnershipFiles: 0,
         requiredPosterImages: 1,
       });
       return;

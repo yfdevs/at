@@ -3,6 +3,8 @@ export type GlobalAppConfig = {
   aiBaseURL: string
   aiModel: string
   aiImageModel: string
+  runDataRoot: string
+  localMaterialRoot: string
 }
 
 export type GlobalAppConfigResult = {
@@ -62,4 +64,12 @@ export const globalAppConfigService = {
     invokeGlobalAppConfig<AiConfigTestResult>("app:config:test", config),
   openArkApiKeyPage: () =>
     invokeGlobalAppConfig<void>("app:config:open-ark-api-key-page"),
+  selectDirectory: (
+    key: "runDataRoot" | "localMaterialRoot",
+    currentPath?: string,
+  ) => invokeGlobalAppConfig<string | null>(
+    "app:config:select-directory",
+    key,
+    currentPath,
+  ),
 }

@@ -1,10 +1,14 @@
-import { createWriteStream, mkdirSync } from 'node:fs';
 import path from 'node:path';
-import { multistream, pino } from 'pino';
+import {
+  createAutomationLogger,
+  formatDateKey,
+  type AutomationLogEntry,
+  type AutomationLogger,
+} from '@drama/automation-logging';
 import { z } from 'zod';
 
 const configSchema = z.object({
-  logFile: z.string().min(1).default(path.resolve('logs/app.log')),
+  logFile: z.string().min(1).default(path.resolve(`logs/app-${formatDateKey()}.log`)),
   logLevel: z.enum(['fatal', 'error', 'warn', 'info', 'debug', 'trace', 'silent']).default('info'),
   loginUrl: z.string().url().default('https://www.tiktokdramacenter.com/login'),
   draftUrl: z.string().url().default('https://www.tiktokdramacenter.com/series/draft'),
@@ -22,32 +26,27 @@ const configSchema = z.object({
 
 export type TiktokDramaCenterRuntimeSettings = z.input<typeof configSchema>;
 export type TiktokDramaCenterConfig = z.infer<typeof configSchema>;
-type RuntimeLogger = {
-  debug: (...args: unknown[]) => void;
-  error: (...args: unknown[]) => void;
-  info: (...args: unknown[]) => void;
-  warn: (...args: unknown[]) => void;
-};
-
 export let config: TiktokDramaCenterConfig = configSchema.parse({});
-export let logger: RuntimeLogger = pino({ level: config.logLevel }, process.stdout);
+export let logger: AutomationLogger = createLogger(config);
 
 export function configureTiktokDramaCenterRuntimeSettings(
-  settings: Partial<TiktokDramaCenterRuntimeSettings> = {}
+  settings: Partial<TiktokDramaCenterRuntimeSettings> = {},
+  onEntry?: (entry: AutomationLogEntry) => void,
 ) {
   config = configSchema.parse(settings);
-  logger = createLogger(config);
+  logger = createLogger(config, onEntry);
   return config;
 }
 
-function createLogger(nextConfig: TiktokDramaCenterConfig): RuntimeLogger {
-  mkdirSync(path.dirname(nextConfig.logFile), { recursive: true });
-
-  return pino(
-    { level: nextConfig.logLevel },
-    multistream([
-      { stream: process.stdout },
-      { stream: createWriteStream(nextConfig.logFile, { flags: 'a' }) },
-    ])
-  );
+function createLogger(
+  nextConfig: TiktokDramaCenterConfig,
+  onEntry?: (entry: AutomationLogEntry) => void,
+) {
+  return createAutomationLogger({
+    platform: 'tiktok-drama',
+    scope: 'runtime',
+    logFilePath: nextConfig.logFile,
+    onEntry,
+    console: true,
+  });
 }

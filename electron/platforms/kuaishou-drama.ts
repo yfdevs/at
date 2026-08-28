@@ -3,9 +3,12 @@ import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import { createElectronPlatformLogger } from "../platform-logger";
 import {
+  assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
   getConfiguredAiClientOptions,
+  resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import {
   directoryDefaultPath,
@@ -214,7 +217,16 @@ function normalizeConfig(
 }
 
 function readConfig(): KuaishouDramaConfig {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("kuaishou-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function writeConfig(config: KuaishouDramaConfig) {
@@ -277,6 +289,16 @@ function kuaishouDramaLogDir(config = readConfig()) {
   return path.join(kuaishouDramaRunDataDir(config), "logs");
 }
 
+function kuaishouPlatformLogger(scope = "runtime") {
+  const config = readConfig();
+  return createElectronPlatformLogger({
+    platform: "kuaishou-drama",
+    scope,
+    logDir: kuaishouDramaLogDir(config),
+    retentionDays: Number.parseInt(config.logRetentionDays, 10) || 3,
+  });
+}
+
 function formatDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -285,7 +307,7 @@ function formatDateKey(date = new Date()) {
 }
 
 function kuaishouDramaLogFile(config = readConfig()) {
-  return path.join(kuaishouDramaLogDir(config), `app-${formatDateKey()}.jsonl`);
+  return path.join(kuaishouDramaLogDir(config), `app-${formatDateKey()}.log`);
 }
 
 function storagePaths(
@@ -346,7 +368,7 @@ async function importKuaishouDramaRuntimePackage() {
 function findLatestLogPath(paths = storagePaths()) {
   mkdirSync(paths.logDir, { recursive: true });
   const latestLogFile = readdirSync(paths.logDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^app-\d{4}-\d{2}-\d{2}\.(?:jsonl|log)$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && /^app(?:-.+)?-\d{4}-\d{2}-\d{2}\.(?:log|jsonl)$/i.test(entry.name))
     .map((entry) => path.join(paths.logDir, entry.name))
     .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
 
@@ -392,10 +414,9 @@ async function startRuntime() {
     aiModelId = getConfiguredAiClientOptions().model;
     aiClient = createConfiguredAiClient();
   } catch (error) {
-    console.info(
-      `[kuaishou-drama] AI configuration is unavailable; ` +
-        `the service will start, but ad-unlock cover preparation will require it: ` +
-        `${error instanceof Error ? error.message : String(error)}`,
+    kuaishouPlatformLogger("material").warn(
+      "AI 配置不可用，服务仍会启动；广告解锁版封面生成将不可用",
+      { error },
     );
   }
   const configuredVideoRoot = config.localEpisodeVideoRoot.trim();
@@ -456,8 +477,10 @@ async function startRuntime() {
         aiClient,
         aiModelId,
         apiConfig: apiOptions.apiConfig,
-        ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
-        onLog: (message: string) => console.log(message),
+        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+          ...request,
+          requesterPlatform: "kuaishou-drama",
+        }),
         config: {
           browser: { headless: config.headless === "true", slowMo: operationDelayMs },
         },
@@ -577,6 +600,7 @@ export function registerKuaishouDramaPlatformHandlers() {
   ipcMain.handle("kuaishou-drama:service:status", () => status());
 
   ipcMain.handle("kuaishou-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) {
       await runtimeController.stop();

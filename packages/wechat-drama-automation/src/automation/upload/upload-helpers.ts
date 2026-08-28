@@ -6,6 +6,9 @@ import { resolveRunDataPath } from "../../shared/config.js";
 import { getWechatVideoRuntimeSettings } from "../../shared/runtime-settings.js";
 import { secondsSettingToMs } from "../../shared/settings-value.js";
 import { rootSelector } from "../constants.js";
+import { createLogger } from "../../shared/logger.js";
+
+const uploadLogger = createLogger("upload");
 
 const remoteFilePromises = new Map<string, Promise<string>>();
 const defaultRemoteFileDirectoryName = "ungrouped";
@@ -112,7 +115,7 @@ async function downloadRemoteFile(fileUrl: string, directoryName?: string): Prom
       const body = Buffer.from(await response.arrayBuffer());
       await mkdir(downloadDir, { recursive: true });
       await writeFile(target, body);
-      console.log(`[download] remote upload file: ${fileUrl} -> ${target}`);
+      uploadLogger.info("远程素材已下载", { url: fileUrl, path: target });
       return target;
     } catch (error) {
       if (abortController.signal.aborted) {
@@ -148,13 +151,13 @@ export async function prepareUploadFiles(
     }
 
     if (isProjectAssetsPath(filePath)) {
-      console.warn(`[skip] project assets path ignored: ${filePath}`);
+      uploadLogger.warn("项目内素材路径不可用，已跳过", { path: filePath });
       return null;
     }
 
     const resolvedPath = resolveFromRoot(filePath);
     if (!existsSync(resolvedPath)) {
-      console.warn(`[skip] file not found: ${resolvedPath}`);
+      uploadLogger.warn("文件不存在，已跳过", { path: resolvedPath });
       return null;
     }
     return resolvedPath;
@@ -268,7 +271,7 @@ async function setInputFilesAndWaitForUi(
 ): Promise<void> {
   const fileNames = uploadFileNames(files);
   const before = await readUploadUiState(container);
-  console.log(`[upload-start] ${label}: ${files.length} file(s)`);
+  uploadLogger.info("开始上传文件", { field: label, fileCount: files.length });
   await input.setInputFiles(files, { timeout: inputTimeout });
 
   const startedAt = Date.now();
@@ -291,8 +294,14 @@ async function setInputFilesAndWaitForUi(
     if ((hasAllFileNames || previewAdded || (uiChanged && uploadSelected)) && noNewBusyState) {
       stableSuccessChecks += 1;
       if (stableSuccessChecks >= 2) {
-        console.log(
-          `[upload-ui-ok] ${label}: files=${files.length} previews=${latest.previewCount} busy=${latest.busyCount}`,
+        uploadLogger.info(
+          "页面已确认文件上传",
+          {
+            field: label,
+            fileCount: files.length,
+            previewCount: latest.previewCount,
+            busyCount: latest.busyCount,
+          },
         );
         return;
       }
@@ -337,7 +346,7 @@ export async function waitForUploadedFiles(
     { names: fileNames, selector: rootSelector },
     { timeout },
   );
-  console.log(`[upload-ui-ok] ${label}: ${fileNames.join(", ")}`);
+  uploadLogger.info("页面已确认上传文件", { field: label, files: fileNames });
 }
 
 export async function findVisibleLabeledGroup(
@@ -371,7 +380,7 @@ export async function findVisibleLabeledGroup(
     if (await startsWith.count()) return startsWith.first();
   }
 
-  console.warn(`[skip] control group not found: ${prefixes.join(" / ")}`);
+  uploadLogger.warn("未找到上传区域，已跳过", { fields: prefixes });
   return null;
 }
 
@@ -403,19 +412,19 @@ export async function uploadBySelector(
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
-    console.warn(`[skip] ${label}: no existing file`);
+    uploadLogger.warn("没有可用文件，已跳过", { field: label });
     return;
   }
   await assertNonVideoUploadFilesWithinSizeLimit(files, label);
 
   const locator = page.locator(selector).nth(index);
   if (await locator.count() === 0) {
-    console.warn(`[skip] selector not found for ${label}: ${selector} [${index}]`);
+    uploadLogger.warn("未找到上传控件，已跳过", { field: label, selector, index });
     return;
   }
 
   if (triggerSelector) {
-    console.warn(`[warn] ${label}: trigger selector ignored, using input.setInputFiles directly`);
+    uploadLogger.warn("上传按钮不可用，已改用文件输入框", { field: label });
   }
 
   const labeledGroup = locator.locator(
@@ -425,7 +434,7 @@ export async function uploadBySelector(
     ? labeledGroup
     : page.locator(rootSelector).first();
   await setInputFilesAndWaitForUi(uiContainer, locator, files, label);
-  console.log(`[upload] ${label}: ${files.length} file(s)`);
+  uploadLogger.info("文件已提交上传", { field: label, fileCount: files.length });
 }
 
 
@@ -440,14 +449,14 @@ export async function uploadInGroup(
 ): Promise<void> {
   const files = await prepareUploadFiles(filePaths, resolveFromRoot, remoteDirectoryName);
   if (!files.length) {
-    console.warn(`[skip] ${label}: no existing file`);
+    uploadLogger.warn("没有可用文件，已跳过", { field: label });
     return;
   }
   await assertNonVideoUploadFilesWithinSizeLimit(files, label);
 
   const input = group.locator('input[type="file"]').first();
   if (await input.count() === 0) {
-    console.warn(`[skip] selector not found for ${label}`);
+    uploadLogger.warn("未找到上传控件，已跳过", { field: label });
     return;
   }
 
@@ -458,13 +467,18 @@ export async function uploadInGroup(
       await attemptInput.waitFor({ state: "attached", timeout: 10000 });
       await group.scrollIntoViewIfNeeded({ timeout: 5000 }).catch(() => undefined);
       await setInputFilesAndWaitForUi(group, attemptInput, files, label, 10000, uiTimeout);
-      console.log(`[upload] ${label}: ${files.length} file(s)`);
+      uploadLogger.info("文件已提交上传", { field: label, fileCount: files.length });
       return;
     } catch (error) {
       lastError = error;
       if (!shouldRetryNoopUpload(error) || attempt > uiRetryAttempts) break;
-      console.warn(
-        `[upload-retry] ${label}: 页面未接收到文件选择，准备第 ${attempt + 1}/${uiRetryAttempts + 1} 次重新选择文件`,
+      uploadLogger.warn(
+        "页面未接收到文件，准备重新选择",
+        {
+          field: label,
+          attempt: attempt + 1,
+          maxAttempts: uiRetryAttempts + 1,
+        },
       );
       await attemptInput.setInputFiles([], { timeout: 5000 }).catch(() => undefined);
       await group.page().waitForTimeout(1200);
@@ -488,7 +502,7 @@ export async function setInputFilesByLocator(
   }
 
   await locator.first().setInputFiles(files, { timeout });
-  console.log(`[upload] ${label}: ${files.length} file(s)`);
+  uploadLogger.info("文件已提交上传", { field: label, fileCount: files.length });
 }
 
 function escapeRegex(value: string): string {

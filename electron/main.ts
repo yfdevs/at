@@ -103,7 +103,7 @@ process.env.VITE_PUBLIC = VITE_DEV_SERVER_URL
   : RENDERER_DIST;
 
 registerMainProcessLogging();
-logMain("info", "app bootstrap", {
+logMain("info", "应用开始启动", {
   version: app.getVersion(),
   packaged: app.isPackaged,
   appRoot: process.env.APP_ROOT,
@@ -136,7 +136,7 @@ function getAppIconPath() {
 }
 
 function createWindow() {
-  logMain("info", "creating main window");
+  logMain("info", "正在创建主窗口");
 
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
@@ -171,19 +171,19 @@ function createWindow() {
   });
 
   win.webContents.once("did-finish-load", () => {
-    logMain("info", "main window did finish load", {
+    logMain("info", "主窗口加载完成", {
       url: win?.webContents.getURL(),
     });
   });
 
   win.webContents.once("dom-ready", () => {
-    logMain("info", "main window dom ready", {
+    logMain("info", "主窗口页面已就绪", {
       url: win?.webContents.getURL(),
     });
   });
 
   win.on("closed", () => {
-    logMain("info", "main window closed");
+    logMain("info", "主窗口已关闭");
   });
 
   mainWindowState.manage(win);
@@ -191,21 +191,21 @@ function createWindow() {
   win.setMenu(null);
 
   if (VITE_DEV_SERVER_URL) {
-    logMain("info", "loading renderer url", { url: VITE_DEV_SERVER_URL });
+    logMain("info", "正在加载开发页面", { url: VITE_DEV_SERVER_URL });
     void win.loadURL(VITE_DEV_SERVER_URL).catch((error) => {
-      logMain("error", "main window load url failed", error);
+      logMain("error", "开发页面加载失败", error);
     });
   } else {
     const indexPath = path.join(RENDERER_DIST, "index.html");
-    logMain("info", "loading renderer file", { indexPath });
+    logMain("info", "正在加载应用页面", { path: indexPath });
     void win.loadFile(indexPath).catch((error) => {
-      logMain("error", "main window load file failed", error);
+      logMain("error", "应用页面加载失败", error);
     });
   }
 }
 
 app.on("window-all-closed", () => {
-  logMain("info", "all windows closed");
+  logMain("info", "全部窗口已关闭");
 
   if (process.platform !== "darwin") {
     app.quit();
@@ -214,7 +214,7 @@ app.on("window-all-closed", () => {
 });
 
 app.on("before-quit", () => {
-  logMain("info", "app before quit");
+  logMain("info", "正在停止各平台服务");
   stopWechatVideoPlatformRuntime();
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
@@ -234,10 +234,12 @@ app.on("activate", () => {
 
 app.whenReady().then(() => {
   try {
-    logMain("info", "app ready");
+    logMain("info", "应用已就绪");
     Menu.setApplicationMenu(null);
     ipcMainHandleAppRuntimeStatus();
-    registerGlobalAppConfigHandlers();
+    registerGlobalAppConfigHandlers({
+      getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
+    });
     registerWechatVideoPlatformHandlers();
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
@@ -259,7 +261,7 @@ app.whenReady().then(() => {
 
     createWindow();
   } catch (error) {
-    logMain("error", "app ready startup failed", error);
+    logMain("error", "应用启动失败", error);
     throw error;
   }
 });
@@ -267,9 +269,9 @@ app.whenReady().then(() => {
 function ensureBaiduNetdiskCdpReadyInBackground() {
   void (async () => {
     try {
-      logMain("info", "baidu netdisk startup cdp check started");
+      logMain("info", "正在检查百度网盘连接");
       const result = await ensureBaiduNetdiskCdpReadyOnStartup();
-      logMain("info", "baidu netdisk startup cdp check finished", {
+      logMain("info", "百度网盘连接检查完成", {
         action: result.action,
         ready: result.status.ready,
         appRunning: result.status.appRunning,
@@ -278,7 +280,7 @@ function ensureBaiduNetdiskCdpReadyInBackground() {
         message: result.status.message,
       });
     } catch (error) {
-      logMain("error", "baidu netdisk startup cdp check failed", error);
+      logMain("error", "百度网盘连接检查失败", error);
     }
   })();
 }

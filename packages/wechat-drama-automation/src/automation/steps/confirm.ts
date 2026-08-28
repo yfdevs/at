@@ -1,4 +1,7 @@
 import type { Page } from "playwright";
+import { createLogger } from "../../shared/logger.js";
+
+const submitLogger = createLogger("submit");
 
 function normalizeUiText(value: string | null | undefined): string {
   return (value ?? "").replace(/\s+/g, " ").trim();
@@ -28,7 +31,7 @@ async function clickFinalConfirmReviewButton(page: Page): Promise<void> {
   await button.waitFor({ state: "visible", timeout: 30000 });
   await button.scrollIntoViewIfNeeded();
   await button.click({ timeout: 30000 });
-  console.log("[action] 已点击第三步“确认提审”");
+  submitLogger.info("已点击确认提审");
 }
 
 export async function confirmAndMaybeSubmitStep(page: Page): Promise<void> {
@@ -37,7 +40,7 @@ export async function confirmAndMaybeSubmitStep(page: Page): Promise<void> {
   const maxAttempts = 5;
   for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
     await clickFinalConfirmReviewButton(page);
-    console.log("[wait] 点击第三步“确认提审”后等待 3 秒检查提交错误");
+    submitLogger.info("正在检查提交结果");
     await page.waitForTimeout(3000);
 
     const errors = await collectVisibleSubmitErrors(page);
@@ -48,7 +51,11 @@ export async function confirmAndMaybeSubmitStep(page: Page): Promise<void> {
       throw new Error(`[final-submit-validation-failed] 重试 ${maxAttempts} 次后仍提示：${errorText}`);
     }
 
-    console.warn(`[retry] 检测到提交错误：${errorText}，准备再次点击第三步“确认提审” (${attempt + 1}/${maxAttempts})`);
+    submitLogger.warn("提交失败，准备重试", {
+      errorMessage: errorText,
+      attempt: attempt + 1,
+      total: maxAttempts,
+    });
   }
 
   await page.waitForLoadState("networkidle", { timeout: 60000 }).catch(() => undefined);

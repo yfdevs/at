@@ -4,8 +4,10 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
 import {
+  assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
   getConfiguredAiImageModel,
+  resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
@@ -200,7 +202,16 @@ function normalizeConfig(
 }
 
 function readConfig() {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("iqiyi-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localMaterialRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localMaterialRoot: directories.localMaterialRoot,
+  };
 }
 
 function runDataDir(config = readConfig()) {
@@ -250,7 +261,7 @@ function storagePaths(
     credentialStatePath: credentialStatePath(config, profile),
     assetDownloadDir: assetDownloadDir(config, profile),
     logDir: logDir(config),
-    logFilePath: path.join(logDir(config), `app-${dateKey()}.jsonl`),
+    logFilePath: path.join(logDir(config), `app-${dateKey()}.log`),
   };
 }
 
@@ -271,7 +282,7 @@ function openPathOrParent(target: string) {
 function latestLog(paths = storagePaths()) {
   mkdirSync(paths.logDir, { recursive: true });
   return readdirSync(paths.logDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^app(?:-.+)?-\d{4}-\d{2}-\d{2}\.jsonl$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && /^app(?:-.+)?-\d{4}-\d{2}-\d{2}\.(?:log|jsonl)$/i.test(entry.name))
     .map((entry) => path.join(paths.logDir, entry.name))
     .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0] ?? paths.logDir;
 }
@@ -350,7 +361,10 @@ async function startRuntime() {
         ) * 1000,
         aiClient,
         aiImageModel,
-        ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
+        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+          ...request,
+          requesterPlatform: "iqiyi-drama",
+        }),
         apiConfig: { baseUrl: config.apiBaseUrl },
         config: {
           browser: {
@@ -443,6 +457,7 @@ export function registerIqiyiDramaPlatformHandlers() {
   );
   ipcMain.handle("iqiyi-drama:service:status", () => status());
   ipcMain.handle("iqiyi-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) await runtimeController.stop();
     await runtimeController.start(startRuntime);

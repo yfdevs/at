@@ -1,5 +1,3 @@
-import { toast } from "sonner"
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -22,7 +20,7 @@ const emptyConfig: BaiduDramaConfig = {
 
 const sections: ConfigSectionDefinition<BaiduDramaConfig>[] = [
   {
-    title: "任务接口与素材",
+    title: "任务接口",
     description: "服务会读取后台启用的百度账号，领取 READY 任务并回写执行结果。",
     fields: [
       {
@@ -30,12 +28,6 @@ const sections: ConfigSectionDefinition<BaiduDramaConfig>[] = [
         label: "接口地址",
         description: "百度账号配置与 RPA 任务接口的后端根地址。",
         type: "url",
-      },
-      {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "启动服务前必须选择。百度网盘资源与本地剧集会按原始剧名建立子目录。",
-        directory: true,
       },
       {
         key: "taskPollIntervalSeconds",
@@ -64,15 +56,9 @@ const sections: ConfigSectionDefinition<BaiduDramaConfig>[] = [
     ],
   },
   {
-    title: "浏览器与运行数据",
-    description: "百度短剧使用独立 Chromium 登录态和素材缓存。",
+    title: "浏览器与日志",
+    description: "百度短剧使用独立 Chromium 登录态；共享目录在全局配置中统一管理。",
     fields: [
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "按后台 RPA Profile 隔离保存登录态、临时上传文件和日志。",
-        directory: true,
-      },
       {
         key: "logRetentionDays",
         label: "日志保留",
@@ -108,21 +94,6 @@ export function BaiduDramaConfigurationPage() {
     saveConfig: baiduDramaService.saveConfig,
   })
 
-  const selectDirectory = async (key: keyof BaiduDramaConfig) => {
-    try {
-      const selected = key === "runDataDir"
-        ? await baiduDramaService.selectRunDataDir(configState.config.runDataDir)
-        : key === "localEpisodeVideoRoot"
-          ? await baiduDramaService.selectLocalEpisodeVideoRoot(configState.config.localEpisodeVideoRoot)
-          : null
-      if (selected) configState.updateConfig(key, selected)
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
   return (
     <ConfigurationPageFrame
       hasChanges={configState.hasChanges}
@@ -139,7 +110,6 @@ export function BaiduDramaConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={configState.updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

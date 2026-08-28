@@ -3,8 +3,18 @@ import {
   type OpenAiCompatibleClient,
   type OpenAiCompatibleClientOptions,
 } from "@drama/ai";
-import { ipcMain, safeStorage, shell } from "electron";
+import {
+  app,
+  BrowserWindow,
+  dialog,
+  ipcMain,
+  safeStorage,
+  shell,
+  type IpcMainInvokeEvent,
+  type OpenDialogOptions,
+} from "electron";
 import Store from "electron-store";
+import path from "node:path";
 import sharp from "sharp";
 
 const ARK_API_KEY_URL = "https://console.volcengine.com/ark/region:ark+cn-beijing/apikey";
@@ -12,12 +22,15 @@ const LEGACY_DEFAULT_AI_BASE_URL = "https://api.openai.com/v1";
 const RECOMMENDED_AI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
 const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
+export const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
 
 export type GlobalAppConfig = {
   aiApiKey: string;
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  runDataRoot: string;
+  localMaterialRoot: string;
 };
 
 type StoredGlobalAppConfig = {
@@ -25,6 +38,8 @@ type StoredGlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  runDataRoot?: string;
+  localMaterialRoot?: string;
 };
 
 type GlobalAppConfigStore = {
@@ -36,6 +51,8 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiBaseURL: RECOMMENDED_AI_BASE_URL,
   aiModel: RECOMMENDED_AI_MODEL,
   aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
+  runDataRoot: "",
+  localMaterialRoot: "",
 };
 
 let registered = false;
@@ -94,6 +111,8 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel?.trim() ?? "",
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    runDataRoot: config.runDataRoot?.trim() ?? "",
+    localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
 }
 
@@ -113,6 +132,8 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel.trim(),
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    runDataRoot: config.runDataRoot?.trim() ?? "",
+    localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
 }
 
@@ -124,17 +145,75 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiBaseURL: normalized.aiBaseURL,
     aiModel: normalized.aiModel,
     aiImageModel: normalized.aiImageModel,
+    runDataRoot: normalized.runDataRoot,
+    localMaterialRoot: normalized.localMaterialRoot,
   });
 
   return normalized;
 }
 
-function configResult(config = readGlobalAppConfig()) {
+function configResult(config = readGlobalAppConfig(), restartRequired = false) {
   return {
     config,
     path: getStore().path,
-    restartRequired: false,
+    restartRequired,
   };
+}
+
+export function resolveGlobalPlatformDirectories(
+  platformDirectoryName: string,
+  fallback: { runDataDir: string; localMaterialRoot: string },
+) {
+  const config = getStore().get("config");
+  const runDataRoot = config.runDataRoot?.trim();
+  const localMaterialRoot = config.localMaterialRoot?.trim();
+
+  return {
+    runDataDir: runDataRoot
+      ? path.join(runDataRoot, platformDirectoryName)
+      : fallback.runDataDir,
+    localMaterialRoot: localMaterialRoot || fallback.localMaterialRoot,
+  };
+}
+
+export function assertGlobalDirectoriesConfigured() {
+  const config = getStore().get("config");
+  const missingDirectories = [
+    !config.runDataRoot?.trim() ? "运行数据根目录" : null,
+    !config.localMaterialRoot?.trim() ? "素材根目录" : null,
+  ].filter((label): label is string => Boolean(label));
+
+  if (missingDirectories.length > 0) {
+    throw new Error(
+      `${GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE}: 请先在“全局配置 → 文件与目录”中设置${missingDirectories.join("、")}。`,
+    );
+  }
+}
+
+async function selectGlobalDirectory(
+  event: IpcMainInvokeEvent,
+  key: "runDataRoot" | "localMaterialRoot",
+  currentPath?: string,
+) {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const configuredPath = currentPath?.trim();
+  const defaultPath = configuredPath
+    ? path.isAbsolute(configuredPath)
+      ? configuredPath
+      : path.join(
+          app.isPackaged ? path.dirname(process.execPath) : process.env.APP_ROOT || process.cwd(),
+          configuredPath,
+        )
+    : app.getPath("documents");
+  const options: OpenDialogOptions = {
+    title: key === "runDataRoot" ? "选择全局运行数据根目录" : "选择全局素材根目录",
+    defaultPath,
+    properties: ["openDirectory", "createDirectory"],
+  };
+  const result = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
 function aiClientOptions(config: GlobalAppConfig): OpenAiCompatibleClientOptions {
@@ -186,16 +265,35 @@ async function testAiConfig(config: Partial<GlobalAppConfig>) {
   };
 }
 
-export function registerGlobalAppConfigHandlers() {
+export function registerGlobalAppConfigHandlers(options: {
+  getRunningPlatformCount?: () => number;
+} = {}) {
   if (registered) return;
   registered = true;
 
   ipcMain.handle("app:config:get", () => configResult());
   ipcMain.handle("app:config:save", (_event, config: Partial<GlobalAppConfig>) => {
-    return configResult(saveGlobalAppConfig(config));
+    const previous = readGlobalAppConfig();
+    const saved = saveGlobalAppConfig(config);
+    const directoryChanged =
+      previous.runDataRoot !== saved.runDataRoot ||
+      previous.localMaterialRoot !== saved.localMaterialRoot;
+    return configResult(
+      saved,
+      directoryChanged && (options.getRunningPlatformCount?.() ?? 0) > 0,
+    );
   });
   ipcMain.handle("app:config:test", (_event, config: Partial<GlobalAppConfig>) => {
     return testAiConfig(config);
   });
   ipcMain.handle("app:config:open-ark-api-key-page", () => shell.openExternal(ARK_API_KEY_URL));
+  ipcMain.handle(
+    "app:config:select-directory",
+    (event, key: "runDataRoot" | "localMaterialRoot", currentPath?: string) => {
+      if (key !== "runDataRoot" && key !== "localMaterialRoot") {
+        throw new Error("APP_CONFIG_DIRECTORY_KEY_INVALID");
+      }
+      return selectGlobalDirectory(event, key, currentPath);
+    },
+  );
 }

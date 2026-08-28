@@ -100,9 +100,9 @@ export function returnRouteFromLocationState(state: unknown): AppRoute {
   }
 
   const returnRoute = (state as { returnRoute?: unknown }).returnRoute;
-  return typeof returnRoute === "string"
-    && returnRoute !== globalConfigRoute
-    && isAppRoute(returnRoute)
+  return typeof returnRoute === "string" &&
+    returnRoute !== globalConfigRoute &&
+    isAppRoute(returnRoute)
     ? returnRoute
     : defaultRoute;
 }
@@ -150,7 +150,7 @@ export const platformNavigation: PlatformNavigationItem[] = [
     routePrefix: "iqiyi-drama",
     serviceRoute: "iqiyi-drama/service",
     configRoute: "iqiyi-drama/config",
-    logoSrc: `${import.meta.env.BASE_URL}iqiyi.svg`,
+    logoSrc: `${import.meta.env.BASE_URL}iqiyi.png`,
   },
   {
     id: "baidu-drama",
@@ -158,7 +158,7 @@ export const platformNavigation: PlatformNavigationItem[] = [
     routePrefix: "baidu-drama",
     serviceRoute: "baidu-drama/service",
     configRoute: "baidu-drama/config",
-    logoSrc: `${import.meta.env.BASE_URL}百度网盘.svg`,
+    logoSrc: `${import.meta.env.BASE_URL}baijiahao.jpg`,
   },
   {
     id: "douyin-drama",
@@ -166,7 +166,7 @@ export const platformNavigation: PlatformNavigationItem[] = [
     routePrefix: "douyin-drama",
     serviceRoute: "douyin-drama/service",
     configRoute: "douyin-drama/config",
-    logoSrc: `${import.meta.env.BASE_URL}tiktok.svg`,
+    logoSrc: `${import.meta.env.BASE_URL}douyin.png`,
   },
   {
     id: "tiktok-drama",

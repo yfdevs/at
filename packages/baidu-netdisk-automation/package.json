@@ -28,6 +28,7 @@
     "vite": "catalog:"
   },
   "dependencies": {
+    "@drama/automation-logging": "workspace:*",
     "ws": "^8.21.0"
   }
 }

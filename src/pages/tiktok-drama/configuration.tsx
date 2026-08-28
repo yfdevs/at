@@ -1,5 +1,3 @@
-import { toast } from "sonner"
-
 import {
   ConfigSection,
   ConfigurationPageFrame,
@@ -21,21 +19,9 @@ const emptyConfig: TiktokDramaCenterConfig = {
 
 const sections: ConfigSectionDefinition<TiktokDramaCenterConfig>[] = [
   {
-    title: "浏览器与运行数据",
-    description: "登录态和临时文件由 TikTok 独立管理。",
+    title: "浏览器与通知",
+    description: "TikTok 使用独立登录态；共享目录在全局配置中统一管理。",
     fields: [
-      {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "按任务原始剧名查找本地视频，可放在剧名目录或其成片/成品/视频子目录。",
-        directory: true,
-      },
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "浏览器登录态位于该目录的 auth 子目录。",
-        directory: true,
-      },
       {
         key: "feishuBotWebhookUrl",
         label: "飞书机器人 Webhook",
@@ -77,22 +63,6 @@ export function TiktokDramaCenterConfigurationPage() {
     saveConfig: tiktokDramaCenterService.saveConfig,
   })
 
-  const selectDirectory = async (key: keyof TiktokDramaCenterConfig & string) => {
-    try {
-      const selectedPath =
-        key === "localEpisodeVideoRoot"
-          ? await tiktokDramaCenterService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-          : await tiktokDramaCenterService.selectRunDataDir(config.runDataDir)
-      if (selectedPath) {
-        updateConfig(key, selectedPath)
-      }
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      })
-    }
-  }
-
   return (
     <ConfigurationPageFrame
       hasChanges={hasChanges}
@@ -109,7 +79,6 @@ export function TiktokDramaCenterConfigurationPage() {
           fields={section.fields}
           section={section}
           onChange={updateConfig}
-          onSelectDirectory={selectDirectory}
         />
       ))}
     </ConfigurationPageFrame>

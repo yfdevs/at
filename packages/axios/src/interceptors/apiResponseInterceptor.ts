@@ -55,7 +55,6 @@ export const handleApiResponseError = (error: AxiosError) => {
     message = NETWORK_ERROR_MESSAGE;
   }
 
-  console.error("API Error:", message, error);
-
+  // The platform caller owns logging so shared HTTP failures cannot leak into another platform log.
   return Promise.reject(error);
 };

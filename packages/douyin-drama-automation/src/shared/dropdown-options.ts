@@ -8,6 +8,7 @@ import {
   douyinDramaUpdateStatusValues,
   type DouyinDramaRuntimeOptions,
 } from "./types.js";
+import { log } from "./logger.js";
 
 export const douyinDramaStaticDropdownOptions = {
   updateStatus: [...douyinDramaUpdateStatusValues],
@@ -48,7 +49,7 @@ export function createDouyinDramaDropdownRecorder(options: DouyinDramaRuntimeOpt
     const targetFile = path.join(targetDir, "dropdown-options.json");
     await mkdir(targetDir, { recursive: true });
     await writeFile(targetFile, `${JSON.stringify(snapshot, null, 2)}\n`, "utf8");
-    options.onLog?.(`[douyin-drama] 下拉选项记录已更新：${targetFile}`);
+    log(options, "下拉选项记录已更新", { path: targetFile }, "config");
     return snapshot;
   };
 

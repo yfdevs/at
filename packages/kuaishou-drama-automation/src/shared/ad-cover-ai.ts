@@ -14,6 +14,7 @@ import type {
   KuaishouDramaRuntimeOptions,
   KuaishouDramaTaskConfig,
 } from "./types.js";
+import { log } from "../automation/browser-session.js";
 
 const promptVersion = "kuaishou-ad-cover-v3";
 const normalizedCoordinateMaximum = 1000;
@@ -256,7 +257,7 @@ export async function prepareKuaishouAdUnlockCover(
   if (!sourceFile) throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
   if (!options.aiClient) {
     task.localAdUnlockCoverFile = sourceFile;
-    options.onLog?.(
+    log(options,
       "[kuaishou-drama] AI configuration is unavailable; using the original cover for ad-unlock",
     );
     return sourceFile;
@@ -270,7 +271,7 @@ export async function prepareKuaishouAdUnlockCover(
   const metadataFile = path.join(cacheDir, `${cacheKey}.json`);
   await mkdir(cacheDir, { recursive: true });
   if (await isUsableCachedCover(outputFile, metadataFile, cacheKey)) {
-    options.onLog?.(`[kuaishou-drama] ad cover AI cache hit: ${outputFile}`);
+    log(options, `[kuaishou-drama] ad cover AI cache hit: ${outputFile}`);
     task.localAdUnlockCoverFile = outputFile;
     return outputFile;
   }
@@ -291,7 +292,7 @@ export async function prepareKuaishouAdUnlockCover(
     | undefined;
   for (let attempt = 1; attempt <= analysisAttempts; attempt += 1) {
     try {
-      options.onLog?.(
+      log(options,
         `[kuaishou-drama] analyzing ad cover with AI: attempt=${attempt}/${analysisAttempts}`,
       );
       const completion = await analyzeImagesAsJson(options.aiClient, {
@@ -308,7 +309,7 @@ export async function prepareKuaishouAdUnlockCover(
             parsed.error.issues.map((issue) => `${issue.path.join(".")}: ${issue.message}`).join("; "),
         );
       }
-      options.onLog?.(
+      log(options,
         `[kuaishou-drama] ad cover AI coordinates: ${JSON.stringify(parsed.data)}`,
       );
       selected = {
@@ -326,7 +327,7 @@ export async function prepareKuaishouAdUnlockCover(
           { cause: error },
         );
       }
-      options.onLog?.(
+      log(options,
         `[kuaishou-drama] ad cover AI result rejected, retrying: ${previousFailure}`,
       );
     }
@@ -342,7 +343,7 @@ export async function prepareKuaishouAdUnlockCover(
       height: outputHeight,
       jpegQuality: 92,
       maxFileBytes: outputMaxFileBytes,
-      onLog: options.onLog,
+      onLog: (message) => log(options, message),
     });
     await writeFile(metadataFile, JSON.stringify({
       cacheKey,
@@ -364,7 +365,7 @@ export async function prepareKuaishouAdUnlockCover(
   }
 
   task.localAdUnlockCoverFile = outputFile;
-  options.onLog?.(
+  log(options,
     `[kuaishou-drama] ad-unlock AI cover ready: ` +
       `confidence=${selected.analysis.confidence} crop=` +
       `${selected.crop.left},${selected.crop.top},${selected.crop.width},${selected.crop.height} ` +

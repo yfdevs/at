@@ -7,7 +7,9 @@ import { FeishuNotifier } from "@drama/feishu-notifier";
 import type { VideoAccount } from "../api/video-accounts.js";
 import { loginQrCodeSelector, nativeDramaListUrl, playletUrl } from "./constants.js";
 import { waitForLoginIfNeeded } from "./browser-session.js";
-import { runWithLogContext } from "../shared/logger.js";
+import { createLogger, runWithLogContext } from "../shared/logger.js";
+
+const browserLogger = createLogger("browser");
 
 interface ManagedChannel {
   context: BrowserContext;
@@ -50,9 +52,13 @@ export class BrowserContextManager {
 
   async initialize(): Promise<void> {
     await mkdir(resolveFromRoot(this.config.authRoot), { recursive: true });
-    console.log(`[browser] video accounts loaded: ${this.config.videoAccounts.length}`);
+    browserLogger.info("账号浏览器配置已加载", { count: this.config.videoAccounts.length });
     for (const account of this.config.videoAccounts) {
-      console.log(`[browser] account id=${account.id} name=${account.name} contractSubject=${account.contractSubject ?? "-"}`);
+      browserLogger.info("账号已加载", {
+        accountId: account.id,
+        accountName: account.name,
+        contractSubject: account.contractSubject,
+      });
     }
   }
 
@@ -220,10 +226,16 @@ export class BrowserContextManager {
       this.notifyLoginRequired(channelId));
     if (loggedIn) {
       this.loginRequiredNotifiedChannelIds.delete(channelId);
-      console.log(`[login] persisted ${accountLabel}`);
+      browserLogger.info("登录状态已保存", {
+        accountId: channelId,
+        accountName: this.getVideoAccountName(channelId),
+      });
       await this.save(channelId);
     } else {
-      console.log(`[login] already logged in ${accountLabel}`);
+      browserLogger.info("账号已登录", {
+        accountId: channelId,
+        accountName: this.getVideoAccountName(channelId),
+      });
     }
   }
 
@@ -235,7 +247,10 @@ export class BrowserContextManager {
     if (!loginPage) return false;
 
     const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
-    console.log(`[login] detected open login page before claim ${accountLabel}`);
+    browserLogger.warn("领取任务前检测到登录页", {
+      accountId: channelId,
+      accountName: this.getVideoAccountName(channelId),
+    });
     const loggedIn = await waitForLoginIfNeeded(loginPage, accountLabel, this.getPageTitle(channelId), () =>
       this.notifyLoginRequired(channelId));
     if (loggedIn) {
@@ -260,9 +275,12 @@ export class BrowserContextManager {
   async waitForAuthenticatedSession(channelId: string, timeoutMs: number): Promise<boolean> {
     const context = await this.getOrLaunch(channelId);
     const deadline = Date.now() + Math.max(0, timeoutMs);
-    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
 
-    console.log(`[login] waiting for authenticated session ${accountLabel} timeoutMs=${timeoutMs}`);
+    browserLogger.info("等待账号完成登录", {
+      accountId: channelId,
+      accountName: this.getVideoAccountName(channelId),
+      timeoutMs,
+    });
     while (Date.now() < deadline) {
       if (this.channels.get(channelId)?.context !== context) return false;
 
@@ -279,14 +297,20 @@ export class BrowserContextManager {
 
         this.loginRequiredNotifiedChannelIds.delete(channelId);
         await this.save(channelId);
-        console.log(`[login] authenticated session detected ${accountLabel}`);
+        browserLogger.info("登录成功", {
+          accountId: channelId,
+          accountName: this.getVideoAccountName(channelId),
+        });
         return true;
       }
 
       await this.waitForAuthenticationActivity(context, Math.min(1000, remainingMs));
     }
 
-    console.warn(`[login] authenticated session wait timed out ${accountLabel}`);
+    browserLogger.warn("等待登录超时", {
+      accountId: channelId,
+      accountName: this.getVideoAccountName(channelId),
+    });
     return false;
   }
 
@@ -296,13 +320,16 @@ export class BrowserContextManager {
     const reusableBlankPage = existingPages.find((candidate) => candidate.url() === "about:blank");
     const page = reusableBlankPage ?? await context.newPage();
     const shouldClosePage = !reusableBlankPage && existingPages.length > 0;
-    const accountLabel = `videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)}`;
 
     try {
-      console.log(
+      browserLogger.info(
         shouldClosePage
-          ? `[idle-refresh] open temporary page ${accountLabel}`
-          : `[idle-refresh] reuse browser page ${accountLabel}`,
+          ? "已打开临时页面检查登录状态"
+          : "已复用浏览器页面检查登录状态",
+        {
+          accountId: channelId,
+          accountName: this.getVideoAccountName(channelId),
+        },
       );
       await page.goto(playletUrl, { waitUntil: "domcontentloaded", timeout: timeoutMs });
 
@@ -310,13 +337,19 @@ export class BrowserContextManager {
       if (!loggedIn) {
         await this.setPageTitle(page, this.getPageTitle(channelId));
         this.notifyLoginRequired(channelId);
-        console.warn(`[idle-refresh] login required ${accountLabel}`);
+        browserLogger.warn("空闲页刷新时需要重新登录", {
+          accountId: channelId,
+          accountName: this.getVideoAccountName(channelId),
+        });
         return false;
       }
 
       this.loginRequiredNotifiedChannelIds.delete(channelId);
       await this.save(channelId);
-      console.log(`[idle-refresh] persisted ${accountLabel} state=logged-in`);
+      browserLogger.info("空闲页刷新后已保存登录状态", {
+        accountId: channelId,
+        accountName: this.getVideoAccountName(channelId),
+      });
       return true;
     } finally {
       if (shouldClosePage) {
@@ -405,7 +438,11 @@ export class BrowserContextManager {
     const stateFile = path.join(accountDir, "storage-state.json");
     await mkdir(accountDir, { recursive: true });
     await mkdir(userDataDir, { recursive: true });
-    console.log(`[browser] launching videoAccountId=${channelId} name=${this.getVideoAccountName(channelId)} profile=${userDataDir}`);
+    browserLogger.info("正在启动账号浏览器", {
+      accountId: channelId,
+      accountName: this.getVideoAccountName(channelId),
+      path: userDataDir,
+    });
 
     const context = await chromium.launchPersistentContext(userDataDir, {
       headless: this.config.browser.headless,

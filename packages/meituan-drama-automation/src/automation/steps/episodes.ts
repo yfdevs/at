@@ -271,7 +271,6 @@ async function createReplaceModalContentListener(page: Page): Promise<void> {
               text: element.innerText,
               time: Date.now(),
             });
-            console.log("[modal detected]", element.innerText);
           }
 
           const modal = element.querySelector?.<HTMLElement>(".mtd-modal");
@@ -280,7 +279,6 @@ async function createReplaceModalContentListener(page: Page): Promise<void> {
               text: modal.innerText,
               time: Date.now(),
             });
-            console.log("[modal detected]", modal.innerText);
           }
         }
       }

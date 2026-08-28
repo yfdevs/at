@@ -14,6 +14,11 @@ import {
   selectDirectory,
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import { createElectronPlatformLogger } from "../platform-logger";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 
 type QqDramaLoginState = "login-required" | "logged-in" | "unknown";
 
@@ -238,7 +243,16 @@ function normalizeConfig(
 }
 
 function readConfig(): QqDramaConfig {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("qq-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function writeConfig(config: QqDramaConfig) {
@@ -348,21 +362,17 @@ async function cleanupPreviousQqCopyrightProofs(now = new Date()) {
 
       await rm(taskDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
       deletedCount += 1;
-      console.log(`[qq-drama] deleted previous copyright proofs: ${taskDir}`);
+      qqPlatformLogger("storage").info("已删除过期版权材料", { path: taskDir });
     }
   }
-  console.log(`[qq-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`);
+  qqPlatformLogger("storage").info("过期版权材料清理完成", { deletedCount });
 }
 
 function scheduleQqCopyrightProofCleanup() {
   if (contractCleanupTask) return;
   contractCleanupTask = cron.schedule("0 1 * * *", async () => {
     await cleanupPreviousQqCopyrightProofs().catch((error: unknown) => {
-      console.error(
-        `[qq-drama] previous copyright proof cleanup failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      qqPlatformLogger("storage").error("过期版权材料清理失败", { error });
     });
   }, {
     name: "qq-copyright-proof-cleanup",
@@ -370,11 +380,23 @@ function scheduleQqCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   });
-  console.log("[qq-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai");
+  qqPlatformLogger("storage").info("版权材料定时清理已启用", {
+    schedule: "每天 01:00",
+  });
 }
 
 function qqDramaLogDir(config = readConfig()) {
   return path.join(qqDramaRunDataDir(config), "logs");
+}
+
+function qqPlatformLogger(scope = "runtime") {
+  const config = readConfig();
+  return createElectronPlatformLogger({
+    platform: "qq-drama",
+    scope,
+    logDir: qqDramaLogDir(config),
+    retentionDays: Number.parseInt(config.logRetentionDays, 10) || 3,
+  });
 }
 
 function formatDateKey(date = new Date()) {
@@ -385,7 +407,7 @@ function formatDateKey(date = new Date()) {
 }
 
 function qqDramaLogFile(config = readConfig()) {
-  return path.join(qqDramaLogDir(config), `app-${formatDateKey()}.jsonl`);
+  return path.join(qqDramaLogDir(config), `app-${formatDateKey()}.log`);
 }
 
 function storagePaths(
@@ -414,7 +436,7 @@ function ensureStorageDirectories(paths = storagePaths()) {
 function findLatestLogPath(paths = storagePaths()) {
   mkdirSync(paths.logDir, { recursive: true });
   const latestLogFile = readdirSync(paths.logDir, { withFileTypes: true })
-    .filter((entry) => entry.isFile() && /^app-\d{4}-\d{2}-\d{2}\.(?:jsonl|log)$/i.test(entry.name))
+    .filter((entry) => entry.isFile() && /^app(?:-.+)?-\d{4}-\d{2}-\d{2}\.(?:log|jsonl)$/i.test(entry.name))
     .map((entry) => path.join(paths.logDir, entry.name))
     .sort((left, right) => statSync(right).mtimeMs - statSync(left).mtimeMs)[0];
 
@@ -491,11 +513,10 @@ async function startRuntime() {
   if (!accounts.length) {
     throw new Error("QQ_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
   }
-  console.log(
-    `[qq-drama] fetched ${accounts.length} enabled account(s): ${
-      accounts.map((account) => `${account.accountName}(${account.accountId})`).join(", ")
-    }`,
-  );
+  qqPlatformLogger("account").info("已加载启用账号", {
+    count: accounts.length,
+    accounts: accounts.map((account) => ({ id: account.accountId, name: account.accountName })),
+  });
 
   const accountRuntimes: Array<{
     account: QqDramaAccount;
@@ -522,7 +543,10 @@ async function startRuntime() {
         episodeUploadWaitTimeoutMinutes,
         episodeUploadFailedRetryAttempts,
         taskPollIntervalMs,
-        ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
+        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+          ...request,
+          requesterPlatform: "qq-drama",
+        }),
         apiConfig: {
           baseUrl: config.apiBaseUrl,
         },
@@ -567,7 +591,7 @@ async function startRuntime() {
     async stop() {
       running = false;
       await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
-      console.log("[qq-drama] all account browsers stopped");
+      qqPlatformLogger("browser").info("全部账号浏览器已停止");
     },
   };
 }
@@ -633,6 +657,7 @@ export function registerQqDramaPlatformHandlers() {
   ipcMain.handle("qq-drama:service:status", () => status());
 
   ipcMain.handle("qq-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) {
       await runtimeController.stop();

@@ -14,6 +14,11 @@ import {
   selectDirectory,
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import { createElectronPlatformLogger } from "../platform-logger";
+import {
+  assertGlobalDirectoriesConfigured,
+  resolveGlobalPlatformDirectories,
+} from "../global-app-config";
 
 type MeituanCreationRuntimeStatus = {
   platform: "meituan-drama";
@@ -155,7 +160,16 @@ function normalizeConfig(
 }
 
 function readConfig(): MeituanCreationConfig {
-  return normalizeConfig(getStore().get("config"));
+  const config = normalizeConfig(getStore().get("config"));
+  const directories = resolveGlobalPlatformDirectories("meituan-drama", {
+    runDataDir: config.runDataDir,
+    localMaterialRoot: config.localEpisodeVideoRoot,
+  });
+  return {
+    ...config,
+    runDataDir: directories.runDataDir,
+    localEpisodeVideoRoot: directories.localMaterialRoot,
+  };
 }
 
 function writeConfig(config: MeituanCreationConfig) {
@@ -201,6 +215,15 @@ function meituanCreationLogDir(config = readConfig()) {
   return path.join(meituanCreationRunDataDir(config), "logs");
 }
 
+function meituanPlatformLogger(scope = "runtime") {
+  return createElectronPlatformLogger({
+    platform: "meituan-drama",
+    scope,
+    logDir: meituanCreationLogDir(),
+    retentionDays: 3,
+  });
+}
+
 function formatDateKey(date = new Date()) {
   const year = date.getFullYear();
   const month = String(date.getMonth() + 1).padStart(2, "0");
@@ -209,7 +232,7 @@ function formatDateKey(date = new Date()) {
 }
 
 function meituanCreationLogFile(config = readConfig()) {
-  return path.join(meituanCreationLogDir(config), `app-${formatDateKey()}.jsonl`);
+  return path.join(meituanCreationLogDir(config), `app-${formatDateKey()}.log`);
 }
 
 function meituanCreationAuthRoot() {
@@ -283,24 +306,18 @@ async function cleanupPreviousMeituanCopyrightProofs(now = new Date()) {
         retryDelay: 500,
       });
       deletedCount += 1;
-      console.log(`[meituan-drama] deleted previous copyright proofs: ${taskDir}`);
+      meituanPlatformLogger("storage").info("已删除过期版权材料", { path: taskDir });
     }
   }
 
-  console.log(
-    `[meituan-drama] previous copyright proof cleanup completed: deleted=${deletedCount}`,
-  );
+  meituanPlatformLogger("storage").info("过期版权材料清理完成", { deletedCount });
 }
 
 function scheduleMeituanCopyrightProofCleanup() {
   if (contractCleanupTask) return;
   contractCleanupTask = cron.schedule("0 1 * * *", async () => {
     await cleanupPreviousMeituanCopyrightProofs().catch((error: unknown) => {
-      console.error(
-        `[meituan-drama] previous copyright proof cleanup failed: ${
-          error instanceof Error ? error.message : String(error)
-        }`,
-      );
+      meituanPlatformLogger("storage").error("过期版权材料清理失败", { error });
     });
   }, {
     name: "meituan-copyright-proof-cleanup",
@@ -308,7 +325,9 @@ function scheduleMeituanCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   });
-  console.log("[meituan-drama] copyright proof cleanup scheduled: 0 1 * * * Asia/Shanghai");
+  meituanPlatformLogger("storage").info("版权材料定时清理已启用", {
+    schedule: "每天 01:00",
+  });
 }
 
 async function startRuntime() {
@@ -325,11 +344,10 @@ async function startRuntime() {
     startMeituanCreationRuntime,
   } = await import("@drama/meituan-drama-automation");
   const accounts = await fetchMeituanCreationAccounts(config.apiBaseUrl);
-  console.log(
-    `[meituan-drama] fetched ${accounts.length} enabled account(s): ${
-      accounts.map((account) => `${account.accountName}(${account.accountId})`).join(", ") || "-"
-    }`,
-  );
+  meituanPlatformLogger("account").info("已加载启用账号", {
+    count: accounts.length,
+    accounts: accounts.map((account) => ({ id: account.accountId, name: account.accountName })),
+  });
   return startMeituanCreationRuntime({
     accounts,
     apiBaseUrl: config.apiBaseUrl,
@@ -339,10 +357,10 @@ async function startRuntime() {
     logRetentionDays: 3,
     episodeUploadFailedRetryAttempts,
     closeTaskPageAfterRun: config.closeTaskPageAfterRun === "true",
-    ensureBaiduNetdiskResource: ensureBaiduNetdiskShareDownloaded,
-    onLog: (message: string) => {
-      console.log(message);
-    },
+    ensureBaiduNetdiskResource: (request) => ensureBaiduNetdiskShareDownloaded({
+      ...request,
+      requesterPlatform: "meituan-drama",
+    }),
     config: {
       localEpisodeVideoRoot: config.localEpisodeVideoRoot,
       browser: {
@@ -402,6 +420,7 @@ export function registerMeituanCreationPlatformHandlers() {
   ipcMain.handle("meituan-drama:service:status", () => status());
 
   ipcMain.handle("meituan-drama:service:start", async () => {
+    assertGlobalDirectoriesConfigured();
     const runtime = runtimeController.current;
     if (runtime && !runtime.getStatus().running) {
       await runtimeController.stop();

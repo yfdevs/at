@@ -1,4 +1,4 @@
-import { CheckCircle, DangerTriangle, Folder } from "@mynaui/icons-react";
+import { CheckCircle, DangerTriangle } from "@mynaui/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { useNavigate } from "react-router-dom";
 import { toast } from "sonner";
@@ -16,7 +16,6 @@ import {
 import {
   InputGroup,
   InputGroupAddon,
-  InputGroupButton,
   InputGroupInput,
   InputGroupText,
 } from "@/components/ui/input-group";
@@ -137,19 +136,9 @@ const sections: Array<{
     ],
   },
   {
-    title: "文件与日志",
-    description: "视频目录和运行数据目录必须在同一磁盘。",
+    title: "日志",
+    description: "共享素材与运行数据目录在全局配置中统一管理。",
     fields: [
-      {
-        key: "localEpisodeVideoRoot",
-        label: "剧集视频根目录",
-        description: "按领取任务的原始剧名查找本地视频，可放在剧名目录或其成片/成品/视频子目录，需与运行数据目录同盘。",
-      },
-      {
-        key: "runDataDir",
-        label: "运行数据目录",
-        description: "保存临时上传文件、远程素材缓存和日志。",
-      },
       {
         key: "logRetentionDays",
         label: "日志保留",
@@ -393,25 +382,6 @@ export function WechatConfigurationPage() {
     }
   };
 
-  const selectDirectory = async (key: "localEpisodeVideoRoot" | "runDataDir") => {
-    try {
-      const selectedPath =
-        key === "localEpisodeVideoRoot"
-          ? await wechatVideoService.selectLocalEpisodeVideoRoot(config.localEpisodeVideoRoot)
-          : await wechatVideoService.selectRunDataDir(config.runDataDir);
-
-      if (!selectedPath) {
-        return;
-      }
-
-      updateConfig(key, selectedPath);
-    } catch (error) {
-      toast.error("目录选择失败", {
-        description: error instanceof Error ? error.message : String(error),
-      });
-    }
-  };
-
   return (
     <main className="flex min-h-svh flex-1 flex-col bg-background">
       <div className="sticky top-0 z-10 border-b bg-background/95 px-6 py-3 backdrop-blur">
@@ -468,7 +438,6 @@ export function WechatConfigurationPage() {
                           config={config}
                           field={field}
                           onChange={updateConfig}
-                          onSelectDirectory={selectDirectory}
                         />
                       </div>
                     ))}
@@ -487,16 +456,12 @@ function ConfigFieldControl({
   config,
   field,
   onChange,
-  onSelectDirectory,
 }: {
   config: WechatVideoConfig;
   field: ConfigField;
   onChange: (key: keyof WechatVideoConfig, value: string) => void;
-  onSelectDirectory: (key: "localEpisodeVideoRoot" | "runDataDir") => void;
 }) {
   const value = config[field.key];
-  const directoryKey =
-    field.key === "localEpisodeVideoRoot" || field.key === "runDataDir" ? field.key : null;
 
   if (field.kind === "subjects") {
     const selectedSubjects = new Set(
@@ -527,14 +492,16 @@ function ConfigFieldControl({
     return (
       <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
         <FieldContent>
-          <FieldLabel>{field.label}</FieldLabel>
-          {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
+          <FieldLabel className="text-[13px]">{field.label}</FieldLabel>
+          {field.description ? (
+            <FieldDescription className="text-xs">{field.description}</FieldDescription>
+          ) : null}
         </FieldContent>
         <div className="flex min-w-0 flex-wrap gap-2">
           {field.options.map((option) => (
             <label
               key={option.value}
-              className="flex h-8 w-auto min-w-0 items-center gap-2 bg-background px-2.5 text-sm"
+              className="flex h-8 w-auto min-w-0 items-center gap-2 bg-background px-2.5 text-[13px]"
             >
               <Checkbox
                 checked={selectedSubjects.has(option.value)}
@@ -555,11 +522,13 @@ function ConfigFieldControl({
     return (
       <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-center">
         <FieldContent>
-          <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-          {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
+          <FieldLabel className="text-[13px]" htmlFor={field.key}>{field.label}</FieldLabel>
+          {field.description ? (
+            <FieldDescription className="text-xs">{field.description}</FieldDescription>
+          ) : null}
         </FieldContent>
         <div className="flex min-w-0 items-center justify-between gap-3">
-          <span className="text-sm text-muted-foreground">
+          <span className="text-[13px] text-muted-foreground">
             {checked ? field.activeLabel : field.inactiveLabel}
           </span>
           <Switch
@@ -575,8 +544,10 @@ function ConfigFieldControl({
   return (
     <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
       <FieldContent>
-        <FieldLabel htmlFor={field.key}>{field.label}</FieldLabel>
-        {field.description ? <FieldDescription>{field.description}</FieldDescription> : null}
+        <FieldLabel className="text-[13px]" htmlFor={field.key}>{field.label}</FieldLabel>
+        {field.description ? (
+          <FieldDescription className="text-xs">{field.description}</FieldDescription>
+        ) : null}
       </FieldContent>
       <div className="w-full min-w-0">
         {field.kind === "select" ? (
@@ -584,14 +555,18 @@ function ConfigFieldControl({
             value={value}
             onValueChange={(nextValue) => onChange(field.key, String(nextValue ?? ""))}
           >
-            <SelectTrigger id={field.key} className="w-full bg-background" size="default">
+            <SelectTrigger
+              id={field.key}
+              className="w-full bg-background text-[13px]"
+              size="default"
+            >
               <SelectValue placeholder="请选择">
                 {field.options.find((option) => option.value === value)?.label ?? "请选择"}
               </SelectValue>
             </SelectTrigger>
             <SelectContent>
               {field.options.map((option) => (
-                <SelectItem key={option.value} value={option.value}>
+                <SelectItem className="text-[13px]" key={option.value} value={option.value}>
                   {option.label}
                 </SelectItem>
               ))}
@@ -600,6 +575,7 @@ function ConfigFieldControl({
         ) : (
           <InputGroup>
             <InputGroupInput
+              className="text-[13px] md:text-[13px]"
               id={field.key}
               min={field.type === "number" ? 0 : undefined}
               type={field.type ?? "text"}
@@ -608,18 +584,7 @@ function ConfigFieldControl({
             />
             {field.suffix ? (
               <InputGroupAddon align="inline-end">
-                <InputGroupText>{field.suffix}</InputGroupText>
-              </InputGroupAddon>
-            ) : null}
-            {directoryKey ? (
-              <InputGroupAddon align="inline-end">
-                <InputGroupButton
-                  aria-label={`选择${field.label}`}
-                  onClick={() => onSelectDirectory(directoryKey)}
-                >
-                  <Folder />
-                  选择
-                </InputGroupButton>
+                <InputGroupText className="text-xs">{field.suffix}</InputGroupText>
               </InputGroupAddon>
             ) : null}
           </InputGroup>
