@@ -29,10 +29,17 @@ const errorSelector = [
 ].join(",");
 
 function exact(value: string) {
-  return new RegExp(`^\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[：:]?\\s*\\*?\\s*$`);
+  // 爱奇艺表单的必填星号可能位于标签前方（*定时上线）或后方。
+  return new RegExp(
+    `^\\s*\\*?\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*[：:]?\\s*\\*?\\s*$`,
+  );
 }
 
-async function visibleField(page: Page, aliases: readonly string[]) {
+async function visibleField(
+  page: Page,
+  aliases: readonly string[],
+  placeholders: readonly string[] = [],
+) {
   for (const alias of aliases) {
     const label = page.locator("label,.label,[class*='label'],[class*='Label']")
       .filter({ hasText: exact(alias), visible: true })
@@ -49,7 +56,29 @@ async function visibleField(page: Page, aliases: readonly string[]) {
       .first();
     if (await root.count() > 0) return root;
   }
+  for (const placeholder of placeholders) {
+    const control = page.getByPlaceholder(placeholder, { exact: true })
+      .filter({ visible: true })
+      .first();
+    if (await control.count() === 0) continue;
+    const root = control.locator(
+      "xpath=ancestor::*[self::div or self::section or self::li][1]",
+    );
+    if (await root.count() > 0) return root;
+  }
   return null;
+}
+
+async function visibleLabelSummary(page: Page) {
+  const values = await page.locator("label,.label,[class*='label'],[class*='Label']")
+    .filter({ visible: true })
+    .allTextContents()
+    .catch(() => []);
+  const labels = [...new Set(values
+    .map((value) => value.replace(/\s+/g, " ").trim())
+    .filter((value) => value.length > 0 && value.length <= 40))]
+    .slice(0, 40);
+  return labels.join(" | ") || "-";
 }
 
 async function selectOption(page: Page, value: string) {
@@ -70,6 +99,7 @@ export async function fillIqiyiField(
   options: IqiyiDramaRuntimeOptions,
   config: {
     aliases: readonly string[];
+    placeholders?: readonly string[];
     value: string | number | undefined;
     kind?: "text" | "textarea" | "select" | "radio" | "choice" | "date" | "tag";
     required?: boolean;
@@ -81,10 +111,13 @@ export async function fillIqiyiField(
     }
     return false;
   }
-  const root = await visibleField(page, config.aliases);
+  const root = await visibleField(page, config.aliases, config.placeholders);
   if (!root) {
     if (config.required) {
-      throw new Error(`IQIYI_DRAMA_FIELD_NOT_FOUND: ${config.aliases.join("/")}`);
+      throw new Error(
+        `IQIYI_DRAMA_FIELD_NOT_FOUND: ${config.aliases.join("/")}; `
+          + `visibleLabels=${await visibleLabelSummary(page)}`,
+      );
     }
     return false;
   }
@@ -92,6 +125,13 @@ export async function fillIqiyiField(
   log(options, `[iqiyi-drama] filling field: ${config.aliases[0]}`);
   await root.scrollIntoViewIfNeeded().catch(() => undefined);
   if (config.kind === "radio" || config.kind === "choice") {
+    for (const role of ["radio", "checkbox"] as const) {
+      const choice = root.getByRole(role, { name: value, exact: true })
+        .filter({ visible: true }).last();
+      if (await choice.count() === 0) continue;
+      await choice.click({ timeout: 10_000 });
+      return true;
+    }
     const radio = root.getByText(value, { exact: true }).filter({ visible: true }).last();
     if (await radio.count() === 0) {
       if (config.required) throw new Error(`IQIYI_DRAMA_RADIO_NOT_FOUND: ${value}`);

@@ -3,6 +3,7 @@ export type GlobalAppConfig = {
   aiBaseURL: string
   aiModel: string
   aiImageModel: string
+  baiduNetdiskDownloadTimeoutMinutes: string
   runDataRoot: string
   localMaterialRoot: string
 }

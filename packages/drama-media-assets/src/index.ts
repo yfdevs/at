@@ -89,6 +89,7 @@ const nonRetryableBaiduNetdiskResourceErrorPatterns = [
   "百度网盘权属材料筛选后数量不足",
   "百度网盘海报封面数量不足",
   "百度网盘AI制作证明数量不足",
+  "等待百度网盘资源下载完成超时",
   "素材-only 模式不会下载该目录",
   "[local-video-invalid]",
   "剧集视频目录不存在",

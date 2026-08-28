@@ -3,6 +3,8 @@ import path from 'node:path'
 import { existsSync } from 'node:fs'
 import { fsSize, mem } from 'systeminformation'
 
+export { RuntimeController } from './runtime-controller'
+
 export type PlatformMemoryStatus = {
   processRssBytes: number
   systemUsedBytes: number
@@ -16,72 +18,6 @@ export type PlatformDriveStatus = {
   totalBytes: number
   availableBytes: number
   usedPercent: number
-}
-
-export class RuntimeController<TRuntime extends { stop: () => Promise<void> }> {
-  private runtime: TRuntime | null = null
-  private starting: Promise<TRuntime> | null = null
-
-  get current() {
-    return this.runtime
-  }
-
-  get running() {
-    return this.runtime !== null
-  }
-
-  get startingPromise() {
-    return this.starting
-  }
-
-  async start(factory: () => Promise<TRuntime>) {
-    if (this.runtime) return this.runtime
-
-    if (!this.starting) {
-      this.starting = factory()
-    }
-
-    try {
-      this.runtime = await this.starting
-      return this.runtime
-    } finally {
-      this.starting = null
-    }
-  }
-
-  async resolveStarting() {
-    if (this.starting) {
-      this.runtime = await this.starting
-      this.starting = null
-    }
-
-    return this.runtime
-  }
-
-  async replace(factory: () => Promise<TRuntime>) {
-    await this.stop()
-    this.runtime = await factory()
-    return this.runtime
-  }
-
-  async stop() {
-    try {
-      await this.resolveStarting()
-    } catch {
-      this.starting = null
-    }
-
-    if (this.runtime) {
-      await this.runtime.stop()
-      this.runtime = null
-    }
-  }
-
-  stopInBackground() {
-    void this.runtime?.stop()
-    this.runtime = null
-    this.starting = null
-  }
 }
 
 export async function readMemoryStatus(processRssBytes = process.memoryUsage().rss): Promise<PlatformMemoryStatus> {

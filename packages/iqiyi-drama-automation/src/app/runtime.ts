@@ -244,28 +244,34 @@ export async function startIqiyiDramaRuntime(
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     }).catch((error) => errorLog(options, `[iqiyi-drama] initial page failed: ${message(error)}`));
-    if (iqiyiDramaLoginStateFromUrl(page.url()) === "login-required") {
-      await waitForIqiyiLogin(page, context, options).catch((error) => {
-        errorLog(options, `[iqiyi-drama] login wait failed: ${message(error)}`);
-      });
-    }
     while (running && !page.isClosed()) {
       try {
-        if (iqiyiDramaLoginStateFromUrl(page.url()) === "login-required") {
-          await waitForIqiyiLogin(page, context, options);
-        }
+        await waitForIqiyiLogin(page, context, options);
+        if (!running || page.isClosed()) break;
+        if (iqiyiDramaLoginStateFromUrl(page.url()) !== "logged-in") continue;
         const task = await claimNextIqiyiDramaTaskApi({
           apiConfig: options.apiConfig,
           runtimeOptions: options,
         });
         if (task) {
           const taskPage = await context.newPage();
+          let taskFailed = false;
           try {
             await executeTask(taskPage, context, task, options, (value) => {
               lastTask = value;
             });
+          } catch (error) {
+            taskFailed = true;
+            throw error;
           } finally {
-            await taskPage.close().catch(() => undefined);
+            if (!taskFailed || options.closeFailedTaskPages === true) {
+              await taskPage.close().catch(() => undefined);
+            } else {
+              log(options, "[iqiyi-drama] failed task page retained for inspection", {
+                accountTaskId: task.accountTaskId,
+                activeUrl: taskPage.url(),
+              });
+            }
           }
         } else {
           log(options, "[iqiyi-drama] no claimable task");

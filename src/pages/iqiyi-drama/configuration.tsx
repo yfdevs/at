@@ -17,6 +17,7 @@ const emptyConfig: IqiyiDramaConfig = {
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
+  closeFailedTaskPages: "false",
   runDataDir: "D:\\.drama-runs\\iqiyi-drama",
   logRetentionDays: "3",
 }
@@ -39,6 +40,14 @@ const sections: ConfigSectionDefinition<IqiyiDramaConfig>[] = [
         type: "number",
         suffix: "秒",
         min: 1,
+      },
+      {
+        kind: "switch",
+        key: "closeFailedTaskPages",
+        label: "失败任务页面",
+        description: "任务失败后是否关闭对应标签页；保留页面便于检查失败现场。",
+        activeLabel: "自动关闭失败页",
+        inactiveLabel: "保留失败页",
       },
       {
         key: "baiduNetdiskDownloadRetryAttempts",

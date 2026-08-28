@@ -86,6 +86,7 @@ export type IqiyiDramaConfig = {
   headless: string;
   operationDelaySeconds: string;
   taskPollIntervalSeconds: string;
+  closeFailedTaskPages: string;
   runDataDir: string;
   logRetentionDays: string;
 };
@@ -118,6 +119,7 @@ const defaultConfig: IqiyiDramaConfig = {
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
+  closeFailedTaskPages: "false",
   runDataDir: "D:\\.drama-runs\\iqiyi-drama",
   logRetentionDays: "3",
 };
@@ -192,6 +194,8 @@ function normalizeConfig(
       defaultConfig.taskPollIntervalSeconds,
       1,
     ),
+    closeFailedTaskPages:
+      config.closeFailedTaskPages ?? defaultConfig.closeFailedTaskPages,
     runDataDir: !config.runDataDir
       || config.runDataDir === ".drama-runs"
       || config.runDataDir === ".drama-runs/iqiyi-drama"
@@ -359,6 +363,7 @@ async function startRuntime() {
           1,
           Number.parseFloat(config.taskPollIntervalSeconds) || 10,
         ) * 1000,
+        closeFailedTaskPages: config.closeFailedTaskPages === "true",
         aiClient,
         aiImageModel,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({

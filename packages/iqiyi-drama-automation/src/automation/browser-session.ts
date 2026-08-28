@@ -10,7 +10,9 @@ import type { IqiyiDramaLoginState, IqiyiDramaRuntimeOptions } from "../shared/t
 export function iqiyiDramaLoginStateFromUrl(url: string | undefined): IqiyiDramaLoginState {
   if (!url || url === "about:blank") return "unknown";
   if (/showLogin=1|passport|\/login(?:[/?#]|$)/i.test(url)) return "login-required";
-  return url.startsWith("https://creator.iqiyi.com/") ? "logged-in" : "unknown";
+  return /^https:\/\/creator\.iqiyi\.com\/(?:comicPlay|miniPlay)(?:[/?#]|$)/i.test(url)
+    ? "logged-in"
+    : "unknown";
 }
 
 export async function launchIqiyiDramaBrowserContext(
@@ -45,17 +47,17 @@ export async function waitForIqiyiLogin(
   context: BrowserContext,
   options: IqiyiDramaRuntimeOptions,
 ) {
-  if (iqiyiDramaLoginStateFromUrl(page.url()) !== "login-required") return false;
-  log(options, "[iqiyi-drama] login required, waiting for manual login");
+  if (iqiyiDramaLoginStateFromUrl(page.url()) === "logged-in") return true;
+  log(options, "[iqiyi-drama] not logged in; task polling paused, waiting for manual login");
   await page.bringToFront().catch(() => undefined);
-  if (!/showLogin=1|passport|\/login/i.test(page.url())) {
+  if (iqiyiDramaLoginStateFromUrl(page.url()) !== "login-required") {
     await page.goto(IQIYI_DRAMA_LOGIN_URL, {
       waitUntil: "domcontentloaded",
       timeout: 60_000,
     });
   }
   await page.waitForURL(
-    (url) => iqiyiDramaLoginStateFromUrl(url.href) !== "login-required",
+    (url) => iqiyiDramaLoginStateFromUrl(url.href) === "logged-in",
     { timeout: 120 * 60 * 1000 },
   );
   await saveCredentialState(context, options).catch(() => undefined);

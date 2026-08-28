@@ -8,6 +8,7 @@ export type IqiyiDramaConfig = {
   headless: string
   operationDelaySeconds: string
   taskPollIntervalSeconds: string
+  closeFailedTaskPages: string
   runDataDir: string
   logRetentionDays: string
 }

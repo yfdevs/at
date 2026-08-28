@@ -18,6 +18,7 @@ const emptyConfig: GlobalAppConfig = {
   aiBaseURL: "https://ark.cn-beijing.volces.com/api/v3",
   aiModel: "doubao-seed-2-0-pro-260215",
   aiImageModel: "doubao-seedream-4-0-250828",
+  baiduNetdiskDownloadTimeoutMinutes: "60",
   runDataRoot: "",
   localMaterialRoot: "",
 };
@@ -38,6 +39,20 @@ const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
         label: "素材根目录",
         description: "所有平台按原始剧名从这里读取或下载视频、封面及权属材料",
         directory: true,
+      },
+    ],
+  },
+  {
+    title: "百度网盘",
+    description: "所有平台共用的百度网盘资源下载限制",
+    fields: [
+      {
+        key: "baiduNetdiskDownloadTimeoutMinutes",
+        label: "下载超时",
+        description: "单个资源等待下载完成的最长时间；超时后停止下载并上报任务失败。",
+        type: "number",
+        suffix: "分钟",
+        min: 1,
       },
     ],
   },

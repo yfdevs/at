@@ -59,6 +59,28 @@ function requiredFirstFile(files: string[], source: string) {
   return file;
 }
 
+export function collectShortDramaCertificationFiles(data: {
+  qualification: { proofFiles: string[] };
+  copyright: {
+    productionProofFiles: string[];
+    licenseProofFiles: string[];
+  };
+  productionCost: { proofFiles: string[] };
+  commitmentFiles: string[];
+}) {
+  requiredFirstFile(data.productionCost.proofFiles, "成本配置");
+  requiredFirstFile(data.copyright.productionProofFiles, "制作证明");
+  requiredFirstFile(data.copyright.licenseProofFiles, "授权证明");
+
+  return [...new Set([
+    ...data.qualification.proofFiles,
+    ...data.copyright.productionProofFiles,
+    ...data.copyright.licenseProofFiles,
+    ...data.productionCost.proofFiles,
+    ...data.commitmentFiles,
+  ])];
+}
+
 function createActionRunner(
   page: Page,
   options: BaiduDramaRuntimeOptions,
@@ -221,12 +243,7 @@ async function fillDramaInformation(
   const commitmentFiles = commitmentFile ? [commitmentFile] : [];
   await runAction(`上传承诺书=${fileNames(commitmentFiles)}`, () =>
     uploadFormFiles(page, "承诺书", commitmentFiles));
-  const shortDramaCertificationFiles = [
-    ...data.qualification.proofFiles,
-    requiredFirstFile(data.productionCost.proofFiles, "成本配置"),
-    requiredFirstFile(data.copyright.productionProofFiles, "制作证明"),
-    requiredFirstFile(data.copyright.licenseProofFiles, "授权证明"),
-  ];
+  const shortDramaCertificationFiles = collectShortDramaCertificationFiles(data);
   await runAction(`上传短剧认证=${fileNames(shortDramaCertificationFiles)}`, () =>
     uploadFormFiles(page, "短剧认证", shortDramaCertificationFiles));
   await runAction("勾选协议：我已阅读并同意以下内容", () =>

@@ -848,7 +848,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   }
 
   throw new Error(
-    `等待百度网盘资源下载完成超时：${playletDir(options.targetRoot, options.resourceName)}`,
+    `等待百度网盘资源下载完成超时（${Math.round(options.timeoutMs / 6_000) / 10}分钟）：` +
+      playletDir(options.targetRoot, options.resourceName),
   );
 }
 
@@ -856,7 +857,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   options: EnsureBaiduNetdiskEpisodeVideosOptions,
 ): Promise<EnsureBaiduNetdiskEpisodeVideosResult> {
   const downloadDir = options.downloadDir || options.localEpisodeVideoRoot;
-  const timeoutMs = options.timeoutMs ?? 12 * 60 * 60 * 1000;
+  const timeoutMs = options.timeoutMs ?? 60 * 60 * 1000;
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const stableCompletePolls = options.stableCompletePolls ?? 2;
   const downloadEpisodeVideos = options.downloadEpisodeVideos !== false;

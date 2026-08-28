@@ -22,6 +22,7 @@ const LEGACY_DEFAULT_AI_BASE_URL = "https://api.openai.com/v1";
 const RECOMMENDED_AI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
 const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
+const DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES = "60";
 export const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
 
 export type GlobalAppConfig = {
@@ -29,6 +30,7 @@ export type GlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  baiduNetdiskDownloadTimeoutMinutes: string;
   runDataRoot: string;
   localMaterialRoot: string;
 };
@@ -38,6 +40,7 @@ type StoredGlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  baiduNetdiskDownloadTimeoutMinutes?: string;
   runDataRoot?: string;
   localMaterialRoot?: string;
 };
@@ -51,6 +54,7 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiBaseURL: RECOMMENDED_AI_BASE_URL,
   aiModel: RECOMMENDED_AI_MODEL,
   aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
+  baiduNetdiskDownloadTimeoutMinutes: DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
   runDataRoot: "",
   localMaterialRoot: "",
 };
@@ -83,6 +87,13 @@ function normalizeBaseURL(value: string | undefined) {
   return normalized.replace(/\/+$/, "");
 }
 
+function normalizePositiveNumberText(value: string | undefined, fallback: string) {
+  const normalized = value?.trim();
+  if (!normalized) return fallback;
+  const number = Number.parseFloat(normalized);
+  return Number.isFinite(number) && number > 0 ? normalized : fallback;
+}
+
 function encryptApiKey(apiKey: string) {
   if (!apiKey) return "";
   if (!safeStorage.isEncryptionAvailable()) {
@@ -111,6 +122,10 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel?.trim() ?? "",
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
+      config.baiduNetdiskDownloadTimeoutMinutes,
+      DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
+    ),
     runDataRoot: config.runDataRoot?.trim() ?? "",
     localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
@@ -132,9 +147,21 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel.trim(),
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
+      config.baiduNetdiskDownloadTimeoutMinutes,
+      DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
+    ),
     runDataRoot: config.runDataRoot?.trim() ?? "",
     localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
+}
+
+export function getConfiguredBaiduNetdiskDownloadTimeoutMs() {
+  const value = normalizePositiveNumberText(
+    getStore().get("config").baiduNetdiskDownloadTimeoutMinutes,
+    DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
+  );
+  return Number.parseFloat(value) * 60 * 1000;
 }
 
 function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
@@ -145,6 +172,7 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiBaseURL: normalized.aiBaseURL,
     aiModel: normalized.aiModel,
     aiImageModel: normalized.aiImageModel,
+    baiduNetdiskDownloadTimeoutMinutes: normalized.baiduNetdiskDownloadTimeoutMinutes,
     runDataRoot: normalized.runDataRoot,
     localMaterialRoot: normalized.localMaterialRoot,
   });

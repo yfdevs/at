@@ -32,6 +32,21 @@ async function waitForCreateForm(page: Page) {
   throw new Error(`IQIYI_DRAMA_CREATE_FORM_NOT_READY: url=${page.url()}; pageText=${text || "空"}`);
 }
 
+function scheduledOnlineTimeAfterOneDay(now = new Date()) {
+  const scheduled = new Date(now);
+  scheduled.setDate(scheduled.getDate() + 1);
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return [
+    `${scheduled.getFullYear()}-${pad(scheduled.getMonth() + 1)}-${pad(scheduled.getDate())}`,
+    `${pad(scheduled.getHours())}:${pad(scheduled.getMinutes())}:${pad(scheduled.getSeconds())}`,
+  ].join(" ");
+}
+
+function releaseDateFor(now = new Date()) {
+  const pad = (value: number) => String(value).padStart(2, "0");
+  return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+}
+
 export async function openIqiyiCreatePage(
   page: Page,
   context: BrowserContext,
@@ -45,9 +60,12 @@ export async function openIqiyiCreatePage(
   });
   await navigate();
   await page.waitForTimeout(1_000);
-  if (iqiyiDramaLoginStateFromUrl(page.url()) === "login-required") {
+  if (iqiyiDramaLoginStateFromUrl(page.url()) !== "logged-in") {
     await waitForIqiyiLogin(page, context, options);
     await navigate();
+  }
+  if (iqiyiDramaLoginStateFromUrl(page.url()) !== "logged-in") {
+    throw new Error(`IQIYI_DRAMA_LOGIN_REQUIRED: url=${page.url()}`);
   }
   await waitForCreateForm(page);
   await saveCredentialState(context, options).catch(() => undefined);
@@ -66,6 +84,7 @@ export async function runIqiyiPublishTask(
     `[iqiyi-drama] filling ${payload.dramaType} project: accountTaskId=${task.accountTaskId}`,
   );
   const isShortDrama = payload.dramaType === "short-drama";
+  const taskRunTime = new Date();
 
   if (isShortDrama) {
     await fillIqiyiField(page, options, {
@@ -88,13 +107,15 @@ export async function runIqiyiPublishTask(
     });
   }
 
-  await fillIqiyiSearchPeople(page, options, {
-    aliases: ["导演"],
-    values: payload.directors,
-    inputPlaceholder: "请输入名称搜索并选择对应人物",
-    addButtonNames: ["增加导演"],
-    required: isShortDrama,
-  });
+  if (isShortDrama) {
+    await fillIqiyiSearchPeople(page, options, {
+      aliases: ["导演"],
+      values: payload.directors,
+      inputPlaceholder: "请输入名称搜索并选择对应人物",
+      addButtonNames: ["增加导演"],
+      required: true,
+    });
+  }
   await fillIqiyiSearchPeople(page, options, {
     aliases: ["主要演员", "主演", "演员"],
     values: payload.actors,
@@ -102,32 +123,41 @@ export async function runIqiyiPublishTask(
     addButtonNames: ["增加主要演员", "增加演员"],
     required: isShortDrama && payload.isAiGenerated !== "是",
   });
-  await fillIqiyiSimplePeople(page, options, {
-    aliases: ["制片人"],
-    values: payload.producers,
-    inputPlaceholder: "请输入制片人姓名",
-    addButtonNames: ["增加制片人"],
-    required: isShortDrama,
-  });
-  await fillIqiyiTags(page, options, {
-    aliases: ["编剧"],
-    values: payload.screenwriters,
-    required: isShortDrama,
-  });
-  await fillIqiyiField(page, options, {
-    aliases: ["制作成本"],
+  if (isShortDrama) {
+    await fillIqiyiSimplePeople(page, options, {
+      aliases: ["制片人"],
+      values: payload.producers,
+      inputPlaceholder: "请输入制片人姓名",
+      addButtonNames: ["增加制片人"],
+      required: true,
+    });
+    await fillIqiyiTags(page, options, {
+      aliases: ["编剧"],
+      values: payload.screenwriters,
+      required: true,
+    });
+  }
+  const filledProductionCostYuan = await fillIqiyiField(page, options, {
+    aliases: ["制作成本", "制作成本（元）", "制作成本(元)", "项目制作成本", "项目制作成本（元）"],
+    placeholders: ["请填写9位以内的数字（单位：元）"],
     value: payload.productionCostYuan,
-    required: true,
   });
+  if (!filledProductionCostYuan) {
+    await fillIqiyiField(page, options, {
+      aliases: ["制作成本（万元）", "制作成本(万元)", "项目制作成本（万元）", "项目制作成本(万元)"],
+      value: payload.productionCostYuan / 10_000,
+      required: true,
+    });
+  }
   await fillIqiyiField(page, options, {
     aliases: ["定时上线"],
-    value: payload.scheduledOnlineTime,
+    value: scheduledOnlineTimeAfterOneDay(taskRunTime),
     kind: "date",
     required: true,
   });
   await fillIqiyiField(page, options, {
     aliases: ["发行日期"],
-    value: payload.releaseDate,
+    value: releaseDateFor(taskRunTime),
     kind: "date",
     required: true,
   });
@@ -166,15 +196,6 @@ export async function runIqiyiPublishTask(
   });
 
   await openIqiyiSection(page, "作品内容");
-  if (!isShortDrama) {
-    await fillIqiyiField(page, options, {
-      aliases: ["成片状态", "作品状态"],
-      value: "未成片",
-      kind: "radio",
-      required: true,
-    });
-  }
-
   await fillIqiyiField(page, options, {
     aliases: ["标题", "剧名", "项目名称", "作品名称", "专辑名称"],
     value: payload.title,
@@ -182,7 +203,7 @@ export async function runIqiyiPublishTask(
   });
   await fillIqiyiField(page, options, {
     aliases: ["一句话推荐"],
-    value: payload.shortDescription,
+    value: payload.title,
     required: true,
   });
   await fillIqiyiField(page, options, {
@@ -197,23 +218,6 @@ export async function runIqiyiPublishTask(
     required: !isShortDrama,
   });
   await fillIqiyiField(page, options, {
-    aliases: ["受众类型", "目标受众", "受众"],
-    value: payload.audienceType,
-    kind: "choice",
-  });
-  await fillIqiyiField(page, options, {
-    aliases: ["题材", "一级分类", "作品类型", "项目类型"],
-    value: payload.primaryCategory,
-    kind: "select",
-  });
-  for (const category of payload.secondaryCategories) {
-    await fillIqiyiField(page, options, {
-      aliases: ["内容标签", "标签", "二级分类"],
-      value: category,
-      kind: "choice",
-    });
-  }
-  await fillIqiyiField(page, options, {
     aliases: ["上线类型"],
     value: "全集",
     kind: "radio",
@@ -223,6 +227,42 @@ export async function runIqiyiPublishTask(
     value: "免费",
     kind: "radio",
   });
+  await fillIqiyiField(page, options, {
+    aliases: ["受众类型", "目标受众", "受众"],
+    value: payload.audienceType,
+    kind: "choice",
+  });
+  if (!isShortDrama) {
+    await fillIqiyiField(page, options, {
+      aliases: ["画面"],
+      value: payload.visualType,
+      kind: "choice",
+      required: true,
+    });
+    await fillIqiyiField(page, options, {
+      aliases: ["内容来源"],
+      value: payload.contentSource,
+      kind: "choice",
+      required: true,
+    });
+    if (payload.secondaryCategories.length === 0) {
+      throw new Error("IQIYI_DRAMA_REQUIRED_FIELD_VALUE_MISSING: 大标签");
+    }
+    for (const category of payload.secondaryCategories) {
+      await fillIqiyiField(page, options, {
+        aliases: ["大标签", "内容标签", "标签", "二级分类"],
+        value: category,
+        kind: "choice",
+        required: true,
+      });
+    }
+  } else {
+    await fillIqiyiField(page, options, {
+      aliases: ["题材", "一级分类", "作品类型", "项目类型"],
+      value: payload.primaryCategory,
+      kind: "select",
+    });
+  }
   await fillIqiyiField(page, options, {
     aliases: ["改编来源", "IP 来源", "原著名称"],
     value: payload.adaptationSource,

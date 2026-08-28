@@ -10,6 +10,7 @@ import {
   type BaiduNetdiskDownloadRecord,
   type BaiduNetdiskDownloadState,
 } from "../storage/baidu-netdisk";
+import { getConfiguredBaiduNetdiskDownloadTimeoutMs } from "../global-app-config";
 import { resolveFromAppRoot } from "./shared";
 import { createElectronPlatformLogger } from "../platform-logger";
 
@@ -880,6 +881,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
 ): Promise<BaiduNetdiskDownloadRecord> {
   const uniqueDownloadDir = uniqueBaiduDownloadDir(request.resourceName, shareKey);
   const config = readConfig();
+  const timeoutMs = getConfiguredBaiduNetdiskDownloadTimeoutMs();
   const port = cdpPort(config);
   const existingRecord = readDownloadRecords().find((record) => record.id === id);
   const localPath = playletDir(request.localEpisodeVideoRoot, request.resourceName);
@@ -928,6 +930,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       requiredPosterImages: request.requiredPosterImages,
       requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
       mergeOwnershipMaterials: request.mergeOwnershipMaterials,
+      timeoutMs,
       downloadDir: uniqueDownloadDir,
       sourceLocalPath: existingRecord?.localPath,
       downloadTaskName: existingRecord?.resourceName,

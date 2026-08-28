@@ -16,11 +16,25 @@ const optionalText = z.string().trim().optional();
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
 
 export const iqiyiDramaTypeValues = ["short-drama", "comic-drama"] as const;
+export const iqiyiContentSourceValues = [
+  "小说改编",
+  "漫画改编",
+  "游戏改编",
+  "影视改编",
+  "原创",
+] as const;
+export const iqiyiVisualTypeValues = [
+  "AI剧",
+  "AI 2D",
+  "AI 3D",
+  "动态漫",
+  "沙雕漫",
+  "其他",
+] as const;
 
 export const iqiyiDramaTaskPayloadSchema = z.object({
   dramaType: z.enum(iqiyiDramaTypeValues),
   title: requiredText.max(30),
-  shortDescription: requiredText.min(4).max(10),
   summary: requiredText.min(100).max(300),
   episodeCount: z.coerce.number().int().min(1).max(2000),
   baiduPanResourceLink: optionalText,
@@ -28,18 +42,18 @@ export const iqiyiDramaTaskPayloadSchema = z.object({
   horizontalCoverFile: fileReference.optional(),
   ownershipFiles: z.array(fileReference).default([]),
   audienceType: optionalText,
+  visualType: z.enum(iqiyiVisualTypeValues).default("AI剧"),
   primaryCategory: optionalText,
   secondaryCategories: z.array(requiredText).default([]),
   productionOrganization: requiredText,
   productionCostYuan: z.coerce.number().finite().nonnegative().max(999_999_999),
-  scheduledOnlineTime: requiredText,
-  releaseDate: requiredText.regex(/^\d{8}$/, "发行日期格式必须为 YYYYMMDD"),
   producers: z.array(requiredText).default([]),
   directors: z.array(requiredText).default([]),
   screenwriters: z.array(requiredText).default([]),
   actors: z.array(requiredText).default([]),
   productionYear: z.coerce.number().int().min(1900).max(2100).optional(),
   licenseNumber: optionalText,
+  contentSource: z.enum(iqiyiContentSourceValues).default("原创"),
   adaptationSource: optionalText,
   isAiGenerated: z.enum(["是", "否"]).default("否"),
   submit: z.boolean().default(true),
@@ -101,6 +115,7 @@ export type IqiyiDramaRuntimeOptions = {
   localMaterialRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
   taskPollIntervalMs?: number;
+  closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
   config?: {
