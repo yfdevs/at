@@ -332,7 +332,7 @@ export type KuaishouDramaRuntimeOptions = {
   aiModelId?: string;
   adCoverAiAnalysisAttempts?: number;
   onLog?: (message: string) => void;
-  /** Called only after the authenticated edit form is visible. */
+  /** Polled only after the initial idle page has displayed the authenticated edit form. */
   claimTask?: () => Promise<KuaishouDramaTaskInput | ClaimedKuaishouDramaTask | null>;
   reportTaskError?: (
     task: Pick<ClaimedKuaishouDramaTask, "accountTaskId"> & {

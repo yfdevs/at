@@ -117,7 +117,12 @@ async function runTask(
       "task",
     );
     await runBaiduDramaPublishTask(taskPage, task, options);
-    await reportBaiduDramaTaskSuccessApi({ runtimeOptions: options, accountTaskId: task.accountTaskId });
+    await reportBaiduDramaTaskSuccessApi({
+      runtimeOptions: options,
+      apiConfig: options.apiConfig,
+      accountTaskId: task.accountTaskId,
+      resultJson: { message: "提交成功" },
+    });
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -135,9 +140,11 @@ async function runTask(
     const stage = failStage(error);
     await reportBaiduDramaTaskErrorApi({
       runtimeOptions: options,
+      apiConfig: options.apiConfig,
       accountTaskId: task.accountTaskId,
       failStage: stage,
       errorMessage: message,
+      resultJson: {},
     });
     setLastTask({
       accountTaskId: task.accountTaskId,
@@ -188,7 +195,10 @@ export async function startBaiduDramaRuntime(
   const pollLoop = async () => {
     while (running) {
       try {
-        const task = await claimNextBaiduDramaTaskApi({ runtimeOptions: options });
+        const task = await claimNextBaiduDramaTaskApi({
+          runtimeOptions: options,
+          apiConfig: options.apiConfig,
+        });
         if (task) {
           await runTask(page, task, options, (value) => { lastTask = value; });
           continue;

@@ -11,6 +11,8 @@ import { KuaishouSchedulePage } from "@/pages/kuaishou-drama/schedule"
 import { KuaishouSettingsPage } from "@/pages/kuaishou-drama/settings"
 import { QqDramaConfigurationPage } from "@/pages/qq-drama/configuration"
 import { QqDramaServiceControlPage } from "@/pages/qq-drama/service-control"
+import { IqiyiDramaConfigurationPage } from "@/pages/iqiyi-drama/configuration"
+import { IqiyiDramaServiceControlPage } from "@/pages/iqiyi-drama/service-control"
 import { BaiduDramaConfigurationPage } from "@/pages/baidu-drama/configuration"
 import { BaiduDramaServiceControlPage } from "@/pages/baidu-drama/service-control"
 import { DouyinDramaConfigurationPage } from "@/pages/douyin-drama/configuration"
@@ -42,6 +44,8 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "kuaishou-drama/settings": KuaishouSettingsPage,
   "qq-drama/service": QqDramaServiceControlPage,
   "qq-drama/config": QqDramaConfigurationPage,
+  "iqiyi-drama/service": IqiyiDramaServiceControlPage,
+  "iqiyi-drama/config": IqiyiDramaConfigurationPage,
   "baidu-drama/service": BaiduDramaServiceControlPage,
   "baidu-drama/config": BaiduDramaConfigurationPage,
   "douyin-drama/service": DouyinDramaServiceControlPage,

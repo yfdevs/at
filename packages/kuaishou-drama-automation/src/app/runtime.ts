@@ -15,7 +15,10 @@ import {
   log,
   saveCredentialState,
 } from "../automation/browser-session.js";
-import { runPublishTask } from "../automation/publish-runner.js";
+import {
+  prepareKuaishouDramaIdlePage,
+  runPublishTask,
+} from "../automation/publish-runner.js";
 import {
   getKuaishouDramaLocalEpisodeVideoRoot,
   validateKuaishouDramaLocalEpisodeVideos,
@@ -132,23 +135,11 @@ export async function startKuaishouDramaRuntime(
   const resolveTask = async () => {
     if (configuredTask && !configuredTaskConsumed) {
       configuredTaskConsumed = true;
-      await ensureBaiduNetdiskResourceReady(
-        configuredTask,
-        configuredTask.title,
-        undefined,
-        options,
-      );
-      const poster = await prepareKuaishouDramaTaskMaterials(
-        configuredTask,
-        configuredTask.title,
-        options,
-      );
-      log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
       return { taskConfig: configuredTask, resourceName: configuredTask.title };
     }
     if (!options.claimTask) return null;
 
-    log(options, "[kuaishou-drama] authenticated, claiming next task");
+    log(options, "[kuaishou-drama] polling for next task");
     const claimedTask = await options.claimTask();
     if (!claimedTask) return null;
     const isClaimedTask = "accountTaskId" in claimedTask && "task" in claimedTask;
@@ -171,20 +162,29 @@ export async function startKuaishouDramaRuntime(
       config: { task: taskInput },
     });
     if (!taskConfig) return null;
-    await ensureBaiduNetdiskResourceReady(
-      taskConfig,
-      isClaimedTask ? claimedTask.originalTitle : taskConfig.title,
-      isClaimedTask ? claimedTask.accountTaskId : undefined,
-      options,
-    );
     const resourceName = isClaimedTask ? claimedTask.originalTitle : taskConfig.title;
-    const poster = await prepareKuaishouDramaTaskMaterials(taskConfig, resourceName, options);
-    log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
     return {
       taskConfig,
       resourceName,
       claimedTask: isClaimedTask ? claimedTask : undefined,
     };
+  };
+
+  const prepareTask = async (
+    resolvedTask: NonNullable<Awaited<ReturnType<typeof resolveTask>>>,
+  ) => {
+    await ensureBaiduNetdiskResourceReady(
+      resolvedTask.taskConfig,
+      resolvedTask.resourceName,
+      resolvedTask.claimedTask?.accountTaskId,
+      options,
+    );
+    const poster = await prepareKuaishouDramaTaskMaterials(
+      resolvedTask.taskConfig,
+      resolvedTask.resourceName,
+      options,
+    );
+    log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
   };
 
   const waitForNextPoll = async () => {
@@ -198,12 +198,33 @@ export async function startKuaishouDramaRuntime(
   };
 
   taskLoopPromise = (async () => {
+    try {
+      await prepareKuaishouDramaIdlePage(context!, page!, options);
+    } catch (error) {
+      running = false;
+      log(options, `[kuaishou-drama] browser preparation failed: ${errorMessage(error)}`);
+      return;
+    }
+
     while (running && page && !page.isClosed()) {
       taskState.claimed = undefined;
+      let taskPage: Page | null = null;
       try {
-        const executed = await runPublishTask(context!, page, options, resolveTask);
-        if (executed && executed.claimedTask) {
-          const completedTask = executed.claimedTask;
+        const resolvedTask = await resolveTask();
+        if (!resolvedTask) {
+          log(options, "[kuaishou-drama] no claimable task; idle page left unchanged");
+        } else {
+          taskPage = await context!.newPage();
+          log(
+            options,
+            `[kuaishou-drama] opened dedicated task tab: ` +
+              `accountTaskId=${resolvedTask.claimedTask?.accountTaskId ?? "configured"}`,
+          );
+          await prepareTask(resolvedTask);
+          await runPublishTask(context!, taskPage, options, resolvedTask);
+        }
+        if (resolvedTask?.claimedTask) {
+          const completedTask = resolvedTask.claimedTask;
           await options.reportTaskSuccess?.({
             accountTaskId: completedTask.accountTaskId,
             resultJson: {
@@ -244,6 +265,15 @@ export async function startKuaishouDramaRuntime(
                 `[kuaishou-drama] task error report failed: ${errorMessage(reportError)}`,
               );
             });
+        }
+      } finally {
+        if (taskPage) {
+          const accountTaskId = currentClaimedTask()?.accountTaskId ?? "configured";
+          await taskPage.close().catch(() => undefined);
+          log(
+            options,
+            `[kuaishou-drama] closed dedicated task tab: accountTaskId=${accountTaskId}`,
+          );
         }
       }
       if (!running || page.isClosed()) break;

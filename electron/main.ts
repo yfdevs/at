@@ -45,6 +45,14 @@ import {
   stopQqDramaPlatformRuntime,
 } from "./platforms/qq-drama";
 import {
+  getIqiyiDramaBrowserInstanceCount,
+  getIqiyiDramaPlatformRuntimeSummary,
+  getIqiyiDramaRunningPlatformCount,
+  openIqiyiDramaLogDir,
+  registerIqiyiDramaPlatformHandlers,
+  stopIqiyiDramaPlatformRuntime,
+} from "./platforms/iqiyi-drama";
+import {
   getTiktokDramaCenterBrowserInstanceCount,
   getTiktokDramaCenterPlatformRuntimeSummary,
   getTiktokDramaCenterRunningPlatformCount,
@@ -111,6 +119,7 @@ type PlatformId =
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
+  | "iqiyi-drama"
   | "baidu-drama"
   | "douyin-drama"
   | "tiktok-drama"
@@ -210,6 +219,7 @@ app.on("before-quit", () => {
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopQqDramaPlatformRuntime();
+  stopIqiyiDramaPlatformRuntime();
   stopBaiduDramaPlatformRuntime();
   stopDouyinDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
@@ -232,6 +242,7 @@ app.whenReady().then(() => {
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerQqDramaPlatformHandlers();
+    registerIqiyiDramaPlatformHandlers();
     registerBaiduDramaPlatformHandlers();
     registerDouyinDramaPlatformHandlers();
     registerTiktokDramaCenterPlatformHandlers();
@@ -310,6 +321,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getKuaishouDramaPlatformRuntimeSummary();
     case "qq-drama":
       return getQqDramaPlatformRuntimeSummary();
+    case "iqiyi-drama":
+      return getIqiyiDramaPlatformRuntimeSummary();
     case "baidu-drama":
       return getBaiduDramaPlatformRuntimeSummary();
     case "douyin-drama":
@@ -333,6 +346,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openKuaishouDramaLogDir();
     case "qq-drama":
       return openQqDramaLogDir();
+    case "iqiyi-drama":
+      return openIqiyiDramaLogDir();
     case "baidu-drama":
       return openBaiduDramaLogDir();
     case "douyin-drama":
@@ -352,6 +367,7 @@ function getGlobalBrowserInstanceCount() {
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getQqDramaBrowserInstanceCount,
+    getIqiyiDramaBrowserInstanceCount,
     getBaiduDramaBrowserInstanceCount,
     getDouyinDramaBrowserInstanceCount,
     getTiktokDramaCenterBrowserInstanceCount,
@@ -373,6 +389,7 @@ function getGlobalRunningPlatformStatus() {
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getQqDramaRunningPlatformCount,
+    getIqiyiDramaRunningPlatformCount,
     getBaiduDramaRunningPlatformCount,
     getDouyinDramaRunningPlatformCount,
     getTiktokDramaCenterRunningPlatformCount,

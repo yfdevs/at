@@ -36,7 +36,13 @@ function errorMessage(error: unknown) {
 }
 
 function logValue(value: unknown) {
-  const text = Array.isArray(value) ? value.join("、") : String(value ?? "");
+  const text = Array.isArray(value)
+    ? value
+      .map((item) => typeof item === "string" ? item : JSON.stringify(item) ?? "")
+      .join("、")
+    : typeof value === "string"
+      ? value
+      : JSON.stringify(value) ?? "";
   const compact = text.replace(/\s+/g, " ").trim();
   return JSON.stringify(compact.length > 160 ? `${compact.slice(0, 157)}...` : compact);
 }
@@ -211,8 +217,7 @@ async function fillDramaInformation(
     uploadFormFiles(page, "成本配置", data.productionCost.proofFiles));
   await runAction(`填写制作机构=${logValue(data.productionOrganization)}`, () =>
     page.locator("#organization").fill(data.productionOrganization));
-  const commitmentFile =
-    data.copyright.productionProofFiles[0] ?? data.copyright.licenseProofFiles[0];
+  const commitmentFile = data.commitmentFiles[0];
   const commitmentFiles = commitmentFile ? [commitmentFile] : [];
   await runAction(`上传承诺书=${fileNames(commitmentFiles)}`, () =>
     uploadFormFiles(page, "承诺书", commitmentFiles));

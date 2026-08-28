@@ -1,21 +1,102 @@
 import { z } from "zod";
+import { log } from "../shared/logger.js";
 import {
   claimedBaiduDramaTaskSchema,
+  type BaiduDramaApiConfig,
   type BaiduDramaRuntimeOptions,
   type BaiduDramaTaskFailStage,
   type ClaimedBaiduDramaTask,
 } from "../shared/types.js";
+import {
+  createBaiduDramaHttpClient,
+  type BaiduDramaHttpClient,
+} from "./http-client.js";
+
+export type BaiduDramaTaskApiEndpoints = {
+  accountTaskPage: string;
+  claimTask: string;
+  reportTask: string;
+};
+
+export type BaiduDramaTaskApiOptions = {
+  apiConfig?: BaiduDramaApiConfig;
+  client?: BaiduDramaHttpClient;
+  endpoints?: Partial<BaiduDramaTaskApiEndpoints>;
+};
+
+export type ClaimNextBaiduDramaTaskOptions = BaiduDramaTaskApiOptions & {
+  runtimeOptions?: BaiduDramaRuntimeOptions;
+};
+
+export type BaiduDramaTaskSuccessReport = BaiduDramaTaskApiOptions & {
+  runtimeOptions?: BaiduDramaRuntimeOptions;
+  accountTaskId: number;
+  externalId?: string;
+  platformDramaId?: string;
+  resultJson?: Record<string, unknown>;
+};
+
+export type BaiduDramaTaskErrorReport = BaiduDramaTaskApiOptions & {
+  runtimeOptions?: BaiduDramaRuntimeOptions;
+  accountTaskId: number;
+  failStage: BaiduDramaTaskFailStage;
+  errorMessage: string;
+  resultJson?: Record<string, unknown>;
+};
+
+const defaultEndpoints: BaiduDramaTaskApiEndpoints = {
+  accountTaskPage: "/dramaAiRpa/baidu/accountTask/page",
+  claimTask: "/dramaAiRpa/baidu/rpa/claim",
+  reportTask: "/dramaAiRpa/baidu/rpa/report",
+};
+const readyTaskPageSize = 100;
+const requiredText = z.string().trim().min(1);
+const nullableText = z.string().trim().nullish();
+const jsonRecordSchema = z.record(z.unknown());
 
 const apiResponseBaseSchema = z.object({
   code: z.number(),
   msg: z.string().nullish(),
 });
 
+const readyAccountTaskSchema = z
+  .object({
+    id: z.coerce.number().int().positive(),
+    dramaId: z.coerce.number().int().positive().optional(),
+    accountId: requiredText,
+    accountName: nullableText,
+    status: nullableText,
+    originalTitle: nullableText,
+  })
+  .passthrough();
+
+const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
+  data: z
+    .object({
+      total: z.coerce.number().int().nonnegative().optional(),
+      data: z.array(readyAccountTaskSchema),
+    })
+    .nullish(),
+});
+
+const baiduContractFileSchema = z.object({
+  fileType: z.enum([
+    "CONTRACT",
+    "AUTHORIZATION",
+    "COST_REPORT",
+    "COMMITMENT",
+  ]),
+  fileUrl: z.string().trim().url(),
+  tosKey: z.string().trim().nullish(),
+});
+
 const baiduDramaClaimDataSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
-  originalTitle: z.string().trim().min(1),
-  accountId: z.string().trim().nullish(),
-  accountName: z.string().trim().nullish(),
+  originalTitle: requiredText,
+  accountId: nullableText,
+  accountName: nullableText,
+  rpaProfileKey: nullableText,
+  accountConfigJson: z.unknown().nullish(),
   payloadJson: z.unknown(),
 });
 
@@ -27,18 +108,38 @@ export const baiduDramaReportResponseSchema = apiResponseBaseSchema.extend({
   data: z.boolean().nullish(),
 });
 
-export type BaiduDramaTaskApiOptions = { runtimeOptions?: BaiduDramaRuntimeOptions };
-let mockTaskClaimed = false;
+type ReadyAccountTask = z.infer<typeof readyAccountTaskSchema>;
 
-const jsonRecordSchema = z.record(z.unknown());
+function taskClient(options: BaiduDramaTaskApiOptions) {
+  if (options.client) return options.client;
+  if (!options.apiConfig?.baseUrl.trim()) {
+    throw new Error("BAIDU_DRAMA_API_BASE_URL_REQUIRED");
+  }
+  return createBaiduDramaHttpClient(options.apiConfig);
+}
 
-function recordValue(value: unknown) {
+function taskEndpoints(options: BaiduDramaTaskApiOptions) {
+  return { ...defaultEndpoints, ...options.endpoints };
+}
+
+function assertApiSuccess(
+  payload: z.infer<typeof apiResponseBaseSchema>,
+  action: string,
+) {
+  if (payload.code !== 0) {
+    throw new Error(`${action}: code=${payload.code} message=${payload.msg || "-"}`);
+  }
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
   const result = jsonRecordSchema.safeParse(value);
   return result.success ? result.data : {};
 }
 
 function parsePayloadJson(value: unknown) {
-  if (typeof value === "string") return jsonRecordSchema.parse(JSON.parse(value));
+  if (typeof value === "string") {
+    return jsonRecordSchema.parse(JSON.parse(value));
+  }
   return jsonRecordSchema.parse(value);
 }
 
@@ -55,118 +156,310 @@ function numberValue(value: unknown) {
   return undefined;
 }
 
-function booleanValue(value: unknown) {
-  return typeof value === "boolean" ? value : undefined;
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const normalized = stringValue(item);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+function contractFileUrls(payload: Record<string, unknown>, fileType: string) {
+  const result = z.array(baiduContractFileSchema).safeParse(
+    payload.baiduContractFiles,
+  );
+  if (!result.success) return [];
+  return result.data
+    .filter((file) => file.fileType === fileType)
+    .map((file) => file.fileUrl);
+}
+
+function classifyClaimedTaskFailStage(error: unknown): BaiduDramaTaskFailStage {
+  const message = error instanceof Error ? error.message : String(error);
+  return /contract|authorization|cost|commitment|copyright|qualification|file|合同|授权|成本|承诺|文件/i.test(
+    message,
+  )
+    ? "UPLOAD_FILE"
+    : "OTHER";
 }
 
 export function normalizeClaimedBaiduDramaTask(
   input: z.input<typeof baiduDramaClaimDataSchema>,
+  options: {
+    listedTask?: ReadyAccountTask;
+    runtimeOptions?: BaiduDramaRuntimeOptions;
+  } = {},
 ): ClaimedBaiduDramaTask {
   const claimed = baiduDramaClaimDataSchema.parse(input);
-  const payload = parsePayloadJson(claimed.payloadJson);
-  const platformPayload = recordValue(payload.baiduPlaylet);
-  const baiduPlaylet = Object.keys(platformPayload).length > 0 ? platformPayload : payload;
+  const expectedAccountId = options.runtimeOptions?.baiduAccountId?.trim();
+  const claimedAccountId = claimed.accountId?.trim();
+  if (
+    expectedAccountId &&
+    claimedAccountId &&
+    expectedAccountId !== claimedAccountId
+  ) {
+    throw new Error(
+      `BAIDU_DRAMA_CLAIMED_ACCOUNT_MISMATCH: expected=${expectedAccountId} ` +
+        `actual=${claimedAccountId}`,
+    );
+  }
 
-  return claimedBaiduDramaTaskSchema.parse({
+  const payload = parsePayloadJson(claimed.payloadJson);
+  const accountConfig = recordValue(claimed.accountConfigJson);
+  const accountPlaylet = recordValue(accountConfig.baiduPlaylet);
+  const payloadPlaylet = recordValue(payload.baiduPlaylet);
+  const baiduPlaylet = {
+    ...accountConfig,
+    ...accountPlaylet,
+    ...payload,
+    ...payloadPlaylet,
+  };
+  const copyright = {
+    ...recordValue(baiduPlaylet.copyright),
+    ...recordValue(payload.copyright),
+  };
+  const qualification = {
+    ...recordValue(baiduPlaylet.qualification),
+    ...recordValue(payload.qualification),
+  };
+  const productionCost = {
+    ...recordValue(baiduPlaylet.productionCost),
+    ...recordValue(payload.productionCost),
+  };
+  const productionOrganization =
+    stringValue(baiduPlaylet.productionOrganization) ??
+    stringValue(payload.producerName);
+
+  const result = claimedBaiduDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
-    originalTitle: claimed.originalTitle,
-    baiduAccountId: claimed.accountId,
-    baiduAccountName: claimed.accountName,
+    dramaId: options.listedTask?.dramaId,
+    originalTitle:
+      claimed.originalTitle ?? options.listedTask?.originalTitle,
+    baiduAccountId:
+      claimedAccountId ?? options.listedTask?.accountId ?? expectedAccountId,
+    baiduAccountName:
+      claimed.accountName ??
+      options.listedTask?.accountName ??
+      options.runtimeOptions?.baiduAccountName,
     playlet: {
       ...baiduPlaylet,
-      title: stringValue(baiduPlaylet.title) ?? stringValue(payload.name),
-      summary: stringValue(baiduPlaylet.summary) ?? stringValue(payload.summary),
-      episodeCount: numberValue(baiduPlaylet.episodeCount) ?? numberValue(payload.episodeCount),
-      baiduPanResourceLink:
-        stringValue(baiduPlaylet.baiduPanResourceLink) ?? stringValue(payload.baiduPanResourceLink),
-      productionOrganization:
-        stringValue(baiduPlaylet.productionOrganization) ?? stringValue(payload.producerName),
-      copyright: recordValue(payload.copyright),
-      qualification: recordValue(payload.qualification),
-      productionCost: recordValue(payload.productionCost),
-      submit: booleanValue(baiduPlaylet.submit) ?? booleanValue(payload.submit) ?? true,
-    },
-  });
-}
-
-export function createMockBaiduDramaTask(): ClaimedBaiduDramaTask {
-  return normalizeClaimedBaiduDramaTask({
-    accountTaskId: 1,
-    originalTitle: "赶海救下美人鱼，她让整片大海来报恩",
-    accountId: "baidu-drama-test-account",
-    accountName: "百度短剧测试账号",
-    payloadJson: {
-      name: "赶海救下美人鱼，她让整片大海来报恩",
+      title:
+        stringValue(baiduPlaylet.title) ??
+        stringValue(payload.name) ??
+        claimed.originalTitle,
       summary:
-        "小伙林海被亲叔谋害踹入大海，危难之际被鲛人少女宁汐救下。宁汐调动海中生灵报恩，助林海满载珍贵海货死里逃生。他手握鲛鳞，赢回父亲遗留渔船，却意外撞破瀚洋集团的海底秘密。一边是凶险海上博弈，一边是鲛人少女的相助，林海步步追查，誓要揭开父亲失踪的真相。",
-      episodeCount: 10,
+        stringValue(baiduPlaylet.summary) ?? stringValue(payload.summary),
+      episodeCount:
+        numberValue(baiduPlaylet.episodeCount) ??
+        numberValue(payload.episodeCount),
       baiduPanResourceLink:
-        "通过网盘分享的文件：赶海救下美人鱼，她让整片大海来报恩\n" +
-        "链接: https://pan.baidu.com/s/1DqxBmsaWkLKKol5uHKxDNQ?pwd=hm6f 提取码: hm6f\n" +
-        "小桃漫画新剧@柒",
-      producerName: "明星说（北京）科技有限公司",
+        stringValue(baiduPlaylet.baiduPanResourceLink) ??
+        stringValue(payload.baiduPanResourceLink),
+      productionOrganization,
+      isMatched: false,
+      matchedIp: undefined,
+      director: {
+        name: productionOrganization,
+        gender: "男",
+      },
+      producers: productionOrganization ? [productionOrganization] : [],
+      screenwriters: productionOrganization ? [productionOrganization] : [],
+      actors: productionOrganization
+        ? [
+            { name: productionOrganization, roleName: productionOrganization },
+            { name: productionOrganization, roleName: productionOrganization },
+          ]
+        : [],
       copyright: {
-        productionProofFiles: [
-          "https://bj.bcebos.com/baidu-rmb-video-cover-1/195322e5336f31d7832ed44681f758cb.docx",
-        ],
-        licenseProofFiles: [
-          "https://pic.rmb.bdstatic.com/3d65a5ef802677c1269fe74cc55805b4.png?mock=license",
-        ],
+        ...copyright,
+        productionProofFiles: uniqueStrings([
+          ...stringArray(copyright.productionProofFiles),
+          ...contractFileUrls(payload, "CONTRACT"),
+        ]),
+        licenseProofFiles: uniqueStrings([
+          ...stringArray(copyright.licenseProofFiles),
+          ...contractFileUrls(payload, "AUTHORIZATION"),
+        ]),
       },
-      qualification: {
-        type: "其他微短剧",
-        proofFiles: [
-          "https://pic.rmb.bdstatic.com/3d65a5ef802677c1269fe74cc55805b4.png?mock=qualification",
-        ],
-      },
+      qualification,
       productionCost: {
-        amountWan: 1,
-        proofFiles: ["https://pic.rmb.bdstatic.com/3d65a5ef802677c1269fe74cc55805b4.png?mock=cost"],
+        ...productionCost,
+        amountWan:
+          numberValue(productionCost.amountWan) ??
+          numberValue(baiduPlaylet.productionCostWan),
+        proofFiles: uniqueStrings([
+          ...stringArray(productionCost.proofFiles),
+          ...contractFileUrls(payload, "COST_REPORT"),
+        ]),
       },
-      baiduPlaylet: {
-        title: "赶海救下美人鱼，她让整片大海来报恩",
-        audienceType: "男频",
-        secondaryCategory: "奇幻",
-        updateStatus: "已完结",
-        topic: "赶海",
-        isMatched: false,
-        director: { name: "米苏", gender: "男" },
-        producers: ["米苏"],
-        screenwriters: ["米苏"],
-        actors: [
-          { name: "林海", roleName: "林海" },
-          { name: "宁汐", roleName: "宁汐" },
-        ],
-        submit: true,
-      },
+      commitmentFiles: uniqueStrings([
+        ...stringArray(baiduPlaylet.commitmentFiles),
+        ...contractFileUrls(payload, "COMMITMENT"),
+      ]),
+      submit: true,
     },
   });
+  if (result.success) return result.data;
+
+  const details = result.error.issues
+    .map((issue) => `${issue.path.join(".") || "task"}: ${issue.message}`)
+    .join("; ");
+  throw new Error(`BAIDU_DRAMA_CLAIMED_TASK_INVALID: ${details}`);
 }
 
-// 后端接口地址尚未提供。接口就绪后只替换此函数内部即可。
-export async function claimNextBaiduDramaTaskApi(
-  options: BaiduDramaTaskApiOptions,
+async function fetchReadyTasks(options: ClaimNextBaiduDramaTaskOptions) {
+  const accountId = options.runtimeOptions?.baiduAccountId?.trim();
+  if (!accountId) throw new Error("BAIDU_DRAMA_ACCOUNT_ID_REQUIRED");
+
+  const payload = accountTaskPageResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).accountTaskPage, {
+      page: 1,
+      pageSize: readyTaskPageSize,
+      dramaId: null,
+      originalTitle: null,
+      accountId,
+      accountName: null,
+      status: "READY",
+      auditStatus: null,
+    }),
+  );
+  assertApiSuccess(payload, "BAIDU_DRAMA_ACCOUNT_TASK_PAGE_FAILED");
+  return (payload.data?.data ?? []).filter(
+    (task) => task.accountId === accountId && task.status === "READY",
+  );
+}
+
+async function reportBaiduDramaTask(
+  report: BaiduDramaTaskApiOptions & {
+    taskId: number;
+    success: boolean;
+    externalId?: string;
+    platformDramaId?: string;
+    failStage?: BaiduDramaTaskFailStage;
+    errorMessage?: string;
+    resultJson?: Record<string, unknown>;
+  },
+) {
+  const payload = baiduDramaReportResponseSchema.parse(
+    await taskClient(report).post(taskEndpoints(report).reportTask, {
+      taskId: report.taskId,
+      success: report.success,
+      externalId: report.externalId,
+      platformDramaId: report.platformDramaId,
+      failStage: report.failStage,
+      errorMessage: report.errorMessage,
+      resultJson: report.resultJson ?? {},
+    }),
+  );
+  assertApiSuccess(payload, "BAIDU_DRAMA_ACCOUNT_TASK_REPORT_FAILED");
+  if (payload.data === false) {
+    throw new Error("BAIDU_DRAMA_ACCOUNT_TASK_REPORT_FAILED: data=false");
+  }
+}
+
+async function claimTask(
+  options: ClaimNextBaiduDramaTaskOptions,
+  accountTaskId: number,
+  listedTask?: ReadyAccountTask,
+) {
+  const payload = baiduDramaClaimResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).claimTask, {
+      accountTaskId,
+    }),
+  );
+  assertApiSuccess(payload, "BAIDU_DRAMA_ACCOUNT_TASK_CLAIM_FAILED");
+  if (!payload.data) return null;
+  if (payload.data.accountTaskId !== accountTaskId) {
+    throw new Error(
+      `BAIDU_DRAMA_CLAIMED_TASK_ID_MISMATCH: expected=${accountTaskId} ` +
+        `actual=${payload.data.accountTaskId}`,
+    );
+  }
+
+  try {
+    return normalizeClaimedBaiduDramaTask(payload.data, {
+      listedTask,
+      runtimeOptions: options.runtimeOptions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await reportBaiduDramaTask({
+      ...options,
+      taskId: payload.data.accountTaskId,
+      success: false,
+      failStage: classifyClaimedTaskFailStage(error),
+      errorMessage: message,
+      resultJson: {
+        accountId: options.runtimeOptions?.baiduAccountId,
+        accountName: options.runtimeOptions?.baiduAccountName,
+      },
+    }).catch((reportError) => {
+      log(
+        options.runtimeOptions ?? {},
+        `[baidu-drama] invalid claimed task report failed: ` +
+          `accountTaskId=${payload.data?.accountTaskId} ` +
+          `error=${reportError instanceof Error ? reportError.message : String(reportError)}`,
+      );
+    });
+    throw error;
+  }
+}
+
+export async function claimBaiduDramaTaskByIdApi(
+  options: ClaimNextBaiduDramaTaskOptions & { accountTaskId: number },
 ): Promise<ClaimedBaiduDramaTask | null> {
-  void options;
-  if (mockTaskClaimed) return null;
-  mockTaskClaimed = true;
-  return createMockBaiduDramaTask();
+  return claimTask(options, options.accountTaskId);
+}
+
+export async function claimNextBaiduDramaTaskApi(
+  options: ClaimNextBaiduDramaTaskOptions,
+): Promise<ClaimedBaiduDramaTask | null> {
+  const readyTasks = await fetchReadyTasks(options);
+  if (readyTasks.length === 0) return null;
+
+  log(
+    options.runtimeOptions ?? {},
+    `[baidu-drama] fetched ${readyTasks.length} READY task(s)`,
+  );
+  for (const listedTask of readyTasks) {
+    try {
+      const claimed = await claimTask(options, listedTask.id, listedTask);
+      if (claimed) return claimed;
+    } catch (error) {
+      log(
+        options.runtimeOptions ?? {},
+        `[baidu-drama] task claim failed: accountTaskId=${listedTask.id} ` +
+          `error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return null;
 }
 
 export async function reportBaiduDramaTaskSuccessApi(
-  options: BaiduDramaTaskApiOptions & {
-    accountTaskId: number;
-  },
+  report: BaiduDramaTaskSuccessReport,
 ): Promise<void> {
-  void options;
+  await reportBaiduDramaTask({
+    ...report,
+    taskId: report.accountTaskId,
+    success: true,
+    resultJson: report.resultJson ?? { message: "提交成功" },
+  });
 }
 
 export async function reportBaiduDramaTaskErrorApi(
-  options: BaiduDramaTaskApiOptions & {
-    accountTaskId: number;
-    failStage: BaiduDramaTaskFailStage;
-    errorMessage: string;
-  },
+  report: BaiduDramaTaskErrorReport,
 ): Promise<void> {
-  void options;
+  await reportBaiduDramaTask({
+    ...report,
+    taskId: report.accountTaskId,
+    success: false,
+    failStage: report.failStage,
+    errorMessage: report.errorMessage,
+    resultJson: report.resultJson ?? {},
+  });
 }

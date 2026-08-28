@@ -2,6 +2,7 @@ export type GlobalAppConfig = {
   aiApiKey: string
   aiBaseURL: string
   aiModel: string
+  aiImageModel: string
 }
 
 export type GlobalAppConfigResult = {

@@ -16,13 +16,16 @@ export {
 export type {
   AiCompletionResult,
   AiGenerationOptions,
+  AiGeneratedImage,
   AiImageDetail,
+  AiImageGenerationResult,
   AiImageInput,
   AiJsonCompletionResult,
   AiTokenUsage,
   DramaAiClient,
   DoubaoClientOptions,
   ImageAnalysisOptions,
+  ImageGenerationOptions,
   OpenAiCompatibleClientOptions,
   TextGenerationOptions,
 } from "./types.js";

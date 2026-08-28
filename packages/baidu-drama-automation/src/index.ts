@@ -8,8 +8,16 @@ export {
 } from "./automation/browser-session.js";
 export { runBaiduDramaPublishTask } from "./automation/publish-runner.js";
 export {
+  fetchBaiduDramaAccounts,
+  type BaiduDramaAccount,
+} from "./api/account-config.js";
+export {
+  createBaiduDramaHttpClient,
+  type BaiduDramaHttpClient,
+} from "./api/http-client.js";
+export {
+  claimBaiduDramaTaskByIdApi,
   claimNextBaiduDramaTaskApi,
-  createMockBaiduDramaTask,
   normalizeClaimedBaiduDramaTask,
   reportBaiduDramaTaskErrorApi,
   reportBaiduDramaTaskSuccessApi,
@@ -29,6 +37,7 @@ export {
 } from "./shared/types.js";
 export type {
   BaiduDramaLoginState,
+  BaiduDramaApiConfig,
   BaiduDramaRuntime,
   BaiduDramaRuntimeOptions,
   BaiduDramaRuntimeStatus,

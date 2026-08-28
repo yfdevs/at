@@ -87,6 +87,7 @@ type BaiduNetdiskShareDownloadResult = {
   downloadRoot?: string;
   localPath?: string;
   expectedOwnershipImages?: number;
+  expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
@@ -106,9 +107,12 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount: number;
+  downloadEpisodeVideos?: boolean;
+  forceAssetDownload?: boolean;
   requiredOwnership?: {
     minimumImages?: number;
   };
+  requiredOwnershipFiles?: number;
   requiredPosterImages?: number;
   requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
@@ -493,6 +497,7 @@ function normalizeEnsureDownloadRequest(
   const resourceName = sanitizeWindowsName(request.resourceName);
   const localEpisodeVideoRoot = request.localEpisodeVideoRoot.trim();
   const episodeCount = Number(request.episodeCount);
+  const downloadEpisodeVideos = request.downloadEpisodeVideos !== false;
 
   if (!shareText) {
     throw new Error("百度网盘分享链接不能为空。");
@@ -503,7 +508,10 @@ function normalizeEnsureDownloadRequest(
   if (!localEpisodeVideoRoot) {
     throw new Error("微信剧集视频根目录不能为空。");
   }
-  if (!Number.isInteger(episodeCount) || episodeCount <= 0) {
+  if (
+    !Number.isInteger(episodeCount)
+    || (downloadEpisodeVideos ? episodeCount <= 0 : episodeCount < 0)
+  ) {
     throw new Error("微信剧集集数必须是正整数。");
   }
 
@@ -512,7 +520,10 @@ function normalizeEnsureDownloadRequest(
     resourceName,
     localEpisodeVideoRoot,
     episodeCount,
+    downloadEpisodeVideos,
+    forceAssetDownload: request.forceAssetDownload,
     requiredOwnership: request.requiredOwnership,
+    requiredOwnershipFiles: request.requiredOwnershipFiles,
     requiredPosterImages: request.requiredPosterImages,
     requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
@@ -613,8 +624,10 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       expectedOwnershipCounts?: {
         minimumImages?: number;
       };
+      expectedOwnershipFiles?: number;
       expectedPosterImages?: number;
       expectedAiProductionProofFiles?: number;
+      downloadEpisodeVideos?: boolean;
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -879,7 +892,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       resourceName: request.resourceName,
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
       episodeCount: request.episodeCount,
+      downloadEpisodeVideos: request.downloadEpisodeVideos,
+      forceAssetDownload: request.forceAssetDownload,
       requiredOwnership: request.requiredOwnership,
+      requiredOwnershipFiles: request.requiredOwnershipFiles,
       requiredPosterImages: request.requiredPosterImages,
       requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
       mergeOwnershipMaterials: request.mergeOwnershipMaterials,
@@ -893,8 +909,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             resourceName: downloadRequest.resourceName,
             expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
             expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
+            expectedOwnershipFiles: downloadRequest.expectedOwnershipFiles,
             expectedPosterImages: downloadRequest.expectedPosterImages,
             expectedAiProductionProofFiles: downloadRequest.expectedAiProductionProofFiles,
+            downloadEpisodeVideos: downloadRequest.downloadEpisodeVideos,
             port,
             downloadDir: downloadRequest.downloadDir,
           }),

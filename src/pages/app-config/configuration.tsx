@@ -23,6 +23,7 @@ const emptyConfig: GlobalAppConfig = {
   aiApiKey: "",
   aiBaseURL: "https://ark.cn-beijing.volces.com/api/v3",
   aiModel: "doubao-seed-2-0-pro-260215",
+  aiImageModel: "doubao-seedream-4-0-250828",
 }
 
 const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
@@ -40,6 +41,11 @@ const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
         key: "aiModel",
         label: "模型 ID",
         description: "火山方舟推荐 doubao-seed-2-0-pro-260215，可用于封面理解、主体定位、图片分类和文本推理。",
+      },
+      {
+        key: "aiImageModel",
+        label: "图片生成模型 ID",
+        description: "爱奇艺会用该模型参考竖版封面生成 16:9 横版封面。火山方舟可填写 doubao-seedream-4-0-250828。",
       },
       {
         key: "aiBaseURL",

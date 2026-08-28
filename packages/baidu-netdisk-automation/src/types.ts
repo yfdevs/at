@@ -43,8 +43,10 @@ export type BaiduNetdiskShareDownloadOptions = {
   expectedOwnershipCounts?: {
     minimumImages?: number;
   };
+  expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  downloadEpisodeVideos?: boolean;
   port?: number;
   downloadDir?: string;
 };
@@ -101,6 +103,7 @@ export type BaiduNetdiskRemoteVideoListing = {
 
 export type BaiduNetdiskRemoteOwnershipListing = {
   files: BaiduNetdiskRemoteOwnershipFile[];
+  allFiles: BaiduNetdiskRemoteOwnershipFile[];
   roots: Array<{ path: string; fsId?: number | string }>;
   rootPath?: string;
   rootFsId?: number | string;
@@ -125,6 +128,7 @@ export type BaiduNetdiskShareDownloadResult = {
   remotePosters?: BaiduNetdiskRemotePosterListing;
   remoteAiProductionProofs?: BaiduNetdiskRemoteAiProductionProofListing;
   expectedOwnershipImages?: number;
+  expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   completed: boolean;

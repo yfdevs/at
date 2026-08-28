@@ -1533,7 +1533,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   };
   const scannedDirs = [];
   const scannedDirPaths = new Set();
-  const rootIsOwnership = /工程|权属/.test(String(finalFileName).replace(/\s+/g, ""));
+  const rootIsOwnership = /工程|权属|资质|版权/.test(String(finalFileName).replace(/\s+/g, ""));
   const rootIsAiProductionProof = /ai制作证明/i.test(String(finalFileName).replace(/\s+/g, ""));
   const queue = [{
     path: normalizeDir(savedPath),
@@ -1545,6 +1545,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   }];
   const allEntriesByPath = new Map();
   const ownershipFiles = new Map();
+  const ownershipAllFiles = new Map();
   const ownershipRoots = new Map();
   const namedPosterFiles = new Map();
   const directoryPosterFiles = new Map();
@@ -1581,7 +1582,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
       const entryPath = itemPath(entry) || joinPath(current.path, name);
       if (entry?.isdir === 1 || entry?.isdir === true) {
         if (current.depth < REMOTE_VIDEO_SCAN_MAX_DEPTH) {
-          const entersOwnershipScope = !current.ownershipScope && /工程|权属/.test(String(name).replace(/\s+/g, ""));
+          const entersOwnershipScope = !current.ownershipScope
+            && /工程|权属|资质|版权/.test(String(name).replace(/\s+/g, ""));
           const entersAiProductionProofScope = !current.aiProductionProofScope && /ai制作证明/i.test(String(name).replace(/\s+/g, ""));
           if (entersOwnershipScope) ownershipRoots.set(normalizeDir(entryPath), itemFsId(entry));
           if (entersAiProductionProofScope) aiProductionProofRoots.set(normalizeDir(entryPath), itemFsId(entry));
@@ -1597,6 +1599,14 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
         continue;
       }
       const lowerName = name.toLowerCase();
+      if (current.ownershipScope && /\.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)) {
+        ownershipAllFiles.set(entryPath, {
+          name,
+          path: entryPath,
+          fsId: itemFsId(entry),
+          size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+        });
+      }
       if (
         /\.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)
         && (current.aiProductionProofScope || /ai制作证明/i.test(name.replace(/\s+/g, "")))
@@ -1732,6 +1742,8 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
     remoteOwnership: {
       files: [...ownershipFiles.values()]
         .sort((left, right) => (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER) || left.path.localeCompare(right.path)),
+      allFiles: [...ownershipAllFiles.values()]
+        .sort((left, right) => left.path.localeCompare(right.path, "zh-CN", { numeric: true })),
       roots: [...ownershipRoots.entries()].map(([path, fsId]) => ({ path, fsId })),
       rootPath: [...ownershipRoots.keys()][0] || "",
       rootFsId: [...ownershipRoots.values()][0] || "",
@@ -2484,8 +2496,10 @@ async function submitSavedDownload(
   downloadDir?: string,
   expectedEpisodeCount?: number,
   expectedOwnershipCounts?: BaiduNetdiskShareDownloadOptions["expectedOwnershipCounts"],
+  expectedOwnershipFiles?: number,
   expectedPosterImages?: number,
   expectedAiProductionProofFiles?: number,
+  downloadEpisodeVideos = true,
   saveOptions: SaveShareOptions = {},
 ) {
   const saved = await saveShareToOwnNetdisk(shareTarget, share, saveOptions);
@@ -2502,8 +2516,15 @@ async function submitSavedDownload(
         : `已保存到网盘：${saved.resourceRootPath}，新增=${saved.transferredItemCount} (${saved.locateSource})`,
   );
 
-  const targetName = saved.fileName || share.name;
-  log(`选中视频目录：${saved.savedPath}，名称=${targetName}`);
+  const videoTargetName = saved.fileName || share.name;
+  const targetName = downloadEpisodeVideos
+    ? videoTargetName
+    : saved.resourceRootName || share.name;
+  log(
+    downloadEpisodeVideos
+      ? `选中视频目录：${saved.savedPath}，名称=${videoTargetName}`
+      : `素材-only 模式：跳过视频目录下载，资源目录=${saved.resourceRootPath}`,
+  );
   const remoteVideos = saved.remoteVideos;
   const remoteOwnership = saved.remoteOwnership;
   const remotePosters = saved.remotePosters;
@@ -2586,8 +2607,10 @@ async function submitSavedDownload(
           downloadDir,
           expectedEpisodeCount,
           expectedOwnershipCounts,
+          expectedOwnershipFiles,
           expectedPosterImages,
           expectedAiProductionProofFiles,
+          downloadEpisodeVideos,
           { isolatedRoot: true, isolatedRootUnique: true },
         );
       }
@@ -2615,6 +2638,15 @@ async function submitSavedDownload(
         `请在分享资源中添加“权属”或“工程”目录及对应图片。`,
     );
   }
+  const requiredOwnershipFiles = Math.max(0, expectedOwnershipFiles ?? 0);
+  log(`网盘权属材料清单：文件=${remoteOwnership.allFiles.length}/${requiredOwnershipFiles}`);
+  if (remoteOwnership.allFiles.length < requiredOwnershipFiles) {
+    throw new Error(
+      `百度网盘权属文件数量不足。` +
+        `至少需要${requiredOwnershipFiles}个 JPG、PNG 或 PDF，实际找到${remoteOwnership.allFiles.length}个。` +
+        `请在分享资源中添加独立的“权属”“工程”“资质”或“版权”目录。`,
+    );
+  }
   const requiredPosterImages = Math.max(0, expectedPosterImages ?? 0);
   log(`网盘海报封面清单：图片=${remotePosters.files.length}/${requiredPosterImages}`);
   if (remotePosters.files.length < requiredPosterImages) {
@@ -2637,35 +2669,54 @@ async function submitSavedDownload(
   // ownership root is submitted separately as a complete directory below.
   const downloadTargetName = targetName;
   const task = {
-    targetName: downloadTargetName,
+    targetName: videoTargetName,
     savedPath: saved.savedPath,
     fsId: saved.fsId,
     downloadRoot: downloadDir,
   };
   let downloadRoot = downloadDir;
-  const nativeSubmitted = await submitNativeDownloadTask(port, task);
+  const nativeSubmitted = downloadEpisodeVideos
+    ? await submitNativeDownloadTask(port, task)
+    : true;
   let videoSubmitted = nativeSubmitted;
-  if (nativeSubmitted) {
+  if (downloadEpisodeVideos && nativeSubmitted) {
     await openClientTransfers(port);
     const started = Date.now();
     while (Date.now() - started < 15000) {
-      if (await isPresentInClientTransfers(port, downloadTargetName)) {
+      if (await isPresentInClientTransfers(port, videoTargetName)) {
         break;
       }
       await sleep(500);
     }
-    if (!await isPresentInClientTransfers(port, downloadTargetName)) {
+    if (!await isPresentInClientTransfers(port, videoTargetName)) {
       videoSubmitted = false;
-      log(`客户端内部下载任务未出现在传输列表，回退界面下载：${downloadTargetName}`);
+      log(`客户端内部下载任务未出现在传输列表，回退界面下载：${videoTargetName}`);
     }
   }
 
   // Download the small ownership directory as one task. Baidu's native API treats
   // file paths as directories, so submitting individual images creates empty folders.
   const ownershipTaskNames: string[] = [];
-  const submittedAssetRoots = new Set<string>([remoteVideos.rootPath]);
+  const submittedAssetRoots = new Set<string>(
+    downloadEpisodeVideos ? [remoteVideos.rootPath] : [],
+  );
+  const normalizeAssetPath = (value: string) =>
+    `/${String(value || "").split("/").filter(Boolean).join("/")}`;
+  const assertDedicatedAssetRoot = (assetRoot: string, materialName: string) => {
+    if (
+      !downloadEpisodeVideos
+      && remoteVideos.allVideoFiles.length > 0
+      && normalizeAssetPath(assetRoot) === normalizeAssetPath(remoteVideos.rootPath)
+    ) {
+      throw new Error(
+        `百度网盘${materialName}与正片视频混放在同一目录，素材-only 模式不会下载该目录。` +
+          `请将${materialName}放入独立子目录后重试。`,
+      );
+    }
+  };
   for (const ownershipRoot of remoteOwnership.roots) {
     if (!ownershipRoot.path || !ownershipRoot.fsId || submittedAssetRoots.has(ownershipRoot.path)) continue;
+    assertDedicatedAssetRoot(ownershipRoot.path, "权属文件");
     const ownershipTaskName = ownershipRoot.path.split("/").filter(Boolean).pop() || "权属文件";
     const localOwnershipCandidates = downloadDir
       ? [
@@ -2696,6 +2747,7 @@ async function submitSavedDownload(
 
   for (const posterRoot of remotePosters.roots) {
     if (!posterRoot.path || !posterRoot.fsId || submittedAssetRoots.has(posterRoot.path)) continue;
+    assertDedicatedAssetRoot(posterRoot.path, "海报封面");
     const posterTaskName = posterRoot.path.split("/").filter(Boolean).pop() || "海报封面";
     const localPosterCandidates = downloadDir
       ? [path.join(downloadDir, saved.resourceRootName, posterTaskName), path.join(downloadDir, posterTaskName)]
@@ -2717,6 +2769,7 @@ async function submitSavedDownload(
   if (requiredAiProductionProofFiles > 0) {
     for (const proofRoot of remoteAiProductionProofs.roots) {
       if (!proofRoot.path || !proofRoot.fsId || submittedAssetRoots.has(proofRoot.path)) continue;
+      assertDedicatedAssetRoot(proofRoot.path, "AI制作证明");
       const proofTaskName = proofRoot.path.split("/").filter(Boolean).pop() || "AI制作证明";
       const proofSubmitted = await submitNativeDownloadTask(port, {
         targetName: proofTaskName,
@@ -2729,8 +2782,8 @@ async function submitSavedDownload(
     }
   }
 
-  if (!videoSubmitted) {
-    await downloadSavedFolderFromClientSearch(port, downloadTargetName);
+  if (downloadEpisodeVideos && !videoSubmitted) {
+    await downloadSavedFolderFromClientSearch(port, videoTargetName);
     downloadRoot = await confirmDownloadSetting(port, downloadDir);
     await waitForDownloadSubmitted(port, { ...task, downloadRoot });
   }
@@ -2804,10 +2857,12 @@ export async function downloadBaiduNetdiskShare(
     listTarget,
     share,
     downloadDir,
-    options.expectedEpisodeCount,
+    options.downloadEpisodeVideos === false ? undefined : options.expectedEpisodeCount,
     options.expectedOwnershipCounts,
+    options.expectedOwnershipFiles,
     options.expectedPosterImages,
     options.expectedAiProductionProofFiles,
+    options.downloadEpisodeVideos !== false,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
@@ -2825,6 +2880,7 @@ export async function downloadBaiduNetdiskShare(
     remotePosters,
     remoteAiProductionProofs,
     expectedOwnershipImages: remoteOwnership.files.length,
+    expectedOwnershipFiles: remoteOwnership.allFiles.length,
     expectedPosterImages: remotePosters.files.length,
     expectedAiProductionProofFiles: remoteAiProductionProofs.files.length,
     completed: false,

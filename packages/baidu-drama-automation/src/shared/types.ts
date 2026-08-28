@@ -6,6 +6,7 @@ export type BaiduDramaTaskFailStage =
   | "FILL_FORM"
   | "UPLOAD_FILE"
   | "SUBMIT"
+  | "RECOGNIZE_RESULT"
   | "OTHER";
 
 const requiredText = z.string().trim().min(1);
@@ -62,6 +63,7 @@ export const baiduDramaTaskPayloadSchema = z
     copyright: commonCopyrightSchema,
     qualification: commonQualificationSchema,
     productionCost: commonProductionCostSchema,
+    commitmentFiles: z.array(fileReference).default([]),
     productionOrganization: requiredText.max(30),
     submit: z.boolean().default(true),
   })
@@ -87,6 +89,11 @@ export const claimedBaiduDramaTaskSchema = z.object({
 export type BaiduDramaTaskPayload = z.infer<typeof baiduDramaTaskPayloadSchema>;
 export type ClaimedBaiduDramaTask = z.infer<typeof claimedBaiduDramaTaskSchema>;
 
+export type BaiduDramaApiConfig = {
+  baseUrl: string;
+  timeoutMs?: number;
+};
+
 export type BaiduDramaRuntimeStatus = {
   platform: "baidu-drama";
   running: boolean;
@@ -111,6 +118,9 @@ export type BaiduDramaRuntimeOptions = {
   assetDownloadDir?: string;
   logFilePath?: string;
   logRetentionDays?: number;
+  baiduAccountId?: string;
+  baiduAccountName?: string;
+  apiConfig?: BaiduDramaApiConfig;
   localEpisodeVideoRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadWaitTimeoutMinutes?: number;

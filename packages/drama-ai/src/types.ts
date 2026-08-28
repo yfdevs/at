@@ -44,6 +44,26 @@ export interface ImageAnalysisOptions extends AiGenerationOptions {
   prompt: string;
 }
 
+export interface ImageGenerationOptions {
+  prompt: string;
+  referenceImages?: readonly AiImageInput[];
+  model?: string;
+  size?: string;
+  watermark?: boolean;
+}
+
+export interface AiGeneratedImage {
+  data: Uint8Array;
+  mimeType: string;
+  revisedPrompt?: string;
+}
+
+export interface AiImageGenerationResult {
+  images: AiGeneratedImage[];
+  model: string;
+  requestId?: string;
+}
+
 export interface AiTokenUsage {
   inputTokens: number;
   outputTokens: number;
@@ -64,5 +84,6 @@ export interface AiJsonCompletionResult extends AiCompletionResult {
 
 export interface DramaAiClient {
   analyzeImages(options: ImageAnalysisOptions): Promise<AiCompletionResult>;
+  generateImage(options: ImageGenerationOptions): Promise<AiImageGenerationResult>;
   generateText(options: TextGenerationOptions): Promise<AiCompletionResult>;
 }

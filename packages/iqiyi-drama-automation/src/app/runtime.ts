@@ -1,0 +1,310 @@
+import type { BrowserContext, Page } from "playwright";
+import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
+
+import {
+  claimNextIqiyiDramaTaskApi,
+  reportIqiyiDramaTaskErrorApi,
+  reportIqiyiDramaTaskSuccessApi,
+} from "../api/task.js";
+import {
+  IQIYI_COMIC_DRAMA_CREATE_URL,
+  IQIYI_DRAMA_LOGIN_URL,
+  IQIYI_DRAMA_PLATFORM,
+  IQIYI_SHORT_DRAMA_CREATE_URL,
+} from "../shared/constants.js";
+import {
+  cleanupOldLogFiles,
+  configureIqiyiDramaLogger,
+  errorLog,
+  log,
+  runWithLogContext,
+} from "../shared/logger.js";
+import { prepareIqiyiMaterials } from "../shared/materials.js";
+import type {
+  ClaimedIqiyiDramaTask,
+  IqiyiDramaRuntime,
+  IqiyiDramaRuntimeOptions,
+  IqiyiDramaRuntimeStatus,
+  IqiyiDramaTaskFailStage,
+} from "../shared/types.js";
+import {
+  iqiyiDramaLoginStateFromUrl,
+  launchIqiyiDramaBrowserContext,
+  saveCredentialState,
+  waitForIqiyiLogin,
+} from "../automation/browser-session.js";
+import { runIqiyiPublishTask } from "../automation/publish-runner.js";
+
+type LastTask = IqiyiDramaRuntimeStatus["lastTask"];
+
+function message(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function failStage(error: unknown, fallback: IqiyiDramaTaskFailStage) {
+  const value = message(error);
+  if (/LOGIN|登录/i.test(value)) return "LOGIN";
+  if (/cover|poster|ownership|copyright|asset|upload|封面|海报|权属|版权|上传|文件/i.test(value)) {
+    return "UPLOAD_FILE";
+  }
+  if (/SUBMIT|提交/i.test(value)) return "SUBMIT";
+  if (/FIELD|FORM|表单|字段/i.test(value)) return "FILL_FORM";
+  return fallback;
+}
+
+async function reportWithRetry(
+  options: IqiyiDramaRuntimeOptions,
+  accountTaskId: number,
+  action: () => Promise<void>,
+) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    try {
+      await action();
+      return;
+    } catch (error) {
+      lastError = error;
+      if (attempt < 3) {
+        log(
+          options,
+          `[iqiyi-drama] task report retry ${attempt}/3: `
+            + `accountTaskId=${accountTaskId} error=${message(error)}`,
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      }
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function ensureRemoteMaterials(
+  task: ClaimedIqiyiDramaTask,
+  options: IqiyiDramaRuntimeOptions,
+) {
+  const shareText = task.playlet.baiduPanResourceLink?.trim();
+  if (!shareText) return;
+  if (!options.ensureBaiduNetdiskResource) {
+    throw new Error("任务包含百度网盘资源链接，但爱奇艺运行时未接入百度网盘下载能力。");
+  }
+  const localMaterialRoot = options.localMaterialRoot?.trim();
+  if (!localMaterialRoot) throw new Error("请先配置爱奇艺本地素材根目录。");
+
+  const maximumAttempts = Math.max(0, options.baiduNetdiskDownloadRetryAttempts ?? 3) + 1;
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      log(options, "[iqiyi-drama] downloading cover and ownership materials", {
+        attempt,
+        maximumAttempts,
+        resourceName: task.originalTitle,
+      });
+      await options.ensureBaiduNetdiskResource({
+        shareText,
+        resourceName: task.originalTitle,
+        localEpisodeVideoRoot: localMaterialRoot,
+        episodeCount: 0,
+        downloadEpisodeVideos: false,
+        forceAssetDownload: true,
+        requiredOwnership: { minimumImages: 0 },
+        requiredOwnershipFiles: task.playlet.ownershipFiles.length > 0 ? 0 : 1,
+        requiredPosterImages: 1,
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (isNonRetryableBaiduNetdiskResourceError(error) || attempt >= maximumAttempts) break;
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  throw lastError instanceof Error ? lastError : new Error(String(lastError));
+}
+
+async function executeTask(
+  page: Page,
+  context: BrowserContext,
+  task: ClaimedIqiyiDramaTask,
+  options: IqiyiDramaRuntimeOptions,
+  setLastTask: (task: LastTask) => void,
+) {
+  setLastTask({
+    accountTaskId: task.accountTaskId,
+    originalTitle: task.originalTitle,
+    dramaType: task.playlet.dramaType,
+    status: "running",
+    updatedAt: new Date().toISOString(),
+  });
+  let published = false;
+  try {
+    await runWithLogContext(
+      {
+        accountTaskId: task.accountTaskId,
+        iqiyiAccountId: task.iqiyiAccountId,
+        iqiyiAccountName: task.iqiyiAccountName,
+      },
+      async () => {
+        await ensureRemoteMaterials(task, options);
+        await prepareIqiyiMaterials(task, options);
+        await runIqiyiPublishTask(page, context, task, options);
+      },
+    );
+    published = true;
+    await reportWithRetry(options, task.accountTaskId, () =>
+      reportIqiyiDramaTaskSuccessApi({
+        apiConfig: options.apiConfig,
+        runtimeOptions: options,
+        accountTaskId: task.accountTaskId,
+        resultJson: {
+          activeUrl: page.url(),
+          accountId: task.iqiyiAccountId,
+          accountName: task.iqiyiAccountName,
+          dramaType: task.playlet.dramaType,
+          generatedLandscapeCover: task.playlet.horizontalCoverFile,
+        },
+      })
+    );
+    setLastTask({
+      accountTaskId: task.accountTaskId,
+      originalTitle: task.originalTitle,
+      dramaType: task.playlet.dramaType,
+      status: "succeeded",
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    const errorMessage = message(error);
+    setLastTask({
+      accountTaskId: task.accountTaskId,
+      originalTitle: task.originalTitle,
+      dramaType: task.playlet.dramaType,
+      status: "failed",
+      errorMessage,
+      updatedAt: new Date().toISOString(),
+    });
+    if (!published) {
+      await reportWithRetry(options, task.accountTaskId, () =>
+        reportIqiyiDramaTaskErrorApi({
+          apiConfig: options.apiConfig,
+          runtimeOptions: options,
+          accountTaskId: task.accountTaskId,
+          failStage: failStage(error, "FILL_FORM"),
+          errorMessage,
+          resultJson: { activeUrl: page.url(), dramaType: task.playlet.dramaType },
+        })
+      ).catch((reportError) => {
+        errorLog(options, `[iqiyi-drama] fail callback failed: ${message(reportError)}`);
+      });
+    }
+    throw error;
+  }
+}
+
+async function installFixedTitle(context: BrowserContext, title: string) {
+  await context.addInitScript((fixedTitle) => {
+    const apply = () => {
+      if (document.title !== fixedTitle) document.title = fixedTitle;
+    };
+    window.addEventListener("DOMContentLoaded", apply);
+    window.addEventListener("load", apply);
+    window.setInterval(apply, 1_000);
+  }, title);
+}
+
+export async function startIqiyiDramaRuntime(
+  options: IqiyiDramaRuntimeOptions = {},
+): Promise<IqiyiDramaRuntime> {
+  if (!options.userDataDir) throw new Error("爱奇艺浏览器用户数据目录未配置。");
+  configureIqiyiDramaLogger(options);
+  cleanupOldLogFiles(options);
+
+  let running = true;
+  let lastTask: LastTask;
+  let loopTimer: ReturnType<typeof setTimeout> | null = null;
+  let wakeLoop: (() => void) | null = null;
+  const context = await launchIqiyiDramaBrowserContext(options.userDataDir, options);
+  await installFixedTitle(
+    context,
+    options.iqiyiAccountName?.trim() || options.iqiyiAccountId?.trim() || "爱奇艺",
+  );
+  context.on("close", () => {
+    running = false;
+    wakeLoop?.();
+  });
+  const page = await context.newPage();
+
+  const waitNext = () => new Promise<void>((resolve) => {
+    wakeLoop = resolve;
+    loopTimer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
+  }).finally(() => {
+    if (loopTimer) clearTimeout(loopTimer);
+    loopTimer = null;
+    wakeLoop = null;
+  });
+
+  const loop = (async () => {
+    await page.goto(IQIYI_COMIC_DRAMA_CREATE_URL, {
+      waitUntil: "domcontentloaded",
+      timeout: 60_000,
+    }).catch((error) => errorLog(options, `[iqiyi-drama] initial page failed: ${message(error)}`));
+    if (iqiyiDramaLoginStateFromUrl(page.url()) === "login-required") {
+      await waitForIqiyiLogin(page, context, options).catch((error) => {
+        errorLog(options, `[iqiyi-drama] login wait failed: ${message(error)}`);
+      });
+    }
+    while (running && !page.isClosed()) {
+      try {
+        if (iqiyiDramaLoginStateFromUrl(page.url()) === "login-required") {
+          await waitForIqiyiLogin(page, context, options);
+        }
+        const task = await claimNextIqiyiDramaTaskApi({
+          apiConfig: options.apiConfig,
+          runtimeOptions: options,
+        });
+        if (task) {
+          const taskPage = await context.newPage();
+          try {
+            await executeTask(taskPage, context, task, options, (value) => {
+              lastTask = value;
+            });
+          } finally {
+            await taskPage.close().catch(() => undefined);
+          }
+        } else {
+          log(options, "[iqiyi-drama] no claimable task");
+        }
+      } catch (error) {
+        errorLog(options, `[iqiyi-drama] task loop tick failed: ${message(error)}`);
+      }
+      if (!running || page.isClosed()) break;
+      await waitNext();
+    }
+  })();
+
+  return {
+    getStatus() {
+      return {
+        platform: IQIYI_DRAMA_PLATFORM,
+        running,
+        loginState: iqiyiDramaLoginStateFromUrl(page.url()),
+        activeUrl: page.url(),
+        shortDramaCreateUrl: IQIYI_SHORT_DRAMA_CREATE_URL,
+        comicDramaCreateUrl: IQIYI_COMIC_DRAMA_CREATE_URL,
+        loginUrl: IQIYI_DRAMA_LOGIN_URL,
+        userDataDir: options.userDataDir!,
+        accountProfileName: options.accountProfileName,
+        accountDir: options.accountDir,
+        credentialStatePath: options.credentialStatePath,
+        assetDownloadDir: options.assetDownloadDir,
+        logFilePath: options.logFilePath,
+        lastTask,
+      };
+    },
+    async stop() {
+      running = false;
+      if (loopTimer) clearTimeout(loopTimer);
+      wakeLoop?.();
+      await saveCredentialState(context, options).catch(() => undefined);
+      await context.close().catch(() => undefined);
+      await loop.catch(() => undefined);
+      log(options, "[iqiyi-drama] runtime stopped");
+    },
+  };
+}

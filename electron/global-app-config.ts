@@ -11,17 +11,20 @@ const ARK_API_KEY_URL = "https://console.volcengine.com/ark/region:ark+cn-beijin
 const LEGACY_DEFAULT_AI_BASE_URL = "https://api.openai.com/v1";
 const RECOMMENDED_AI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
+const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
 
 export type GlobalAppConfig = {
   aiApiKey: string;
   aiBaseURL: string;
   aiModel: string;
+  aiImageModel: string;
 };
 
 type StoredGlobalAppConfig = {
   aiApiKeyCiphertext: string;
   aiBaseURL: string;
   aiModel: string;
+  aiImageModel: string;
 };
 
 type GlobalAppConfigStore = {
@@ -32,6 +35,7 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiApiKeyCiphertext: "",
   aiBaseURL: RECOMMENDED_AI_BASE_URL,
   aiModel: RECOMMENDED_AI_MODEL,
+  aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
 };
 
 let registered = false;
@@ -89,6 +93,7 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiApiKey: config.aiApiKey?.trim() ?? "",
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel?.trim() ?? "",
+    aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
   };
 }
 
@@ -107,6 +112,7 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiApiKey: decryptApiKey(config.aiApiKeyCiphertext),
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel.trim(),
+    aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
   };
 }
 
@@ -117,6 +123,7 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiApiKeyCiphertext: encryptApiKey(normalized.aiApiKey),
     aiBaseURL: normalized.aiBaseURL,
     aiModel: normalized.aiModel,
+    aiImageModel: normalized.aiImageModel,
   });
 
   return normalized;
@@ -147,6 +154,12 @@ export function getConfiguredAiClientOptions(): OpenAiCompatibleClientOptions {
 
 export function createConfiguredAiClient(): OpenAiCompatibleClient {
   return createOpenAiCompatibleClient(getConfiguredAiClientOptions());
+}
+
+export function getConfiguredAiImageModel() {
+  const model = readGlobalAppConfig().aiImageModel.trim();
+  if (!model) throw new Error("DRAMA_AI_IMAGE_MODEL_REQUIRED");
+  return model;
 }
 
 async function testAiConfig(config: Partial<GlobalAppConfig>) {

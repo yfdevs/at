@@ -75,7 +75,13 @@ export async function prepareBaiduDramaResources(
 ) {
   const resourceName = baiduDramaResourceName(task);
   const localEpisodeVideoRoot = baiduDramaLocalRoot(options);
-  const [productionProofFiles, licenseProofFiles, qualificationProofFiles, costProofFiles] =
+  const [
+    productionProofFiles,
+    licenseProofFiles,
+    qualificationProofFiles,
+    costProofFiles,
+    commitmentFiles,
+  ] =
     await Promise.all([
       prepareMaterialReferences(
         task.playlet.copyright.productionProofFiles,
@@ -97,11 +103,17 @@ export async function prepareBaiduDramaResources(
         "production-cost",
         options,
       ),
+      prepareMaterialReferences(
+        task.playlet.commitmentFiles,
+        "commitment",
+        options,
+      ),
     ]);
   task.playlet.copyright.productionProofFiles = productionProofFiles;
   task.playlet.copyright.licenseProofFiles = licenseProofFiles;
   task.playlet.qualification.proofFiles = qualificationProofFiles;
   task.playlet.productionCost.proofFiles = costProofFiles;
+  task.playlet.commitmentFiles = commitmentFiles;
   await validateLocalEpisodeVideos({
     localEpisodeVideoRoot,
     resourceName,

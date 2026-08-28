@@ -1,4 +1,5 @@
 import path from "node:path";
+import { copyFile, mkdir, readdir, stat } from "node:fs/promises";
 import {
   collectEpisodeDirectorySummaries,
   composeOwnershipMaterialsIntoTwo,
@@ -34,6 +35,7 @@ export type BaiduNetdiskShareDownloadResult = {
   downloadRoot?: string;
   localPath?: string;
   expectedOwnershipImages?: number;
+  expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   completed: boolean;
@@ -69,7 +71,10 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount: number;
+  downloadEpisodeVideos?: boolean;
+  forceAssetDownload?: boolean;
   requiredOwnership?: OwnershipMaterialRequirements;
+  requiredOwnershipFiles?: number;
   requiredPosterImages?: number;
   requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
@@ -84,8 +89,10 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
     resourceName: string;
     expectedEpisodeCount?: number;
     expectedOwnershipCounts?: OwnershipMaterialRequirements;
+    expectedOwnershipFiles?: number;
     expectedPosterImages?: number;
     expectedAiProductionProofFiles?: number;
+    downloadEpisodeVideos?: boolean;
     downloadDir: string;
   }) => Promise<BaiduNetdiskShareDownloadResult>;
   getDownloadTaskStatus?: (request: {
@@ -259,6 +266,61 @@ async function listCurrentOwnershipMaterials(
   ).values()];
 }
 
+type LocalRawOwnershipFile = {
+  file: string;
+  size: number;
+  modifiedAtMs: number;
+};
+
+async function listCurrentRawOwnershipFiles(
+  localPaths: string[],
+  targetRoot: string,
+  resourceName: string,
+) {
+  const files = new Map<string, LocalRawOwnershipFile>();
+  const roots = [...new Set([
+    ...localPaths,
+    playletDir(targetRoot, resourceName),
+  ].map((item) => path.resolve(item)))];
+  const walk = async (
+    directory: string,
+    inOwnershipDirectory: boolean,
+    depth: number,
+  ): Promise<void> => {
+    if (depth > 8) return;
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      const file = path.join(directory, entry.name);
+      if (entry.isDirectory()) {
+        await walk(
+          file,
+          inOwnershipDirectory || /工程|权属|资质|版权/.test(entry.name),
+          depth + 1,
+        );
+      } else if (
+        inOwnershipDirectory
+        && entry.isFile()
+        && /\.(?:jpe?g|png|bmp|webp|pdf)$/i.test(entry.name)
+      ) {
+        const info = await stat(file).catch(() => undefined);
+        if (info?.isFile() && info.size > 0) {
+          files.set(path.resolve(file).toLowerCase(), {
+            file,
+            size: info.size,
+            modifiedAtMs: info.mtimeMs,
+          });
+        }
+      }
+    }
+  };
+  for (const root of roots) {
+    await walk(root, /工程|权属|资质|版权/.test(path.basename(root)), 0);
+  }
+  return [...files.values()].sort((left, right) =>
+    left.file.localeCompare(right.file, "zh-CN", { numeric: true })
+  );
+}
+
 async function listCurrentPosterImages(
   localPaths: string[],
   targetRoot: string,
@@ -317,6 +379,41 @@ function ownershipSignature(materials: LocalOwnershipMaterialSet) {
     .join("|");
 }
 
+function rawOwnershipSignature(files: LocalRawOwnershipFile[]) {
+  return files.map((file) => `${file.file}:${file.size}:${file.modifiedAtMs}`).join("|");
+}
+
+async function preserveOwnershipDocuments(options: {
+  files: LocalRawOwnershipFile[];
+  targetRoot: string;
+  resourceName: string;
+  onLog?: (message: string) => void;
+}) {
+  const documents = options.files.filter((file) => path.extname(file.file).toLowerCase() === ".pdf");
+  if (documents.length === 0) return;
+  const targetDir = path.join(playletDir(options.targetRoot, options.resourceName), "权属文件");
+  await mkdir(targetDir, { recursive: true });
+  for (const document of documents) {
+    const relative = path.relative(targetDir, document.file);
+    if (!relative.startsWith("..") && !path.isAbsolute(relative)) continue;
+    const parsed = path.parse(path.basename(document.file));
+    let target = path.join(targetDir, parsed.base);
+    let suffix = 1;
+    while (true) {
+      const existing = await stat(target).catch(() => undefined);
+      if (!existing) break;
+      if (existing.size === document.size) {
+        target = "";
+        break;
+      }
+      target = path.join(targetDir, `${parsed.name}-${suffix}${parsed.ext}`);
+      suffix += 1;
+    }
+    if (target) await copyFile(document.file, target);
+  }
+  options.onLog?.(`[video-assets] 权属 PDF 持久化完成：文件=${documents.length} dir=${targetDir}`);
+}
+
 function posterSignature(files: LocalPosterImageFile[]) {
   return files.map((file) => `${file.file}:${file.size}`).join("|");
 }
@@ -328,16 +425,24 @@ function aiProductionProofSignature(files: LocalAiProductionProofFile[]) {
 async function standardizeCompleteResources(options: {
   files: LocalEpisodeFile[];
   ownership: LocalOwnershipMaterialSet;
+  rawOwnershipFiles: LocalRawOwnershipFile[];
   posters: LocalPosterImageFile[];
   aiProductionProofs: LocalAiProductionProofFile[];
   ownershipRequirements: OwnershipMaterialRequirements;
   targetRoot: string;
   resourceName: string;
+  standardizeEpisodeVideos?: boolean;
   onLog?: (message: string) => void;
 }) {
   await standardizeOwnershipMaterialsToRoot({
     materials: options.ownership,
     requirements: options.ownershipRequirements,
+    targetRoot: options.targetRoot,
+    resourceName: options.resourceName,
+    onLog: options.onLog,
+  });
+  await preserveOwnershipDocuments({
+    files: options.rawOwnershipFiles,
     targetRoot: options.targetRoot,
     resourceName: options.resourceName,
     onLog: options.onLog,
@@ -356,12 +461,15 @@ async function standardizeCompleteResources(options: {
       onLog: options.onLog,
     });
   }
-  return standardizeEpisodeFilesToRoot({
-    files: options.files,
-    targetRoot: options.targetRoot,
-    resourceName: options.resourceName,
-    onLog: options.onLog,
-  });
+  if (options.standardizeEpisodeVideos !== false) {
+    return standardizeEpisodeFilesToRoot({
+      files: options.files,
+      targetRoot: options.targetRoot,
+      resourceName: options.resourceName,
+      onLog: options.onLog,
+    });
+  }
+  return playletDir(options.targetRoot, options.resourceName);
 }
 
 async function composeStandardizedOwnershipMaterials(options: {
@@ -422,13 +530,16 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   targetRoot: string;
   resourceName: string;
   episodeCount: number;
+  requireEpisodeVideos: boolean;
   ownershipRequirements: OwnershipMaterialRequirements;
+  requiredOwnershipFiles: number;
   requiredPosterImages: number;
   requiredAiProductionProofFiles: number;
   mergeOwnershipMaterials?: boolean;
   sourceLocalPath?: string;
   downloadTaskName?: string;
   expectedOwnershipImages?: number;
+  expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   timeoutMs: number;
@@ -481,7 +592,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     if (newlyStableFiles.length > 0) {
       options.onStableEpisodeFiles?.(newlyStableFiles);
     }
-    let complete = isCompleteEpisodeFileSet(files, options.episodeCount);
+    let complete = !options.requireEpisodeVideos
+      || isCompleteEpisodeFileSet(files, options.episodeCount);
     let ownership = await listCurrentOwnershipMaterials(
       localPaths,
       options.targetRoot,
@@ -494,6 +606,11 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       false,
       true,
     );
+    let ownershipSourceFiles = await listCurrentRawOwnershipFiles(
+      localPaths,
+      options.targetRoot,
+      options.resourceName,
+    );
     let ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
     let posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
     let postersComplete = posters.length >= options.requiredPosterImages;
@@ -503,7 +620,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.resourceName,
     );
     let aiProductionProofsComplete = aiProductionProofs.length >= options.requiredAiProductionProofFiles;
-    let signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}`;
+    let signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${rawOwnershipSignature(ownershipSourceFiles)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}`;
     let stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
     let stable = stableSignatures.get(stableKey);
     let nextStable = {
@@ -518,6 +635,10 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.ownershipRequirements.minimumImages ?? 0,
       options.expectedOwnershipImages ?? 0,
     );
+    const expectedOwnershipFiles = Math.max(
+      options.requiredOwnershipFiles,
+      options.expectedOwnershipFiles ?? 0,
+    );
     const expectedPosterImages = Math.max(
       options.requiredPosterImages,
       options.expectedPosterImages ?? 0,
@@ -526,18 +647,21 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.requiredAiProductionProofFiles,
       options.expectedAiProductionProofFiles ?? 0,
     );
-    const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages;
+    const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages
+      && ownershipSourceFiles.length >= expectedOwnershipFiles;
     const posterDownloadComplete = posters.length >= expectedPosterImages;
     const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
     if (complete && ownershipComplete && ownershipDirectoryComplete && postersComplete && posterDownloadComplete && aiProductionProofsComplete && aiProductionProofDownloadComplete && nextStable.count >= options.stableCompletePolls) {
       const completedPath = await standardizeCompleteResources({
         files,
         ownership,
+        rawOwnershipFiles: ownershipSourceFiles,
         posters,
         aiProductionProofs,
         ownershipRequirements: options.ownershipRequirements,
         targetRoot: options.targetRoot,
         resourceName: options.resourceName,
+        standardizeEpisodeVideos: options.requireEpisodeVideos,
         onLog: options.onLog,
       });
       if (options.mergeOwnershipMaterials) {
@@ -563,7 +687,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.resourceName,
         );
         const bestLocalSummary = episodeFileSummary(files);
-        complete = isCompleteEpisodeFileSet(files, options.episodeCount);
+        complete = !options.requireEpisodeVideos
+          || isCompleteEpisodeFileSet(files, options.episodeCount);
         ownership = await listCurrentOwnershipMaterials(
           localPaths,
           options.targetRoot,
@@ -576,6 +701,11 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           false,
           true,
         );
+        ownershipSourceFiles = await listCurrentRawOwnershipFiles(
+          localPaths,
+          options.targetRoot,
+          options.resourceName,
+        );
         ownershipComplete = hasRequiredOwnershipMaterials(ownership, options.ownershipRequirements);
         posters = await listCurrentPosterImages(localPaths, options.targetRoot, options.resourceName);
         postersComplete = posters.length >= options.requiredPosterImages;
@@ -585,7 +715,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.resourceName,
         );
         aiProductionProofsComplete = aiProductionProofs.length >= options.requiredAiProductionProofFiles;
-        signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}`;
+        signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${rawOwnershipSignature(ownershipSourceFiles)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}`;
         stableKey = localPaths.join("|") || playletDir(options.targetRoot, options.resourceName);
         stable = stableSignatures.get(stableKey);
         nextStable = {
@@ -616,6 +746,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
                 : "") +
               ` 权属图片=${ownership.length}/${options.ownershipRequirements.minimumImages ?? 0}` +
               ` 权属原始文件=${rawOwnershipFiles.length}/${expectedOwnershipImages}` +
+              ` 权属全部文件=${ownershipSourceFiles.length}/${expectedOwnershipFiles}` +
               ` 海报封面=${posters.length}/${options.requiredPosterImages}` +
               ` AI制作证明=${aiProductionProofs.length}/${options.requiredAiProductionProofFiles}` +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
@@ -624,7 +755,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           lastProgressLogAt = Date.now();
         }
 
-        const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages;
+        const ownershipDirectoryComplete = rawOwnershipFiles.length >= expectedOwnershipImages
+          && ownershipSourceFiles.length >= expectedOwnershipFiles;
         const posterDownloadComplete = posters.length >= expectedPosterImages;
         const aiProductionProofDownloadComplete = aiProductionProofs.length >= expectedAiProductionProofFiles;
         if (taskStatus.completed && ownershipDirectoryComplete && !ownershipComplete) {
@@ -639,11 +771,13 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           const completedPath = await standardizeCompleteResources({
             files,
             ownership,
+            rawOwnershipFiles: ownershipSourceFiles,
             posters,
             aiProductionProofs,
             ownershipRequirements: options.ownershipRequirements,
             targetRoot: options.targetRoot,
             resourceName: options.resourceName,
+            standardizeEpisodeVideos: options.requireEpisodeVideos,
             onLog: options.onLog,
           });
           if (options.mergeOwnershipMaterials) {
@@ -681,8 +815,10 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   const timeoutMs = options.timeoutMs ?? 12 * 60 * 60 * 1000;
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const stableCompletePolls = options.stableCompletePolls ?? 2;
+  const downloadEpisodeVideos = options.downloadEpisodeVideos !== false;
   const targetLocalPath = playletDir(options.localEpisodeVideoRoot, options.resourceName);
   const ownershipRequirements = options.requiredOwnership ?? {};
+  const requiredOwnershipFiles = Math.max(0, options.requiredOwnershipFiles ?? 0);
   const requiredPosterImages = Math.max(0, options.requiredPosterImages ?? 0);
   const requiredAiProductionProofFiles = Math.max(0, options.requiredAiProductionProofFiles ?? 0);
   const existingEpisodes = await listLocalEpisodeFiles({
@@ -693,6 +829,11 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
   });
+  const existingRawOwnershipFiles = await listCurrentRawOwnershipFiles(
+    [targetLocalPath],
+    options.localEpisodeVideoRoot,
+    options.resourceName,
+  );
   const existingPosters = await listLocalPosterImages({
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
@@ -703,8 +844,11 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   });
 
   if (
-    isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount)
+    !options.forceAssetDownload
+    &&
+    (!downloadEpisodeVideos || isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount))
     && hasRequiredOwnershipMaterials(existingOwnership, ownershipRequirements)
+    && existingRawOwnershipFiles.length >= requiredOwnershipFiles
     && existingPosters.length >= requiredPosterImages
     && existingAiProductionProofs.length >= requiredAiProductionProofFiles
   ) {
@@ -724,19 +868,22 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     };
   }
 
-  await logEpisodeDirectoryDetails({
-    root: options.localEpisodeVideoRoot,
-    resourceName: options.resourceName,
-    episodeCount: options.episodeCount,
-    reason: "启动前未发现完整文件",
-    onLog: options.onLog,
-  });
+  if (downloadEpisodeVideos) {
+    await logEpisodeDirectoryDetails({
+      root: options.localEpisodeVideoRoot,
+      resourceName: options.resourceName,
+      episodeCount: options.episodeCount,
+      reason: "启动前未发现完整文件",
+      onLog: options.onLog,
+    });
+  }
   await options.onProgress?.({ phase: "scan", localPath: targetLocalPath });
 
   const result = await options.downloadShare({
     shareText: options.shareText,
     resourceName: options.resourceName,
-    expectedEpisodeCount: isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount)
+    expectedEpisodeCount: !downloadEpisodeVideos
+      || isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount)
       ? undefined
       : options.episodeCount,
     expectedOwnershipCounts: {
@@ -745,11 +892,16 @@ export async function ensureBaiduNetdiskEpisodeVideos(
         (ownershipRequirements.minimumImages ?? 0) - existingOwnership.length,
       ),
     },
+    expectedOwnershipFiles: Math.max(
+      0,
+      requiredOwnershipFiles - existingRawOwnershipFiles.length,
+    ),
     expectedPosterImages: Math.max(0, requiredPosterImages - existingPosters.length),
     expectedAiProductionProofFiles: Math.max(
       0,
       requiredAiProductionProofFiles - existingAiProductionProofs.length,
     ),
+    downloadEpisodeVideos,
     downloadDir,
   });
 
@@ -770,10 +922,13 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     resourceName: options.resourceName,
     downloadTaskName: result.share.name || options.downloadTaskName || options.resourceName,
     expectedOwnershipImages: result.expectedOwnershipImages,
+    expectedOwnershipFiles: result.expectedOwnershipFiles,
     expectedPosterImages: result.expectedPosterImages,
     expectedAiProductionProofFiles: result.expectedAiProductionProofFiles,
     episodeCount: options.episodeCount,
+    requireEpisodeVideos: downloadEpisodeVideos,
     ownershipRequirements,
+    requiredOwnershipFiles,
     requiredPosterImages,
     requiredAiProductionProofFiles,
     mergeOwnershipMaterials: options.mergeOwnershipMaterials,

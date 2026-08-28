@@ -9,7 +9,7 @@ import {
 import { baiduDramaService, type BaiduDramaConfig } from "@/platforms/baidu-drama/service"
 
 const emptyConfig: BaiduDramaConfig = {
-  accountProfileName: "default",
+  apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
@@ -17,13 +17,20 @@ const emptyConfig: BaiduDramaConfig = {
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
   runDataDir: ".drama-runs/baidu-drama",
+  logRetentionDays: "3",
 }
 
 const sections: ConfigSectionDefinition<BaiduDramaConfig>[] = [
   {
-    title: "任务与素材",
-    description: "领取接口就绪后会按原始剧名下载、校验并上传百度网盘资源。",
+    title: "任务接口与素材",
+    description: "服务会读取后台启用的百度账号，领取 READY 任务并回写执行结果。",
     fields: [
+      {
+        key: "apiBaseUrl",
+        label: "接口地址",
+        description: "百度账号配置与 RPA 任务接口的后端根地址。",
+        type: "url",
+      },
       {
         key: "localEpisodeVideoRoot",
         label: "剧集视频根目录",
@@ -61,15 +68,18 @@ const sections: ConfigSectionDefinition<BaiduDramaConfig>[] = [
     description: "百度短剧使用独立 Chromium 登录态和素材缓存。",
     fields: [
       {
-        key: "accountProfileName",
-        label: "账号配置名",
-        description: "用于隔离浏览器登录态目录。",
-      },
-      {
         key: "runDataDir",
         label: "运行数据目录",
-        description: "保存百度短剧登录态、临时上传文件和日志。",
+        description: "按后台 RPA Profile 隔离保存登录态、临时上传文件和日志。",
         directory: true,
+      },
+      {
+        key: "logRetentionDays",
+        label: "日志保留",
+        description: "服务启动时清理超过指定天数的日志文件。",
+        type: "number",
+        suffix: "天",
+        min: 1,
       },
       {
         key: "operationDelaySeconds",
@@ -98,11 +108,13 @@ export function BaiduDramaConfigurationPage() {
     saveConfig: baiduDramaService.saveConfig,
   })
 
-  const selectDirectory = async (key: keyof BaiduDramaConfig & string) => {
+  const selectDirectory = async (key: keyof BaiduDramaConfig) => {
     try {
       const selected = key === "runDataDir"
         ? await baiduDramaService.selectRunDataDir(configState.config.runDataDir)
-        : await baiduDramaService.selectLocalEpisodeVideoRoot(configState.config.localEpisodeVideoRoot)
+        : key === "localEpisodeVideoRoot"
+          ? await baiduDramaService.selectLocalEpisodeVideoRoot(configState.config.localEpisodeVideoRoot)
+          : null
       if (selected) configState.updateConfig(key, selected)
     } catch (error) {
       toast.error("目录选择失败", {

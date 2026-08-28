@@ -1455,24 +1455,28 @@ async function openKuaishouDramaEditPage(
   }
 }
 
+export async function prepareKuaishouDramaIdlePage(
+  context: BrowserContext,
+  page: Page,
+  options: KuaishouDramaRuntimeOptions,
+) {
+  log(options, "[kuaishou-drama] opening edit page; task polling starts after login");
+  await openKuaishouDramaEditPage(context, page, options, true);
+  log(options, "[kuaishou-drama] browser is ready; idle page will remain unchanged while polling");
+}
+
 export async function runPublishTask(
   context: BrowserContext,
   page: Page,
   options: KuaishouDramaRuntimeOptions,
-  resolveTask: () => Promise<{
+  resolvedTask: {
     taskConfig: KuaishouDramaTaskConfig;
     resourceName: string;
     claimedTask?: ClaimedKuaishouDramaTask;
-  } | null>,
+  },
 ) {
-  log(options, "[kuaishou-drama] opening edit page; task execution is paused until login");
+  log(options, "[kuaishou-drama] opening edit page in dedicated task tab");
   await openKuaishouDramaEditPage(context, page, options, true);
-  const resolvedTask = await resolveTask();
-
-  if (!resolvedTask) {
-    log(options, "[kuaishou-drama] task config not provided, browser is ready");
-    return false;
-  }
   const { taskConfig, resourceName } = resolvedTask;
 
   const [fullPaidVariant, adUnlockVariant] = createKuaishouDramaPublishVariants(taskConfig);
@@ -1504,5 +1508,4 @@ export async function runPublishTask(
   } finally {
     await adUnlockPage.close().catch(() => undefined);
   }
-  return resolvedTask;
 }
