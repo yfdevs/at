@@ -1,6 +1,8 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import cron, { type ScheduledTask } from "node-cron";
 import { existsSync, mkdirSync, statSync } from "node:fs";
+import { lstat, readdir, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import {
   directoryDefaultPath,
@@ -15,6 +17,8 @@ import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import { createElectronPlatformLogger } from "../platform-logger";
 import {
   assertGlobalDirectoriesConfigured,
+  createConfiguredAiClient,
+  getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 
@@ -104,7 +108,10 @@ const defaultConfig: BaiduDramaConfig = {
 };
 
 const runtimeController = new RuntimeController<BaiduDramaRuntime>();
+const baiduAiCoverTemporaryFilePattern = /^\.generated-(?:landscape|portrait)-\d+-\d+\.image$/;
+const baiduAiCoverTemporaryFileRetentionMs = 24 * 60 * 60 * 1_000;
 let store: Store<BaiduDramaStore> | null = null;
+let aiCoverTemporaryFileCleanupTask: ScheduledTask | null = null;
 
 function getStore() {
   store ??= new Store<BaiduDramaStore>({
@@ -189,6 +196,100 @@ function baiduDramaPlatformLogger(scope = "runtime") {
   });
 }
 
+function isMissingPathError(error: unknown) {
+  return (error as NodeJS.ErrnoException)?.code === "ENOENT";
+}
+
+async function removeBaiduAiCoverTemporaryFile(file: string) {
+  for (let attempt = 1; attempt <= 5; attempt += 1) {
+    try {
+      await rm(file, { force: true });
+      return;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") return;
+      if (!["EBUSY", "EACCES", "EPERM"].includes(code ?? "") || attempt >= 5) throw error;
+      await new Promise<void>((resolve) => {
+        setTimeout(resolve, attempt * 500);
+      });
+    }
+  }
+}
+
+async function cleanupStaleBaiduAiCoverTemporaryFiles(now = new Date()) {
+  const assetsRoot = path.resolve(resolveFromAppRoot(readConfig().runDataDir), "assets");
+  const cutoffMs = now.getTime() - baiduAiCoverTemporaryFileRetentionMs;
+  const accountEntries = await readdir(assetsRoot, { withFileTypes: true }).catch((error: unknown) => {
+    if (isMissingPathError(error)) return [];
+    throw error;
+  });
+  let deletedCount = 0;
+  let failedCount = 0;
+
+  for (const accountEntry of accountEntries) {
+    if (!accountEntry.isDirectory() || accountEntry.isSymbolicLink()) continue;
+    const cacheRoot = path.join(assetsRoot, accountEntry.name, "ai-cover-cache");
+    const cacheRootStat = await lstat(cacheRoot).catch((error: unknown) => {
+      if (isMissingPathError(error)) return undefined;
+      throw error;
+    });
+    if (!cacheRootStat?.isDirectory() || cacheRootStat.isSymbolicLink()) continue;
+
+    const cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
+    for (const cacheEntry of cacheEntries) {
+      if (!cacheEntry.isDirectory() || cacheEntry.isSymbolicLink()) continue;
+      const cacheDirectory = path.join(cacheRoot, cacheEntry.name);
+      const entries = await readdir(cacheDirectory, { withFileTypes: true });
+      for (const entry of entries) {
+        if (!entry.isFile() || !baiduAiCoverTemporaryFilePattern.test(entry.name)) continue;
+        const file = path.resolve(cacheDirectory, entry.name);
+        const relativeFile = path.relative(assetsRoot, file);
+        if (!relativeFile || relativeFile.startsWith("..") || path.isAbsolute(relativeFile)) continue;
+        const fileStat = await stat(file).catch((error: unknown) => {
+          if (isMissingPathError(error)) return undefined;
+          throw error;
+        });
+        if (!fileStat?.isFile() || fileStat.mtimeMs > cutoffMs) continue;
+
+        try {
+          await removeBaiduAiCoverTemporaryFile(file);
+          deletedCount += 1;
+        } catch (error) {
+          failedCount += 1;
+          baiduDramaPlatformLogger("storage").warn("AI封面临时文件清理失败，已忽略", {
+            path: file,
+            error,
+          });
+        }
+      }
+    }
+  }
+
+  baiduDramaPlatformLogger("storage").info("AI封面临时文件清理完成", {
+    deletedCount,
+    failedCount,
+  });
+}
+
+function scheduleBaiduAiCoverTemporaryFileCleanup() {
+  if (aiCoverTemporaryFileCleanupTask) return;
+
+  const runCleanup = () => cleanupStaleBaiduAiCoverTemporaryFiles().catch((error: unknown) => {
+    baiduDramaPlatformLogger("storage").error("AI封面临时文件定时清理失败", { error });
+  });
+  aiCoverTemporaryFileCleanupTask = cron.schedule("0 1 * * *", runCleanup, {
+    name: "baidu-ai-cover-temporary-file-cleanup",
+    timezone: "Asia/Shanghai",
+    noOverlap: true,
+    unref: true,
+  });
+  void runCleanup();
+  baiduDramaPlatformLogger("storage").info("AI封面临时文件定时清理已启用", {
+    retention: "24小时",
+    schedule: "每天 01:00",
+  });
+}
+
 function ensureStorageDirectories(paths = storagePaths()) {
   for (const target of [paths.runDataDir, paths.accountDir, paths.userDataDir, paths.assetDownloadDir, paths.logDir]) {
     mkdirSync(target, { recursive: true });
@@ -260,6 +361,8 @@ async function startRuntime() {
         baiduNetdiskDownloadRetryAttempts: Number.parseInt(config.baiduNetdiskDownloadRetryAttempts, 10),
         episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
         taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1000,
+        createAiClient: createConfiguredAiClient,
+        aiImageModel: getConfiguredAiImageModel(),
         apiConfig: { baseUrl: config.apiBaseUrl },
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
@@ -343,6 +446,8 @@ export function openBaiduDramaLogDir() {
 }
 
 export function registerBaiduDramaPlatformHandlers() {
+  scheduleBaiduAiCoverTemporaryFileCleanup();
+
   ipcMain.handle("baidu-drama:config:get", () => ({
     config: readConfig(),
     path: getStore().path,

@@ -1,6 +1,6 @@
 import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
-import { VideoTranscodeQueue } from "@drama/drama-media-assets";
+import { ensureAiPoster, VideoTranscodeQueue } from "@drama/drama-media-assets";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { createHash } from "node:crypto";
 import { lstat, readdir, rm, statfs, utimes } from "node:fs/promises";
@@ -10,7 +10,12 @@ import {
   type BaiduNetdiskDownloadRecord,
   type BaiduNetdiskDownloadState,
 } from "../storage/baidu-netdisk";
-import { getConfiguredBaiduNetdiskDownloadTimeoutMs } from "../global-app-config";
+import {
+  createConfiguredAiClient,
+  getConfiguredAiImageModel,
+  getConfiguredBaiduNetdiskDownloadTimeoutMs,
+  isAiPosterFallbackEnabled,
+} from "../global-app-config";
 import { resolveFromAppRoot } from "./shared";
 import { createElectronPlatformLogger } from "../platform-logger";
 
@@ -117,6 +122,10 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   };
   requiredOwnershipFiles?: number;
   requiredPosterImages?: number;
+  posterFallback?: {
+    title?: string;
+    summary: string;
+  };
   requiredAiProductionProofFiles?: number;
   mergeOwnershipMaterials?: boolean;
   videoTranscode?: {
@@ -556,6 +565,12 @@ function normalizeEnsureDownloadRequest(
     requiredOwnership: request.requiredOwnership,
     requiredOwnershipFiles: request.requiredOwnershipFiles,
     requiredPosterImages: request.requiredPosterImages,
+    posterFallback: request.posterFallback
+      ? {
+          title: request.posterFallback.title?.trim() || resourceName,
+          summary: request.posterFallback.summary?.trim() ?? "",
+        }
+      : undefined,
     requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
     requesterPlatform: request.requesterPlatform,
@@ -918,7 +933,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       downloadBaiduNetdiskShare,
       getBaiduNetdiskDownloadTaskStatus,
     } = await importBaiduNetdiskDownloadRuntimePackage();
-    const result = await ensureBaiduNetdiskEpisodeVideos({
+    const runDownload = () => ensureBaiduNetdiskEpisodeVideos({
       shareText: request.shareText,
       resourceName: request.resourceName,
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
@@ -977,6 +992,56 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         });
       },
     });
+    let result;
+    try {
+      result = await runDownload();
+    } catch (error) {
+      const fallbackEnabled = isAiPosterFallbackEnabled();
+      const missingPoster = request.requiredPosterImages
+        && request.requiredPosterImages > 0
+        && readableError(error).includes("百度网盘海报封面数量不足");
+      if (!fallbackEnabled || !missingPoster) throw error;
+
+      const summary = request.posterFallback?.summary.trim();
+      if (!summary) {
+        throw Object.assign(
+          new Error(`百度网盘未提供海报，AI 兜底生成需要任务返回剧目简介。原始错误：${readableError(error)}`),
+          { cause: error },
+        );
+      }
+
+      const aiPosterLogger = baiduNetdiskLogger("ai-poster", {
+        requesterPlatform: request.requesterPlatform,
+        resourceName: request.resourceName,
+      });
+      aiPosterLogger.warn("百度网盘未提供海报，开始使用 AI 生成", {
+        summaryLength: summary.length,
+      });
+      try {
+        const poster = await ensureAiPoster({
+          client: createConfiguredAiClient(),
+          model: getConfiguredAiImageModel(),
+          localMaterialRoot: request.localEpisodeVideoRoot,
+          resourceName: request.resourceName,
+          title: request.posterFallback?.title || request.resourceName,
+          summary,
+          onLog: aiPosterLogger.callback("ai-poster"),
+        });
+        aiPosterLogger.info("AI 海报准备完成，重新校验百度网盘资源", {
+          file: poster.file,
+          height: poster.height,
+          reused: poster.reused,
+          size: poster.size,
+          width: poster.width,
+        });
+      } catch (generationError) {
+        throw Object.assign(
+          new Error(`百度网盘未提供海报，AI 兜底生成失败：${readableError(generationError)}`),
+          { cause: generationError },
+        );
+      }
+      result = await runDownload();
+    }
 
     const completedLocalPath = result.localPath || localPath;
     const completedAt = new Date();

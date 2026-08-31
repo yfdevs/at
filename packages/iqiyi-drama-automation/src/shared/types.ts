@@ -14,6 +14,10 @@ export type IqiyiDramaTaskFailStage =
 const requiredText = z.string().trim().min(1);
 const optionalText = z.string().trim().optional();
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
+const iqiyiCopyrightSchema = z.object({
+  productionProofFiles: z.array(fileReference).max(20).default([]),
+  licenseProofFiles: z.array(fileReference).max(20).default([]),
+});
 
 export const iqiyiDramaTypeValues = ["short-drama", "comic-drama"] as const;
 export const iqiyiContentSourceValues = [
@@ -40,7 +44,10 @@ export const iqiyiDramaTaskPayloadSchema = z.object({
   baiduPanResourceLink: optionalText,
   verticalCoverFile: fileReference.optional(),
   horizontalCoverFile: fileReference.optional(),
-  ownershipFiles: z.array(fileReference).default([]),
+  copyright: iqiyiCopyrightSchema.default({
+    productionProofFiles: [],
+    licenseProofFiles: [],
+  }),
   audienceType: optionalText,
   visualType: z.enum(iqiyiVisualTypeValues).default("AI剧"),
   primaryCategory: optionalText,
@@ -135,6 +142,7 @@ export type IqiyiDramaRuntimeOptions = {
     requiredOwnership?: { minimumImages?: number };
     requiredOwnershipFiles?: number;
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
 };
 

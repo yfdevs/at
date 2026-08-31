@@ -16,6 +16,7 @@
     "check": "tsc --noEmit"
   },
   "dependencies": {
+    "@drama/ai": "workspace:*",
     "@drama/automation-logging": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "playwright": "1.61.1",

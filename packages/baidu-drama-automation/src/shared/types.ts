@@ -1,3 +1,4 @@
+import type { DramaAiClient } from "@drama/ai";
 import { z } from "zod";
 
 export type BaiduDramaLoginState = "login-required" | "logged-in" | "unknown";
@@ -125,6 +126,8 @@ export type BaiduDramaRuntimeOptions = {
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadWaitTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
+  createAiClient?: () => DramaAiClient;
+  aiImageModel?: string;
   config?: { browser?: { headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;
   ensureBaiduNetdiskResource?: (request: {
@@ -133,6 +136,7 @@ export type BaiduDramaRuntimeOptions = {
     localEpisodeVideoRoot: string;
     episodeCount: number;
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
 };
 

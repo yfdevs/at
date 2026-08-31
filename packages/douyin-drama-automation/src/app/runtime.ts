@@ -74,6 +74,10 @@ async function ensureNetdiskResource(
         episodeCount: task.playlet.episodeCount,
         requiredOwnership: { minimumImages: 4 },
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.playlet.title,
+          summary: task.playlet.summary,
+        },
         requiredAiProductionProofFiles: 0,
         mergeOwnershipMaterials: false,
       });

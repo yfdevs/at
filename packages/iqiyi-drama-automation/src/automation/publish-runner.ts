@@ -173,8 +173,13 @@ export async function runIqiyiPublishTask(
     required: true,
   });
   await uploadIqiyiFiles(page, options, {
-    aliases: ["版权证明文件", "出品方"],
-    files: payload.ownershipFiles,
+    aliases: ["知识产权声明文件"],
+    files: payload.copyright.productionProofFiles,
+    required: true,
+  });
+  await uploadIqiyiFiles(page, options, {
+    aliases: ["版权证明文件"],
+    files: payload.copyright.licenseProofFiles,
     required: true,
   });
   await fillIqiyiField(page, options, {

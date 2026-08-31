@@ -1,11 +1,8 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, readdir, stat } from "node:fs/promises";
+import { access, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
-import {
-  listLocalOwnershipMaterials,
-  listLocalPosterImages,
-} from "@drama/drama-media-assets";
+import { listLocalPosterImages } from "@drama/drama-media-assets";
 import sharp from "sharp";
 
 import { resolveIqiyiAsset } from "../automation/remote-assets.js";
@@ -14,9 +11,7 @@ import type { ClaimedIqiyiDramaTask, IqiyiDramaRuntimeOptions } from "./types.js
 
 const landscapePromptVersion = "iqiyi-landscape-v2";
 const iqiyiCoverMaximumBytes = 4_900_000;
-const iqiyiOwnershipMaximumBytes = 20 * 1024 * 1024;
-const ownershipDirectoryPattern = /工程|权属|资质|版权/;
-const ownershipExtensionPattern = /\.(?:jpe?g|png|bmp|webp|pdf)$/i;
+const iqiyiProofMaximumBytes = 20 * 1024 * 1024;
 
 function materialRoot(options: IqiyiDramaRuntimeOptions) {
   const root = options.localMaterialRoot?.trim();
@@ -59,78 +54,55 @@ async function writeJpegWithinLimit(
   return output;
 }
 
-function normalizedName(value: string) {
-  return value.toLowerCase().replace(/[\s._\-—()（）[\]【】]/g, "");
-}
-
-async function candidateResourceDirectories(root: string, resourceName: string) {
-  const exact = path.join(root, resourceName);
-  if (await access(exact).then(() => true, () => false)) return [exact];
-  const expected = normalizedName(resourceName);
-  const entries = await readdir(root, { withFileTypes: true }).catch(() => []);
-  return entries
-    .filter((entry) => entry.isDirectory())
-    .filter((entry) => {
-      const actual = normalizedName(entry.name);
-      return actual.includes(expected) || expected.includes(actual);
-    })
-    .map((entry) => path.join(root, entry.name));
-}
-
-async function listLocalIqiyiOwnershipFiles(root: string, resourceName: string) {
-  const files: string[] = [];
-  const directories = await candidateResourceDirectories(root, resourceName);
-  const walk = async (directory: string, inOwnershipDirectory: boolean): Promise<void> => {
-    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
-    for (const entry of entries) {
-      const file = path.join(directory, entry.name);
-      if (entry.isDirectory()) {
-        await walk(file, inOwnershipDirectory || ownershipDirectoryPattern.test(entry.name));
-      } else if (inOwnershipDirectory && entry.isFile() && ownershipExtensionPattern.test(entry.name)) {
-        files.push(file);
-      }
-    }
-  };
-  for (const directory of directories) {
-    await walk(directory, ownershipDirectoryPattern.test(path.basename(directory)));
-  }
-  return files.sort((left, right) => left.localeCompare(right, "zh-CN", { numeric: true }));
-}
-
-async function waitForLocalIqiyiOwnershipFiles(
-  root: string,
-  resourceName: string,
-  options: IqiyiDramaRuntimeOptions,
+async function prepareProofFile(
+  file: string,
+  index: number,
+  taskDir: string,
+  proofType: "production-proof" | "license-proof",
 ) {
-  const deadline = Date.now() + 5 * 60_000;
-  while (true) {
-    const files = await listLocalIqiyiOwnershipFiles(root, resourceName);
-    if (files.length > 0 || Date.now() >= deadline) return files;
-    log(options, "[iqiyi-drama] waiting for ownership directory download");
-    await new Promise((resolve) => setTimeout(resolve, 2_000));
-  }
-}
-
-async function prepareOwnershipFile(file: string, index: number, taskDir: string) {
-  await assertReadable(file, "权属文件");
+  const label = proofType === "production-proof" ? "知识产权声明文件" : "版权证明文件";
+  await assertReadable(file, label);
   const extension = path.extname(file).toLowerCase();
   if (extension === ".pdf" || extension === ".jpg" || extension === ".jpeg" || extension === ".png") {
     const info = await stat(file);
-    if (info.size > iqiyiOwnershipMaximumBytes) {
-      throw new Error(`[iqiyi-material-invalid] 权属文件超过 20MB：${file}`);
+    if (info.size > iqiyiProofMaximumBytes) {
+      throw new Error(`[iqiyi-material-invalid] ${label}超过 20MB：${file}`);
     }
     return file;
   }
   if (extension === ".bmp" || extension === ".webp") {
     return writeJpegWithinLimit(
       file,
-      path.join(taskDir, `iqiyi-ownership-${index + 1}.jpg`),
+      path.join(taskDir, `iqiyi-${proofType}-${index + 1}.jpg`),
       undefined,
       undefined,
-      iqiyiOwnershipMaximumBytes - 100_000,
+      iqiyiProofMaximumBytes - 100_000,
     );
   }
-  throw new Error(`[iqiyi-material-invalid] 权属文件仅支持 JPG、PNG 或 PDF：${file}`);
+  throw new Error(`[iqiyi-material-invalid] ${label}仅支持 JPG、PNG 或 PDF：${file}`);
+}
+
+async function prepareProofReferences(
+  references: string[],
+  taskDir: string,
+  proofType: "production-proof" | "license-proof",
+  options: IqiyiDramaRuntimeOptions,
+) {
+  const label = proofType === "production-proof" ? "知识产权声明文件" : "版权证明文件";
+  if (references.length === 0) {
+    throw new Error(`[copyright-proof-invalid] ${label}至少需要上传 1 个文件。`);
+  }
+  if (references.length > 20) {
+    throw new Error(`[iqiyi-material-invalid] ${label}最多上传 20 个文件，实际 ${references.length} 个。`);
+  }
+  const resolved = await Promise.all(
+    references.map((reference, index) =>
+      resolveIqiyiAsset(reference, options, `${proofType}-${index + 1}`)
+    ),
+  );
+  return Promise.all(
+    resolved.map((file, index) => prepareProofFile(file, index, taskDir, proofType)),
+  );
 }
 
 async function generateLandscapeCover(
@@ -238,42 +210,24 @@ export async function prepareIqiyiMaterials(
     )
     : horizontalSource;
 
-  const remoteOwnershipFiles = await Promise.all(
-    task.playlet.ownershipFiles.map((reference, index) =>
-      resolveIqiyiAsset(reference, options, `ownership-${index + 1}`)
+  const [productionProofFiles, licenseProofFiles] = await Promise.all([
+    prepareProofReferences(
+      task.playlet.copyright.productionProofFiles,
+      taskDir,
+      "production-proof",
+      options,
     ),
-  );
-  const localOwnershipImages = await listLocalOwnershipMaterials({
-    root,
-    resourceName,
-    includePortraitImages: true,
-  });
-  const initialLocalOwnershipFiles = await listLocalIqiyiOwnershipFiles(root, resourceName);
-  const localOwnershipFiles = task.playlet.baiduPanResourceLink
-    && initialLocalOwnershipFiles.length === 0
-    && localOwnershipImages.length === 0
-    && remoteOwnershipFiles.length === 0
-    ? await waitForLocalIqiyiOwnershipFiles(root, resourceName, options)
-    : initialLocalOwnershipFiles;
-  const rawOwnershipFiles = [...new Set([
-    ...remoteOwnershipFiles,
-    ...localOwnershipFiles,
-    ...localOwnershipImages.map((item) => item.file),
-  ])];
-  if (rawOwnershipFiles.length === 0) {
-    throw new Error(
-      `[copyright-proof-invalid] 未找到爱奇艺权属文件；扫描目录=${path.join(root, resourceName)}`,
-    );
-  }
-  if (rawOwnershipFiles.length > 20) {
-    throw new Error(`[iqiyi-material-invalid] 爱奇艺权属文件最多上传 20 个，实际找到 ${rawOwnershipFiles.length} 个。`);
-  }
-  const ownershipFiles = await Promise.all(
-    rawOwnershipFiles.map((file, index) => prepareOwnershipFile(file, index, taskDir)),
-  );
+    prepareProofReferences(
+      task.playlet.copyright.licenseProofFiles,
+      taskDir,
+      "license-proof",
+      options,
+    ),
+  ]);
 
   task.playlet.verticalCoverFile = verticalCover;
   task.playlet.horizontalCoverFile = horizontalCover;
-  task.playlet.ownershipFiles = ownershipFiles;
-  return { verticalCover, horizontalCover, ownershipFiles };
+  task.playlet.copyright.productionProofFiles = productionProofFiles;
+  task.playlet.copyright.licenseProofFiles = licenseProofFiles;
+  return { verticalCover, horizontalCover, productionProofFiles, licenseProofFiles };
 }

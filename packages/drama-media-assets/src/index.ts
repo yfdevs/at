@@ -66,6 +66,12 @@ export {
   type PreparedImageUploadFile,
   type PreparedStretchedImageVariant,
 } from "./image-upload.js";
+export {
+  buildMissingPosterPrompt,
+  ensureAiPoster,
+  type AiPosterResult,
+  type EnsureAiPosterOptions,
+} from "./ai-poster.js";
 
 export type EpisodeDirectorySummary = {
   dir: string;

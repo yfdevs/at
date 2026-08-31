@@ -30,6 +30,7 @@ export type GlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  aiPosterFallbackEnabled: boolean;
   baiduNetdiskDownloadTimeoutMinutes: string;
   runDataRoot: string;
   localMaterialRoot: string;
@@ -40,6 +41,7 @@ type StoredGlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  aiPosterFallbackEnabled?: boolean;
   baiduNetdiskDownloadTimeoutMinutes?: string;
   runDataRoot?: string;
   localMaterialRoot?: string;
@@ -54,6 +56,7 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiBaseURL: RECOMMENDED_AI_BASE_URL,
   aiModel: RECOMMENDED_AI_MODEL,
   aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
+  aiPosterFallbackEnabled: true,
   baiduNetdiskDownloadTimeoutMinutes: DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
   runDataRoot: "",
   localMaterialRoot: "",
@@ -94,6 +97,16 @@ function normalizePositiveNumberText(value: string | undefined, fallback: string
   return Number.isFinite(number) && number > 0 ? normalized : fallback;
 }
 
+function normalizeBoolean(value: unknown, fallback: boolean) {
+  if (typeof value === "boolean") return value;
+  if (typeof value === "string") {
+    const normalized = value.trim().toLowerCase();
+    if (["true", "1", "yes", "on"].includes(normalized)) return true;
+    if (["false", "0", "no", "off"].includes(normalized)) return false;
+  }
+  return fallback;
+}
+
 function encryptApiKey(apiKey: string) {
   if (!apiKey) return "";
   if (!safeStorage.isEncryptionAvailable()) {
@@ -122,6 +135,7 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel?.trim() ?? "",
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
@@ -147,6 +161,7 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel.trim(),
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
@@ -164,6 +179,10 @@ export function getConfiguredBaiduNetdiskDownloadTimeoutMs() {
   return Number.parseFloat(value) * 60 * 1000;
 }
 
+export function isAiPosterFallbackEnabled() {
+  return normalizeBoolean(getStore().get("config").aiPosterFallbackEnabled, true);
+}
+
 function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
   const normalized = normalizeGlobalAppConfig(config);
 
@@ -172,6 +191,7 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiBaseURL: normalized.aiBaseURL,
     aiModel: normalized.aiModel,
     aiImageModel: normalized.aiImageModel,
+    aiPosterFallbackEnabled: normalized.aiPosterFallbackEnabled,
     baiduNetdiskDownloadTimeoutMinutes: normalized.baiduNetdiskDownloadTimeoutMinutes,
     runDataRoot: normalized.runDataRoot,
     localMaterialRoot: normalized.localMaterialRoot,

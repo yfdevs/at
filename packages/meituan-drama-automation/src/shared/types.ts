@@ -311,6 +311,7 @@ export type MeituanCreationRuntimeOptions = {
     };
     requiredOwnershipFiles?: number;
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
   onLog?: (message: string) => void;
 };

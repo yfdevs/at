@@ -1,6 +1,6 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.85",
+  "version": "0.0.87",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",

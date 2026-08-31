@@ -271,6 +271,7 @@ export type QqDramaRuntimeOptions = {
       minimumImages?: number;
     };
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
 };
 

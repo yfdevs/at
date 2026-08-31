@@ -66,6 +66,10 @@ async function ensureNetdiskResource(
         localEpisodeVideoRoot: baiduDramaLocalRoot(options),
         episodeCount: task.playlet.episodeCount,
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.playlet.title,
+          summary: task.playlet.summary,
+        },
       });
       return;
     } catch (error) {

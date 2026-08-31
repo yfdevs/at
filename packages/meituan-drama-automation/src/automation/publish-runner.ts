@@ -53,6 +53,10 @@ async function ensureBaiduNetdiskResourceReady(
         requiredOwnership: { minimumImages: 0 },
         requiredOwnershipFiles: 0,
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.playlet.collectionTitle,
+          summary: task.playlet.plotSynopsisText,
+        },
       });
       return;
     } catch (error) {

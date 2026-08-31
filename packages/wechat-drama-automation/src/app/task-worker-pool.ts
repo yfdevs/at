@@ -547,6 +547,10 @@ export class TaskWorkerPool {
           episodeCount: playletConfig.playlet.episodeCount,
           requiredOwnership: wechatOwnershipRequirements,
           requiredPosterImages: 1,
+          posterFallback: {
+            title: playletConfig.playlet.name,
+            summary: playletConfig.playlet.summary,
+          },
           requiredAiProductionProofFiles:
             (playletConfig.playlet.aiContent ?? true)
             && !(playletConfig.playlet.aiProductionProofFiles?.length)

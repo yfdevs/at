@@ -75,6 +75,10 @@ async function ensureBaiduNetdiskResourceReady(
         localEpisodeVideoRoot,
         episodeCount: task.episodeCount,
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.title,
+          summary: task.summary,
+        },
       });
       await validateKuaishouDramaLocalEpisodeVideos(task, resourceName, options);
       log(

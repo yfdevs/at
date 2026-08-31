@@ -310,6 +310,46 @@ async function fileInput(root: Locator) {
   return await input.count() > 0 ? input : null;
 }
 
+async function visibleUploadField(page: Page, aliases: readonly string[]) {
+  for (const alias of aliases) {
+    const title = page.getByText(alias, { exact: true }).filter({ visible: true }).last();
+    if (await title.count() === 0) continue;
+    const uploadSlot = title.locator(
+      "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' upload-slot ')][1]",
+    );
+    if (await uploadSlot.count() > 0) return uploadSlot;
+  }
+  return visibleField(page, aliases);
+}
+
+async function waitForUploadSettled(
+  page: Page,
+  root: Locator,
+  label: string,
+) {
+  const failure = root.getByText(/上传失败|文件上传失败|重新上传/).filter({ visible: true });
+  const pending = root.locator([
+    "[aria-busy='true']",
+    "[class*='uploading']",
+    "[class*='Uploading']",
+    "[class*='progress']",
+    "[class*='Progress']",
+  ].join(",")).filter({ visible: true });
+  let stablePolls = 0;
+  const deadline = Date.now() + 120_000;
+  while (Date.now() < deadline) {
+    if (await failure.count() > 0) {
+      throw new Error(`IQIYI_DRAMA_FILE_UPLOAD_FAILED: ${label}`);
+    }
+    const text = await root.innerText().catch(() => "");
+    const isPending = await pending.count() > 0 || /上传中|正在上传|处理中/.test(text);
+    stablePolls = isPending ? 0 : stablePolls + 1;
+    if (stablePolls >= 2) return;
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`IQIYI_DRAMA_FILE_UPLOAD_TIMEOUT: ${label}`);
+}
+
 export async function uploadIqiyiFiles(
   page: Page,
   options: IqiyiDramaRuntimeOptions,
@@ -320,8 +360,13 @@ export async function uploadIqiyiFiles(
     settleCoverEditor?: boolean;
   },
 ) {
-  if (config.files.length === 0) return false;
-  const root = await visibleField(page, config.aliases);
+  if (config.files.length === 0) {
+    if (config.required) {
+      throw new Error(`IQIYI_DRAMA_REQUIRED_FILES_MISSING: ${config.aliases[0]}`);
+    }
+    return false;
+  }
+  const root = await visibleUploadField(page, config.aliases);
   const input = root ? await fileInput(root) : null;
   if (!input) {
     if (config.required) {
@@ -334,7 +379,7 @@ export async function uploadIqiyiFiles(
     `[iqiyi-drama] uploading ${config.aliases[0]}: ${config.files.map((file) => path.basename(file)).join(" | ")}`,
   );
   await input.setInputFiles(config.files, { timeout: 120_000 });
-  await page.waitForTimeout(800);
+  await waitForUploadSettled(page, root!, config.aliases[0]!);
   if (config.settleCoverEditor) {
     for (let attempt = 0; attempt < 3; attempt += 1) {
       const dialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")

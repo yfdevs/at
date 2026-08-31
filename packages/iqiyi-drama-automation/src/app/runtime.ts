@@ -93,7 +93,7 @@ async function ensureRemoteMaterials(
   let lastError: unknown;
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
-      log(options, "[iqiyi-drama] downloading cover and ownership materials", {
+      log(options, "[iqiyi-drama] downloading cover materials", {
         attempt,
         maximumAttempts,
         resourceName: task.originalTitle,
@@ -106,8 +106,12 @@ async function ensureRemoteMaterials(
         downloadEpisodeVideos: false,
         forceAssetDownload: true,
         requiredOwnership: { minimumImages: 0 },
-        requiredOwnershipFiles: task.playlet.ownershipFiles.length > 0 ? 0 : 1,
+        requiredOwnershipFiles: 0,
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.playlet.title,
+          summary: task.playlet.summary,
+        },
       });
       return;
     } catch (error) {

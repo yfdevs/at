@@ -3,6 +3,7 @@ export type GlobalAppConfig = {
   aiBaseURL: string
   aiModel: string
   aiImageModel: string
+  aiPosterFallbackEnabled: boolean
   baiduNetdiskDownloadTimeoutMinutes: string
   runDataRoot: string
   localMaterialRoot: string

@@ -175,7 +175,7 @@ function normalizeClaimedTask(
     ...record(payload.iqiyiExtraInfo),
   };
   const covers = record(payload.cover);
-  const copyright = record(payload.copyright);
+  const copyright = record(playlet.copyright ?? payload.copyright);
   const productionCost = record(playlet.productionCost ?? payload.productionCost);
   const resolvedTitle = text(playlet.title) ?? text(playlet.name) ?? text(payload.name);
   const result = claimedIqiyiDramaTaskSchema.safeParse({
@@ -208,13 +208,10 @@ function normalizeClaimedTask(
         ?? text(playlet.landscapeCoverFile)
         ?? text(covers.horizontal)
         ?? text(covers.landscape),
-      ownershipFiles: unique([
-        ...texts(playlet.ownershipFiles),
-        ...texts(playlet.copyrightFiles),
-        ...texts(copyright.ownershipFiles),
-        ...texts(copyright.productionProofFiles),
-        ...texts(copyright.licenseProofFiles),
-      ]),
+      copyright: {
+        productionProofFiles: unique(texts(copyright.productionProofFiles)),
+        licenseProofFiles: unique(texts(copyright.licenseProofFiles)),
+      },
       secondaryCategories: texts(
         playlet.secondaryCategories ?? playlet.tags ?? playlet.categoryTags,
       ),
@@ -280,6 +277,10 @@ export function createMockIqiyiDramaTask(
           "通过网盘分享的文件：赶海救下美人鱼，她让整片大海来报恩\n"
           + "链接: https://pan.baidu.com/s/1DqxBmsaWkLKKol5uHKxDNQ?pwd=hm6f 提取码: hm6f",
         producerName: "明星说（北京）科技有限公司",
+        copyright: {
+          productionProofFiles: [],
+          licenseProofFiles: [],
+        },
         iqiyiPlaylet: {
           dramaType: "comic-drama",
           title: originalTitle,

@@ -181,6 +181,10 @@ async function ensureBaiduNetdiskResourceReady(
         localEpisodeVideoRoot,
         episodeCount,
         requiredPosterImages: 1,
+        posterFallback: {
+          title: task.playlet.title,
+          summary: task.playlet.summary,
+        },
       });
       return;
     } catch (error) {

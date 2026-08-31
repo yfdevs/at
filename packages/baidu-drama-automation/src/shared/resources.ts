@@ -1,11 +1,14 @@
+import type { DramaAiClient } from "@drama/ai";
+import { createHash } from "node:crypto";
 import path from "node:path";
-import { mkdir, rm, stat, writeFile } from "node:fs/promises";
+import { mkdir, readFile, rm, stat, writeFile } from "node:fs/promises";
 import {
   listLocalPosterImages,
-  prepareStretchedImageVariant,
+  prepareCroppedImageVariant,
+  readImageDimensions,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
-import { log } from "./logger.js";
+import { log, warn } from "./logger.js";
 import type { BaiduDramaRuntimeOptions, ClaimedBaiduDramaTask } from "./types.js";
 
 export const BAIDU_DRAMA_LANDSCAPE_COVER_SIZE = {
@@ -16,6 +19,68 @@ export const BAIDU_DRAMA_LANDSCAPE_COVER_SIZE = {
 export const BAIDU_DRAMA_PORTRAIT_COVER_SIZE = {
   width: 1_200,
   height: 1_600,
+} as const;
+
+type BaiduCoverKind = "landscape" | "portrait";
+
+const baiduAiCoverPromptVersion = "baidu-counterpart-cover-v1";
+const activeAiCoverGenerations = new Map<string, Promise<string>>();
+
+type BaiduAiCoverTemporaryFileCleanupOptions = {
+  maxAttempts?: number;
+  onWarning?: (message: string) => void;
+  removeFile?: (file: string) => Promise<void>;
+  wait?: (delayMs: number) => Promise<void>;
+};
+
+export async function cleanupBaiduAiCoverTemporaryFile(
+  file: string,
+  options: BaiduAiCoverTemporaryFileCleanupOptions = {},
+) {
+  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 5));
+  const removeFile = options.removeFile ?? ((target) => rm(target, { force: true }));
+  const wait = options.wait ?? ((delayMs) => new Promise<void>((resolve) => {
+    setTimeout(resolve, delayMs);
+  }));
+  let lastError: unknown;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    try {
+      await removeFile(file);
+      return true;
+    } catch (error) {
+      const code = (error as NodeJS.ErrnoException)?.code;
+      if (code === "ENOENT") return true;
+      lastError = error;
+      if (!["EBUSY", "EACCES", "EPERM"].includes(code ?? "") || attempt >= maxAttempts) {
+        break;
+      }
+      await wait(attempt * 200).catch(() => undefined);
+    }
+  }
+
+  const message = lastError instanceof Error ? lastError.message : String(lastError);
+  try {
+    options.onWarning?.(`AI封面临时文件清理失败，已忽略并等待定时清理：${file}；错误=${message}`);
+  } catch {
+    // Cleanup diagnostics must never change the task result.
+  }
+  return false;
+}
+
+const baiduCoverDetails = {
+  landscape: {
+    label: "16:9 横版",
+    outputName: "baidu-cover-landscape-1280x720.jpg",
+    size: "2560x1440",
+    target: BAIDU_DRAMA_LANDSCAPE_COVER_SIZE,
+  },
+  portrait: {
+    label: "3:4 竖版",
+    outputName: "baidu-cover-portrait-1200x1600.jpg",
+    size: "1536x2048",
+    target: BAIDU_DRAMA_PORTRAIT_COVER_SIZE,
+  },
 } as const;
 
 export function baiduDramaResourceName(task: ClaimedBaiduDramaTask) {
@@ -79,25 +144,198 @@ async function prepareMaterialReferences(
   }));
 }
 
+async function isPreparedCover(file: string, kind: BaiduCoverKind) {
+  const fileStat = await stat(file).catch(() => undefined);
+  if (!fileStat?.isFile() || fileStat.size <= 0) return false;
+  const dimensions = await readImageDimensions(file).catch(() => undefined);
+  const target = baiduCoverDetails[kind].target;
+  return dimensions?.width === target.width && dimensions.height === target.height;
+}
+
+function baiduCounterpartCoverPrompt(options: {
+  kind: BaiduCoverKind;
+  sourceKind: BaiduCoverKind | "generic";
+  title: string;
+}) {
+  const target = baiduCoverDetails[options.kind];
+  const sourceDescription = options.sourceKind === "landscape"
+    ? "16:9 横版"
+    : options.sourceKind === "portrait"
+      ? "3:4 竖版"
+      : "通用";
+  return [
+    `根据参考的${sourceDescription}封面，为百度短剧生成一张${target.label}封面。`,
+    "保持参考图中的核心人物、人物关系、服饰、时代背景、色彩气质和作品辨识度。",
+    `重新构图并自然扩展画面，使最终画面适合${target.label}展示；不要简单拉伸、镜像、重复拼接、裁掉主体或添加边框。`,
+    "人物面部、关键道具和剧名位于安全区域，画面完整清晰。",
+    "不要新增平台标志、水印、角标、二维码或无关文字；参考图已有片名时保持其文字内容准确。",
+    `作品名：${options.title}。`,
+  ].join("\n");
+}
+
+async function generateMissingBaiduCover(options: {
+  referenceFile: string;
+  sourceKind: BaiduCoverKind | "generic";
+  kind: BaiduCoverKind;
+  title: string;
+  cacheDir: string;
+  aiImageModel: string;
+  getAiClient: () => DramaAiClient;
+  onLog?: (message: string) => void;
+  onWarn?: (message: string) => void;
+}) {
+  const reference = await readFile(options.referenceFile);
+  const cacheKey = createHash("sha256")
+    .update(reference)
+    .update(options.aiImageModel)
+    .update(options.title)
+    .update(options.kind)
+    .update(baiduAiCoverPromptVersion)
+    .digest("hex")
+    .slice(0, 24);
+  const cacheDirectory = path.join(options.cacheDir, cacheKey);
+  const output = path.join(cacheDirectory, baiduCoverDetails[options.kind].outputName);
+  if (await isPreparedCover(output, options.kind)) {
+    options.onLog?.(`[baidu-cover-ai] 复用 AI ${baiduCoverDetails[options.kind].label}封面：${output}`);
+    return output;
+  }
+
+  const active = activeAiCoverGenerations.get(cacheKey);
+  if (active) return active;
+  const operation = (async () => {
+    if (await isPreparedCover(output, options.kind)) return output;
+    await mkdir(cacheDirectory, { recursive: true });
+    options.onLog?.(
+      `[baidu-cover-ai] 正在根据${options.sourceKind === "portrait" ? "竖版" : options.sourceKind === "landscape" ? "横版" : "通用"}封面` +
+        `生成${baiduCoverDetails[options.kind].label}封面，模型=${options.aiImageModel}`,
+    );
+    const result = await options.getAiClient().generateImage({
+      model: options.aiImageModel,
+      prompt: baiduCounterpartCoverPrompt(options),
+      referenceImages: [{ type: "file", path: options.referenceFile }],
+      size: baiduCoverDetails[options.kind].size,
+      watermark: false,
+    });
+    const generated = result.images[0];
+    if (!generated?.data.length) throw new Error("BAIDU_DRAMA_AI_COVER_RESPONSE_MISSING");
+
+    const temporarySource = path.join(
+      cacheDirectory,
+      `.generated-${options.kind}-${process.pid}-${Date.now()}.image`,
+    );
+    try {
+      await writeFile(temporarySource, Buffer.from(generated.data));
+      await prepareCroppedImageVariant({
+        inputFile: temporarySource,
+        outputFile: output,
+        ...baiduCoverDetails[options.kind].target,
+        jpegQuality: 92,
+        maxFileBytes: 4_700_000,
+        onLog: options.onLog,
+      });
+    } finally {
+      await cleanupBaiduAiCoverTemporaryFile(temporarySource, {
+        onWarning: options.onWarn,
+      });
+    }
+    options.onLog?.(`[baidu-cover-ai] AI ${baiduCoverDetails[options.kind].label}封面已生成：${output}`);
+    return output;
+  })().finally(() => {
+    activeAiCoverGenerations.delete(cacheKey);
+  });
+  activeAiCoverGenerations.set(cacheKey, operation);
+  return operation;
+}
+
 export async function prepareBaiduDramaCoverVariants(options: {
   sourceFile: string;
   landscapeSourceFile?: string;
   portraitSourceFile?: string;
+  title: string;
   outputDir: string;
+  aiCacheDir?: string;
+  aiImageModel?: string;
+  createAiClient?: () => DramaAiClient;
   onLog?: (message: string) => void;
+  onWarn?: (message: string) => void;
 }) {
   await rm(options.outputDir, { recursive: true, force: true });
+  const aiCacheDir = options.aiCacheDir ?? path.join(path.dirname(options.outputDir), "ai-cover-cache");
+  let landscapeSourceFile = options.landscapeSourceFile;
+  let portraitSourceFile = options.portraitSourceFile;
+  const needsAi = !landscapeSourceFile || !portraitSourceFile;
+  let aiClient: DramaAiClient | undefined;
+  const getAiClient = () => {
+    if (aiClient) return aiClient;
+    if (!options.createAiClient) throw new Error("DRAMA_AI_API_KEY_REQUIRED");
+    aiClient = options.createAiClient();
+    return aiClient;
+  };
+  const aiImageModel = needsAi ? options.aiImageModel?.trim() : undefined;
+  if (needsAi && !aiImageModel) throw new Error("DRAMA_AI_IMAGE_MODEL_REQUIRED");
+
+  if (!landscapeSourceFile && portraitSourceFile) {
+    landscapeSourceFile = await generateMissingBaiduCover({
+      referenceFile: portraitSourceFile,
+      sourceKind: "portrait",
+      kind: "landscape",
+      title: options.title,
+      cacheDir: aiCacheDir,
+      aiImageModel: aiImageModel!,
+      getAiClient,
+      onLog: options.onLog,
+      onWarn: options.onWarn,
+    });
+  } else if (!portraitSourceFile && landscapeSourceFile) {
+    portraitSourceFile = await generateMissingBaiduCover({
+      referenceFile: landscapeSourceFile,
+      sourceKind: "landscape",
+      kind: "portrait",
+      title: options.title,
+      cacheDir: aiCacheDir,
+      aiImageModel: aiImageModel!,
+      getAiClient,
+      onLog: options.onLog,
+      onWarn: options.onWarn,
+    });
+  } else if (!landscapeSourceFile && !portraitSourceFile) {
+    [landscapeSourceFile, portraitSourceFile] = await Promise.all([
+      generateMissingBaiduCover({
+        referenceFile: options.sourceFile,
+        sourceKind: "generic",
+        kind: "landscape",
+        title: options.title,
+        cacheDir: aiCacheDir,
+        aiImageModel: aiImageModel!,
+        getAiClient,
+        onLog: options.onLog,
+        onWarn: options.onWarn,
+      }),
+      generateMissingBaiduCover({
+        referenceFile: options.sourceFile,
+        sourceKind: "generic",
+        kind: "portrait",
+        title: options.title,
+        cacheDir: aiCacheDir,
+        aiImageModel: aiImageModel!,
+        getAiClient,
+        onLog: options.onLog,
+        onWarn: options.onWarn,
+      }),
+    ]);
+  }
+
   const [landscape, portrait] = await Promise.all([
-    prepareStretchedImageVariant({
-      inputFile: options.landscapeSourceFile ?? options.sourceFile,
+    prepareCroppedImageVariant({
+      inputFile: landscapeSourceFile!,
       outputFile: path.join(options.outputDir, "baidu-cover-landscape-1280x720.jpg"),
       ...BAIDU_DRAMA_LANDSCAPE_COVER_SIZE,
       jpegQuality: 92,
       maxFileBytes: 4_700_000,
       onLog: options.onLog,
     }),
-    prepareStretchedImageVariant({
-      inputFile: options.portraitSourceFile ?? options.sourceFile,
+    prepareCroppedImageVariant({
+      inputFile: portraitSourceFile!,
       outputFile: path.join(options.outputDir, "baidu-cover-portrait-1200x1600.jpg"),
       ...BAIDU_DRAMA_PORTRAIT_COVER_SIZE,
       jpegQuality: 92,
@@ -167,24 +405,42 @@ export async function prepareBaiduDramaResources(
     throw new Error("[poster-material-invalid] 未找到文件名或目录名包含“封面”或“海报”的图片");
   }
   const coverSource = posters[0];
-  const landscapeSource = posters.find((poster) => (
-    poster.width !== undefined && poster.height !== undefined && poster.width >= poster.height
-  )) ?? coverSource;
-  const portraitSource = posters.find((poster) => (
+  const landscapeSource = posters
+    .filter((poster) => poster.width !== undefined && poster.height !== undefined && poster.width > poster.height)
+    .sort((left, right) => (
+      Math.abs((left.width! / left.height!) - (16 / 9))
+      - Math.abs((right.width! / right.height!) - (16 / 9))
+    ))[0];
+  const portraitSource = posters
+    .filter((poster) => (
     poster.width !== undefined && poster.height !== undefined && poster.height > poster.width
-  )) ?? coverSource;
+    ))
+    .sort((left, right) => (
+      Math.abs((left.width! / left.height!) - (3 / 4))
+      - Math.abs((right.width! / right.height!) - (3 / 4))
+    ))[0];
   const outputDir = path.join(
     options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/baidu-drama/assets"),
     "poster-upload",
   );
   const onResizeLog = (message: string) =>
     log(options, `[baidu-drama] ${message}`, undefined, "resources");
+  const onResizeWarn = (message: string) =>
+    warn(options, `[baidu-drama] ${message}`, undefined, "resources");
   const { landscape, portrait } = await prepareBaiduDramaCoverVariants({
     sourceFile: coverSource.file,
-    landscapeSourceFile: landscapeSource.file,
-    portraitSourceFile: portraitSource.file,
+    landscapeSourceFile: landscapeSource?.file,
+    portraitSourceFile: portraitSource?.file,
+    title: task.playlet.title,
     outputDir,
+    aiCacheDir: path.join(
+      options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/baidu-drama/assets"),
+      "ai-cover-cache",
+    ),
+    aiImageModel: options.aiImageModel,
+    createAiClient: options.createAiClient,
     onLog: onResizeLog,
+    onWarn: onResizeWarn,
   });
   task.playlet.localCoverFile = landscape.file;
   task.playlet.localLandscapeCoverFile = landscape.file;

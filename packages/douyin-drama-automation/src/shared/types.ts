@@ -140,6 +140,7 @@ export type DouyinDramaRuntimeOptions = {
     episodeCount: number;
     requiredOwnership?: { minimumImages?: number };
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
     requiredAiProductionProofFiles?: number;
     mergeOwnershipMaterials?: boolean;
   }) => Promise<unknown>;

@@ -351,6 +351,7 @@ export type KuaishouDramaRuntimeOptions = {
     localEpisodeVideoRoot: string;
     episodeCount: number;
     requiredPosterImages?: number;
+    posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
 };
 
