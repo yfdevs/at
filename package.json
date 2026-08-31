@@ -13,7 +13,9 @@
     "playwright:install-browsers": "node scripts/install-playwright-browsers.mjs",
     "release": "node scripts/create-release.mjs",
     "release:win": "node scripts/release-win.mjs",
-    "prepare": "vp config"
+    "prepare": "vp config",
+    "wechat-miniprogram-drama:check": "pnpm --filter @drama/wechat-miniprogram-drama-automation check",
+    "wechat-miniprogram-drama:build": "pnpm --filter @drama/wechat-miniprogram-drama-automation build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -34,6 +36,7 @@
     "@drama/qq-drama-automation": "workspace:*",
     "@drama/tiktok-drama-automation": "workspace:*",
     "@drama/wechat-drama-automation": "workspace:*",
+    "@drama/wechat-miniprogram-drama-automation": "workspace:*",
     "@fontsource-variable/geist": "^5.2.9",
     "@mynaui/icons-react": "^0.4.3",
     "@shadcn/react": "^0.1.0",

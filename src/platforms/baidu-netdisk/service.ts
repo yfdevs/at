@@ -117,6 +117,7 @@ export type BaiduNetdiskDownloadRecordResult = {
 
 export type BaiduNetdiskWindowPlatformId =
   | "wechat-drama"
+  | "wechat-miniprogram-drama"
   | "meituan-drama"
   | "kuaishou-drama"
   | "tiktok-drama";

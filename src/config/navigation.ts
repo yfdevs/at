@@ -3,6 +3,7 @@ import { FineTune, Terminal } from "@mynaui/icons-react";
 
 export type PlatformId =
   | "wechat-drama"
+  | "wechat-miniprogram-drama"
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
@@ -18,6 +19,8 @@ export type AppRoute =
   | "wechat-drama/config"
   | "wechat-drama/accounts"
   | "wechat-drama/service"
+  | "wechat-miniprogram-drama/service"
+  | "wechat-miniprogram-drama/config"
   | "meituan-drama/service"
   | "meituan-drama/config"
   | "kuaishou-drama/service"
@@ -45,6 +48,8 @@ const appRoutes = [
   "wechat-drama/config",
   "wechat-drama/accounts",
   "wechat-drama/service",
+  "wechat-miniprogram-drama/service",
+  "wechat-miniprogram-drama/config",
   "meituan-drama/service",
   "meituan-drama/config",
   "kuaishou-drama/service",
@@ -118,6 +123,14 @@ export const platformNavigation: PlatformNavigationItem[] = [
     routePrefix: "wechat-drama",
     serviceRoute: "wechat-drama/service",
     configRoute: "wechat-drama/config",
+    logoSrc: `${import.meta.env.BASE_URL}wx.svg`,
+  },
+  {
+    id: "wechat-miniprogram-drama",
+    title: "微信小程序",
+    routePrefix: "wechat-miniprogram-drama",
+    serviceRoute: "wechat-miniprogram-drama/service",
+    configRoute: "wechat-miniprogram-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}wx.svg`,
   },
   {
@@ -198,6 +211,21 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "配置管理",
         route: "wechat-drama/config",
+        icon: FineTune,
+      },
+    ],
+  },
+  {
+    title: "微信小程序",
+    items: [
+      {
+        title: "服务控制",
+        route: "wechat-miniprogram-drama/service",
+        icon: Terminal,
+      },
+      {
+        title: "配置管理",
+        route: "wechat-miniprogram-drama/config",
         icon: FineTune,
       },
     ],

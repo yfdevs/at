@@ -57,6 +57,7 @@ const legacyPlatformTags = new Set([
   "qq-drama",
   "tiktok-drama",
   "wechat-drama",
+  "wechat-miniprogram-drama",
 ]);
 
 const platformLabels: Record<string, string> = {
@@ -71,6 +72,7 @@ const platformLabels: Record<string, string> = {
   "qq-drama": "QQ短剧",
   "tiktok-drama": "TikTok短剧",
   "wechat-drama": "视频号短剧",
+  "wechat-miniprogram-drama": "微信小程序短剧",
 };
 
 const scopeLabels: Record<string, string> = {

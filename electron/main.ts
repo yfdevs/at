@@ -21,6 +21,14 @@ import {
   stopWechatVideoPlatformRuntime,
 } from "./platforms/wechat-drama";
 import {
+  getWechatMiniProgramBrowserInstanceCount,
+  getWechatMiniProgramPlatformRuntimeSummary,
+  getWechatMiniProgramRunningPlatformCount,
+  openWechatMiniProgramLogDir,
+  registerWechatMiniProgramPlatformHandlers,
+  stopWechatMiniProgramPlatformRuntime,
+} from "./platforms/wechat-miniprogram-drama";
+import {
   getMeituanCreationBrowserInstanceCount,
   getMeituanCreationPlatformRuntimeSummary,
   getMeituanCreationRunningPlatformCount,
@@ -116,6 +124,7 @@ let win: BrowserWindow | null;
 
 type PlatformId =
   | "wechat-drama"
+  | "wechat-miniprogram-drama"
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
@@ -216,6 +225,7 @@ app.on("window-all-closed", () => {
 app.on("before-quit", () => {
   logMain("info", "正在停止各平台服务");
   stopWechatVideoPlatformRuntime();
+  stopWechatMiniProgramPlatformRuntime();
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopQqDramaPlatformRuntime();
@@ -241,6 +251,7 @@ app.whenReady().then(() => {
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
     });
     registerWechatVideoPlatformHandlers();
+    registerWechatMiniProgramPlatformHandlers();
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerQqDramaPlatformHandlers();
@@ -317,6 +328,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
   switch (platformId) {
     case "wechat-drama":
       return getWechatVideoPlatformRuntimeSummary();
+    case "wechat-miniprogram-drama":
+      return getWechatMiniProgramPlatformRuntimeSummary();
     case "meituan-drama":
       return getMeituanCreationPlatformRuntimeSummary();
     case "kuaishou-drama":
@@ -342,6 +355,8 @@ function openPlatformLogDir(platformId: PlatformId) {
   switch (platformId) {
     case "wechat-drama":
       return openWechatVideoLogDir();
+    case "wechat-miniprogram-drama":
+      return openWechatMiniProgramLogDir();
     case "meituan-drama":
       return openMeituanCreationLogDir();
     case "kuaishou-drama":
@@ -366,6 +381,7 @@ function openPlatformLogDir(platformId: PlatformId) {
 function getGlobalBrowserInstanceCount() {
   const counters = [
     getWechatVideoBrowserInstanceCount,
+    getWechatMiniProgramBrowserInstanceCount,
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getQqDramaBrowserInstanceCount,
@@ -388,6 +404,7 @@ function getGlobalBrowserInstanceCount() {
 function getGlobalRunningPlatformStatus() {
   const counters = [
     getWechatVideoRunningPlatformCount,
+    getWechatMiniProgramRunningPlatformCount,
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getQqDramaRunningPlatformCount,

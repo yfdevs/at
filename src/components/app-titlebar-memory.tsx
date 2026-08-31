@@ -169,6 +169,7 @@ function errorMessage(error: unknown) {
 function baiduNetdiskPlatformId(platformId: string): BaiduNetdiskWindowPlatformId {
   switch (platformId) {
     case "wechat-drama":
+    case "wechat-miniprogram-drama":
     case "meituan-drama":
     case "kuaishou-drama":
     case "tiktok-drama":

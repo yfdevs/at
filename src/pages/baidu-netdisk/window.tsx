@@ -1,4 +1,4 @@
-import { useEffect, useState, type ChangeEvent } from "react";
+import { useCallback, useEffect, useState, type ChangeEvent } from "react";
 
 import { Button } from "@/components/ui/button";
 import { Input } from "@/components/ui/input";
@@ -32,6 +32,7 @@ import { kuaishouDramaService } from "@/platforms/kuaishou-drama/service";
 import { meituanCreationService } from "@/platforms/meituan-drama/service";
 import { tiktokDramaCenterService } from "@/platforms/tiktok-drama/service";
 import { wechatVideoService } from "@/platforms/wechat-drama/service";
+import { wechatMiniProgramService } from "@/platforms/wechat-miniprogram-drama/service";
 
 type BaiduAction = "start" | "restart";
 type BaiduDownloadState = "idle" | "downloading" | "success" | "error";
@@ -127,6 +128,22 @@ async function loadPlatformDownloadTarget(
         platformId,
         platformTitle,
         rootLabel: "微信视频号剧集视频根目录",
+        rootPath: result.config.localEpisodeVideoRoot.trim(),
+        videoTranscode: {
+          runDataDir: result.config.runDataDir,
+          maxFileMegabytes: Number(result.config.episodeVideoMaxFileMegabytes) || 490,
+          targetFileMegabytes: Number(result.config.episodeVideoTargetFileMegabytes) || 480,
+          concurrency: Number(result.config.videoTranscodeConcurrency) || 2,
+          threadsPerJob: Number(result.config.videoTranscodeThreadsPerJob) || 2,
+        },
+      };
+    }
+    case "wechat-miniprogram-drama": {
+      const result = await wechatMiniProgramService.getConfig();
+      return {
+        platformId,
+        platformTitle,
+        rootLabel: "微信小程序剧集视频根目录",
         rootPath: result.config.localEpisodeVideoRoot.trim(),
         videoTranscode: {
           runDataDir: result.config.runDataDir,
@@ -243,7 +260,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
     }
   };
 
-  const refreshPlatformTarget = () => {
+  const refreshPlatformTarget = useCallback(() => {
     void (async () => {
       try {
         const result = await loadPlatformDownloadTarget(activePlatform.id, activePlatform.title);
@@ -254,7 +271,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
         setPlatformConfigError(errorMessage(error));
       }
     })();
-  };
+  }, [activePlatform.id, activePlatform.title]);
 
   useEffect(() => {
     void refreshStatus();
@@ -285,7 +302,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
 
   useEffect(() => {
     refreshPlatformTarget();
-  }, [activePlatform.id]);
+  }, [refreshPlatformTarget]);
 
   useEffect(() => {
     if (!resourceNameEdited) {
@@ -377,7 +394,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
           episodeCount: parsedEpisodeCount,
           mergeOwnershipMaterials,
           videoTranscode: platformDownloadTarget.videoTranscode,
-          ...(platformDownloadTarget.platformId === "wechat-drama"
+          ...(["wechat-drama", "wechat-miniprogram-drama"].includes(platformDownloadTarget.platformId)
             ? { requiredOwnership: { minimumImages: 1 } }
             : {}),
         });
@@ -557,7 +574,7 @@ export function BaiduNetdiskPanel({ platformId }: { platformId: BaiduNetdiskWind
               </div>
             </div>
 
-            {platformDownloadTarget?.platformId === "wechat-drama" ? (
+            {["wechat-drama", "wechat-miniprogram-drama"].includes(platformDownloadTarget?.platformId ?? "") ? (
               <div className="flex items-center justify-between gap-3 rounded-md bg-muted/50 px-3 py-2">
                 <div className="min-w-0">
                   <div className="text-xs font-medium">合并权属图片</div>

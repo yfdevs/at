@@ -33,6 +33,13 @@ export const runConfig = {
       input: [{ auto: true }, "!packages/wechat-drama-automation/dist/**"],
       output: ["packages/wechat-drama-automation/dist/**"],
     },
+    "pkg:wechat-miniprogram:build": {
+      command: "vp pack",
+      cwd: "packages/wechat-miniprogram-drama-automation",
+      dependsOn: ["pkg:axios:build", "pkg:feishu:build", "pkg:logging:build"],
+      input: [{ auto: true }, "!packages/wechat-miniprogram-drama-automation/dist/**"],
+      output: ["packages/wechat-miniprogram-drama-automation/dist/**"],
+    },
     "pkg:meituan:build": {
       command: "vp pack",
       cwd: "packages/meituan-drama-automation",
@@ -102,6 +109,7 @@ export const runConfig = {
         "pkg:ai:build",
         "pkg:logging:build",
         "pkg:wechat:build",
+        "pkg:wechat-miniprogram:build",
         "pkg:meituan:build",
         "pkg:kuaishou:build",
         "pkg:qq:build",
@@ -117,6 +125,11 @@ export const runConfig = {
     "pkg:wechat:check": {
       command: "tsc --noEmit",
       cwd: "packages/wechat-drama-automation",
+      output: [],
+    },
+    "pkg:wechat-miniprogram:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/wechat-miniprogram-drama-automation",
       output: [],
     },
     "pkg:logging:check": {
