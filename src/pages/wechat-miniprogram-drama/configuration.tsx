@@ -5,7 +5,6 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { Card, CardContent } from "@/components/ui/card";
-import { Checkbox } from "@/components/ui/checkbox";
 import {
   Field,
   FieldContent,
@@ -38,7 +37,6 @@ import {
 const emptyConfig: WechatMiniProgramConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   taskApiPrefix: "/dramaAiRpa/wechatMiniProgram",
-  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU,YOUDIANNIU,ZHENCUIYIHAO,RUIXIAODOU",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/wechat-miniprogram-drama",
@@ -61,7 +59,7 @@ const emptyConfig: WechatMiniProgramConfig = {
   episodeVideoMaxFileMegabytes: "490",
   episodeVideoTargetFileMegabytes: "480",
   episodeUploadWaitTimeoutSeconds: "7200",
-  episodeUploadFailedRetryAttempts: "3",
+  episodeUploadFailedRetryAttempts: "5",
   feishuBotWebhookUrl: "",
 };
 
@@ -91,26 +89,7 @@ type SwitchField = {
   inactiveLabel: string;
 };
 
-type SubjectField = {
-  kind: "subjects";
-  key: "videoAccountContractSubjects";
-  label: string;
-  description?: string;
-  options: Array<{ value: string; label: string }>;
-};
-
-type ConfigField = TextField | SelectField | SwitchField | SubjectField;
-
-const contractSubjectOptions = [
-  { label: "明星说", value: "MINGXINGSHUO" },
-  { label: "米苏", value: "MISU" },
-  { label: "微淘", value: "WEITAO" },
-  { label: "幻走", value: "HUANZOU" },
-  { label: "小石榴", value: "XIAOSHILIU" },
-  { label: "有点牛", value: "YOUDIANNIU" },
-  { label: "珍萃", value: "ZHENCUIYIHAO" },
-  { label: "瑞小豆", value: "RUIXIAODOU" },
-];
+type ConfigField = TextField | SelectField | SwitchField;
 
 const sections: Array<{
   title: string;
@@ -131,13 +110,6 @@ const sections: Array<{
         key: "taskApiPrefix",
         label: "小程序任务接口前缀",
         description: "使用独立前缀领取小程序任务，避免与微信视频号任务混用。",
-      },
-      {
-        kind: "subjects",
-        key: "videoAccountContractSubjects",
-        label: "主体配置",
-        description: "选择本次服务需要加载的小程序主体，可按实际业务范围调整。",
-        options: contractSubjectOptions,
       },
     ],
   },
@@ -297,14 +269,14 @@ const sections: Array<{
         key: "episodeUploadWaitTimeoutSeconds",
         label: "剧集上传等待",
         type: "number",
-        description: "等待平台完成剧集上传处理。",
+        description: "等待平台完成剧集上传及自动重试；超时后任务失败。默认 7200 秒（120 分钟）。",
         suffix: "秒",
       },
       {
         kind: "select",
         key: "episodeUploadFailedRetryAttempts",
         label: "上传失败重试",
-        description: "单集上传失败后的最多重试次数。",
+        description: "页面显示“上传失败”时自动点击“重试”，单集默认最多 5 次。",
         options: [
           { value: "0", label: "不重试" },
           { value: "3", label: "最多 3 次" },
@@ -488,59 +460,6 @@ function ConfigFieldControl({
   onChange: (key: keyof WechatMiniProgramConfig, value: string) => void;
 }) {
   const value = config[field.key];
-
-  if (field.kind === "subjects") {
-    const selectedSubjects = new Set(
-      value
-        .split(",")
-        .map((subject) => subject.trim())
-        .filter(Boolean),
-    );
-
-    const toggleSubject = (subject: string, checked: boolean) => {
-      const nextSubjects = new Set(selectedSubjects);
-
-      if (checked) {
-        nextSubjects.add(subject);
-      } else {
-        nextSubjects.delete(subject);
-      }
-
-      onChange(
-        field.key,
-        field.options
-          .map((option) => option.value)
-          .filter((subject) => nextSubjects.has(subject))
-          .join(","),
-      );
-    };
-
-    return (
-      <Field className="gap-2.5 py-3 md:grid md:grid-cols-[minmax(220px,1fr)_280px] md:items-start">
-        <FieldContent>
-          <FieldLabel className="text-[13px]">{field.label}</FieldLabel>
-          {field.description ? (
-            <FieldDescription className="text-xs">{field.description}</FieldDescription>
-          ) : null}
-        </FieldContent>
-        <div className="flex min-w-0 flex-wrap gap-2">
-          {field.options.map((option) => (
-            <label
-              key={option.value}
-              className="flex h-8 w-auto min-w-0 items-center gap-2 bg-background px-2.5 text-[13px]"
-            >
-              <Checkbox
-                checked={selectedSubjects.has(option.value)}
-                onCheckedChange={(checked) => toggleSubject(option.value, checked === true)}
-                aria-label={option.label}
-              />
-              <span className="truncate">{option.label}</span>
-            </label>
-          ))}
-        </div>
-      </Field>
-    );
-  }
 
   if (field.kind === "switch") {
     const checked = value === "true";

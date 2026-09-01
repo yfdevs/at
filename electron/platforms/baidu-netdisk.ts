@@ -98,6 +98,7 @@ type BaiduNetdiskShareDownloadResult = {
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
+  inferredEpisodeCount?: number;
   completed: boolean;
   skippedExisting: boolean;
   downloadDir: string;
@@ -114,8 +115,10 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   shareText: string;
   resourceName: string;
   localEpisodeVideoRoot: string;
-  episodeCount: number;
+  episodeCount?: number;
+  inferEpisodeCount?: boolean;
   downloadEpisodeVideos?: boolean;
+  downloadAssetMaterials?: boolean;
   forceAssetDownload?: boolean;
   requiredOwnership?: {
     minimumImages?: number;
@@ -537,6 +540,7 @@ function normalizeEnsureDownloadRequest(
   const resourceName = sanitizeWindowsName(request.resourceName);
   const localEpisodeVideoRoot = request.localEpisodeVideoRoot.trim();
   const episodeCount = Number(request.episodeCount);
+  const inferEpisodeCount = request.inferEpisodeCount === true;
   const downloadEpisodeVideos = request.downloadEpisodeVideos !== false;
 
   if (!shareText) {
@@ -549,18 +553,23 @@ function normalizeEnsureDownloadRequest(
     throw new Error("本地剧集视频根目录不能为空。");
   }
   if (
-    !Number.isInteger(episodeCount)
-    || (downloadEpisodeVideos ? episodeCount <= 0 : episodeCount < 0)
+    (!Number.isInteger(episodeCount)
+      || (downloadEpisodeVideos ? episodeCount <= 0 : episodeCount < 0))
+    && !(downloadEpisodeVideos && inferEpisodeCount)
   ) {
-    throw new Error("剧集数量必须是正整数。");
+    throw new Error("剧集数量必须是正整数，或启用自动识别集数。");
   }
 
   return {
     shareText,
     resourceName,
     localEpisodeVideoRoot,
-    episodeCount,
+    episodeCount: Number.isInteger(episodeCount) && episodeCount >= 0
+      ? episodeCount
+      : undefined,
+    inferEpisodeCount,
     downloadEpisodeVideos,
+    downloadAssetMaterials: request.downloadAssetMaterials,
     forceAssetDownload: request.forceAssetDownload,
     requiredOwnership: request.requiredOwnership,
     requiredOwnershipFiles: request.requiredOwnershipFiles,
@@ -668,6 +677,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       shareText: string;
       resourceName?: string;
       expectedEpisodeCount?: number;
+      inferEpisodeCount?: boolean;
       expectedOwnershipCounts?: {
         minimumImages?: number;
       };
@@ -675,6 +685,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       expectedPosterImages?: number;
       expectedAiProductionProofFiles?: number;
       downloadEpisodeVideos?: boolean;
+      downloadAssetMaterials?: boolean;
       port: number;
       downloadDir: string;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
@@ -939,6 +950,8 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
       episodeCount: request.episodeCount,
       downloadEpisodeVideos: request.downloadEpisodeVideos,
+      downloadAssetMaterials: request.downloadAssetMaterials,
+      inferEpisodeCount: request.inferEpisodeCount,
       forceAssetDownload: request.forceAssetDownload,
       requiredOwnership: request.requiredOwnership,
       requiredOwnershipFiles: request.requiredOwnershipFiles,
@@ -955,11 +968,13 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             shareText: downloadRequest.shareText,
             resourceName: downloadRequest.resourceName,
             expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
+            inferEpisodeCount: downloadRequest.inferEpisodeCount,
             expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
             expectedOwnershipFiles: downloadRequest.expectedOwnershipFiles,
             expectedPosterImages: downloadRequest.expectedPosterImages,
             expectedAiProductionProofFiles: downloadRequest.expectedAiProductionProofFiles,
             downloadEpisodeVideos: downloadRequest.downloadEpisodeVideos,
+            downloadAssetMaterials: downloadRequest.downloadAssetMaterials,
             port,
             downloadDir: downloadRequest.downloadDir,
           }),
@@ -1055,6 +1070,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     return upsertDownloadRecord({
       ...record,
       resourceName: request.resourceName,
+      episodeCount: result.episodeCount,
       localPath: completedLocalPath,
       progressPercent: 100,
       state: "completed",

@@ -10,6 +10,21 @@ import type {
   MeituanCreationLoginState,
   MeituanCreationRuntimeOptions,
 } from "../shared/types.js";
+import {
+  MEITUAN_CREATION_LOGIN_URL,
+  MEITUAN_CREATION_PUBLISH_VIDEO_URL,
+} from "../shared/constants.js";
+
+type MeituanAppRootSnapshot = {
+  exists: boolean;
+  childElementCount: number;
+  text: string;
+  html: string;
+};
+
+type WaitForLoginResult = {
+  recoveredBlankPage: boolean;
+};
 
 export function log(options: MeituanCreationRuntimeOptions, message: string) {
   runtimeLogger(options).callback()(message);
@@ -54,6 +69,7 @@ export async function saveTaskFailureDiagnostics(options: {
     visibleMessages: await visibleText(".mtd-message:visible"),
     visibleFormErrors: await visibleText(".mtd-form-item-error-tip:visible, .err-tips:visible"),
     visibleButtons: await visibleText("button:visible"),
+    appRoot: await readMeituanAppRoot(page),
     draggerCount: await page.locator(".mtd-upload-dragger").count().catch(() => -1),
     visibleDraggerCount: await page.locator(".mtd-upload-dragger:visible").count().catch(() => -1),
     fileInputs: await page
@@ -108,23 +124,99 @@ async function isPublishFormReady(page: Page) {
     .catch(() => false);
 }
 
-export async function waitForLogin(page: Page, options: MeituanCreationRuntimeOptions) {
+async function readMeituanAppRoot(page: Page): Promise<MeituanAppRootSnapshot> {
+  return page.evaluate(() => {
+    const root = document.querySelector("#app");
+    return {
+      exists: Boolean(root),
+      childElementCount: root?.childElementCount ?? 0,
+      text: (root?.textContent ?? "").replace(/\s+/g, " ").trim().slice(0, 500),
+      html: (root?.innerHTML ?? "").trim().slice(0, 1_000),
+    };
+  }).catch(() => ({
+    exists: false,
+    childElementCount: 0,
+    text: "",
+    html: "",
+  }));
+}
+
+export function isBlankMeituanAppRoot(snapshot: MeituanAppRootSnapshot) {
+  return snapshot.exists && snapshot.childElementCount === 0 && snapshot.text.length === 0;
+}
+
+async function isPersistentlyBlankMeituanPage(page: Page) {
+  for (let sample = 0; sample < 3; sample += 1) {
+    if (!isBlankMeituanAppRoot(await readMeituanAppRoot(page))) return false;
+    if (sample < 2) await page.waitForTimeout(1_000);
+  }
+  return true;
+}
+
+async function openLoginPageForExpiredSession(
+  page: Page,
+  options: MeituanCreationRuntimeOptions,
+) {
+  log(options, "[meituan-drama] 检测到发布页为空，登录已失效，正在打开登录页");
+  const cleanupResults = await Promise.allSettled([
+    page.evaluate(() => {
+      window.localStorage.clear();
+      window.sessionStorage.clear();
+    }),
+    page.context().clearCookies(),
+  ]);
+  if (cleanupResults.some((result) => result.status === "rejected")) {
+    log(options, "[meituan-drama] 失效登录态未完全清理，继续打开登录页");
+  }
+  await page.goto(MEITUAN_CREATION_LOGIN_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  }).catch((error: unknown) => {
+    throw Object.assign(
+      new Error(
+        `MEITUAN_LOGIN_PAGE_OPEN_FAILED: ${error instanceof Error ? error.message : String(error)}`,
+      ),
+      { cause: error },
+    );
+  });
+  log(options, "[meituan-drama] 登录页已打开，请重新登录");
+}
+
+export async function waitForLogin(
+  page: Page,
+  options: MeituanCreationRuntimeOptions,
+  allowBlankPageRecovery = true,
+): Promise<WaitForLoginResult> {
+  let recoveredBlankPage = false;
   if (await isPublishFormReady(page)) {
     log(options, "[meituan-drama] already logged in");
-    return;
+    return { recoveredBlankPage };
   }
 
   await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
   if (await isPublishFormReady(page)) {
     log(options, "[meituan-drama] already logged in");
-    return;
+    return { recoveredBlankPage };
+  }
+
+  if (
+    page.url().includes("/new/publishVideo")
+    && await isPersistentlyBlankMeituanPage(page)
+  ) {
+    if (!allowBlankPageRecovery) {
+      throw new Error(
+        "MEITUAN_LOGIN_REQUIRED: 重新登录后发布页仍为空白，请确认登录完成后重试",
+      );
+    }
+    await openLoginPageForExpiredSession(page, options);
+    recoveredBlankPage = true;
   }
 
   if (!page.url().includes("/new/login")) {
-    return;
+    return { recoveredBlankPage };
   }
 
-  log(options, "[meituan-drama] waiting for login");
+  log(options, "[meituan-drama] 等待重新登录");
   await page.waitForFunction(
     () => {
       const bodyText = document.body?.innerText ?? "";
@@ -134,7 +226,46 @@ export async function waitForLogin(page: Page, options: MeituanCreationRuntimeOp
     { timeout: 0 },
   );
   await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
-  log(options, "[meituan-drama] login completed");
+  log(options, "[meituan-drama] 登录完成");
+  return { recoveredBlankPage };
+}
+
+export async function waitForPublishPageReady(
+  page: Page,
+  options: MeituanCreationRuntimeOptions,
+) {
+  const navigateToPublishPage = () => page.goto(MEITUAN_CREATION_PUBLISH_VIDEO_URL, {
+    waitUntil: "domcontentloaded",
+    timeout: 60_000,
+  });
+  let blankPageRecoveryUsed = false;
+  await navigateToPublishPage();
+
+  for (let attempt = 1; attempt <= 3; attempt += 1) {
+    const loginResult = await waitForLogin(page, options, !blankPageRecoveryUsed);
+    blankPageRecoveryUsed ||= loginResult.recoveredBlankPage;
+    if (await isPublishFormReady(page)) return;
+
+    if (!page.url().includes("/new/publishVideo")) {
+      await navigateToPublishPage();
+      continue;
+    }
+
+    await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
+    if (await isPublishFormReady(page)) return;
+    if (await isPersistentlyBlankMeituanPage(page)) {
+      if (blankPageRecoveryUsed) {
+        throw new Error(
+          "MEITUAN_LOGIN_REQUIRED: 重新登录后发布页仍为空白，请确认登录完成后重试",
+        );
+      }
+      continue;
+    }
+    await page.getByText("发布至合集").waitFor({ state: "visible", timeout: 60_000 });
+    return;
+  }
+
+  throw new Error("MEITUAN_LOGIN_REQUIRED: 登录完成后未能进入美团发布页，请重新登录");
 }
 
 export async function saveCredentialState(

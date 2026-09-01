@@ -11,6 +11,7 @@ import { IdlePageRefreshService } from "./idle-page-refresh-service.js";
 import { TaskService } from "./task-service.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 import { VideoAccountSyncService } from "./video-account-sync-service.js";
+import { resetMockWechatMiniProgramTaskApi } from "../api/task.js";
 
 export type EnsureBaiduNetdiskResourceRequest = {
   shareText: string;
@@ -59,6 +60,7 @@ function log(options: WechatMiniProgramRuntimeOptions, message: string) {
 
 export async function startWechatMiniProgramRuntime(options: WechatMiniProgramRuntimeOptions = {}): Promise<WechatMiniProgramRuntime> {
   configureWechatMiniProgramRuntimeSettings(options.settings);
+  resetMockWechatMiniProgramTaskApi();
   const serviceConfig = await loadServiceConfig();
   const notifier = new FeishuNotifier({
     channelIdLabel: "videoAccountId",

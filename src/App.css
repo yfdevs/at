@@ -92,6 +92,11 @@ body {
   height: var(--app-titlebar-height) !important;
 }
 
+:root[data-direct-upload-drawer-open="true"] .cet-titlebar .cet-window-controls {
+  display: none !important;
+  pointer-events: none;
+}
+
 .cet-container {
   top: var(--app-titlebar-height) !important;
   background: transparent !important;

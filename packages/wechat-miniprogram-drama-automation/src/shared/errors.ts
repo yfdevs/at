@@ -37,10 +37,13 @@ const errorTypeRules: Array<[ErrorType, RegExp]> = [
   [ErrorType.Authentication, /login|required login|登录|scan|扫码/i],
   [ErrorType.ChannelState, /Unknown channelId|Channel is|reserved|busy|video account/i],
   [ErrorType.TaskClaim, /claim task|claim loop|account task page|领取/i],
-  [ErrorType.ApiRequest, /HTTP \d{3}|ECONN|ETIMEDOUT|ENOTFOUND|Axios|REQUEST|POST|GET|PUT|DELETE/i],
+  [ErrorType.Browser, /\[ai-content-switch-failed\]|browser|page|locator|playwright|chromium|context/i],
+  [
+    ErrorType.ApiRequest,
+    /HTTP\s+\d{3}|\b(?:ECONN\w*|ETIMEDOUT|ENOTFOUND)\b|\bAxios(?:Error)?\b|\bREQUEST\b|\b(?:POST|GET|PUT|DELETE|PATCH)\s+(?:https?:\/\/|\/)/i,
+  ],
   [ErrorType.ApiResponse, /response data|payloadJson|code=\d+|接口|响应/i],
   [ErrorType.Configuration, /config|ENV|apiBaseUrl|localEpisodeVideoRoot/i],
-  [ErrorType.Browser, /browser|page|locator|playwright|chromium|context/i],
 ];
 
 function extractMessage(error: unknown): string {

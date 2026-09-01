@@ -8,7 +8,7 @@
 
 页面当前看到的图片材料要求通常是 `jpg/jpeg/bmp/png`，单个文件不超过 10MB；其他材料支持 `pdf/jpg/jpeg/bmp/png`。剧目海报建议 `816*1086px`，推广海报建议 `762*318px`。
 
-当前自动填写的剧目基础信息字段包括：剧目名称、剧目简介、推荐语、总集数、变现类型、试看集数、剧目类型、AI内容声明、AI制作证明、剧目海报、推广海报、提审身份、制作方名称、剧目制作证明材料、版权采买&播出授权证明材料、剧目资质、剧目制作成本、剧目制作成本证明文件和其他材料。任务配置来自领取接口返回的 `payloadJson`，不再读取项目 `data/` 目录。
+当前自动填写的剧目基础信息字段包括：剧目名称、剧目简介、推荐语、总集数、变现类型、试看集数、剧目类型、AI内容声明、AI制作证明、剧目海报、推广海报、提审身份、制作方名称、剧目制作证明材料、版权采买&播出授权证明材料、剧目资质、剧目制作成本、剧目制作成本证明文件和其他材料。任务配置来自领取接口返回的 `payloadJson`，不再读取项目 `data/` 目录。正式领取接口尚未提供时，当前占位实现会为每个模拟小程序账号返回一次《赶海救下美人鱼，她让整片大海来报恩》的 10 集测试任务，并携带百度网盘分享链接，以及随应用打包的 AI 制作证明、制作合同、版权授权书和制作成本证明图片；Electron 会把内置 `mock-assets` 目录注入运行时，假任务直接使用其中的真实本地文件。同一账号在单次服务进程内不会重复领取，测试任务的成功或失败结果也不会回调正式后端。模拟任务即使执行到最后也会跳过“确认提审”，不会产生真实发布。
 
 ## 任务配置字段
 
@@ -27,11 +27,11 @@
 | `playlet.summary` | 剧目简介 | 示例简介 | 必填。 |
 | `playlet.recommendation` | 推荐语 | 示例推荐语 | 非必填。 |
 | `playlet.episodeCount` | 总集数 | `9` | 必填，提交后通常不可变更。 |
-| `playlet.monetization` | 变现类型 | `IAA广告变现` | 可选 `IAA广告变现`、`IAP付费变现`。 |
-| `playlet.previewEpisodeCount` | 试看集数 | `1` | 必填。 |
+| `playlet.monetization` | 变现类型 | `IAA广告变现` | 兼容旧版表单；当前页面未显示时自动跳过。 |
+| `playlet.previewEpisodeCount` | 试看集数 | `1` | 兼容旧版表单；当前页面未显示时自动跳过。 |
 | `playlet.dramaType` | 剧目类型 | `数字真人` | 仅使用 `数字真人`、`漫剧`；缺失或传入其他值时按 `数字真人` 处理。 |
-| `playlet.aiContent` | AI内容声明 | `true` | `true` 表示打开声明开关。 |
-| `playlet.aiProductionProofFiles` | AI制作证明 | 无 | 开启 AI 内容声明后必填，字段类型固定为字符串数组。优先使用领取任务字段；未提供、数组为空或文件不可用时，递归匹配本地剧目录中名称包含“AI制作证明”的图片/PDF。任务带百度网盘分享链接且本地未找到时，会从分享资源中匹配、下载并整理该证明。 |
+| `playlet.aiContent` | AI内容声明 | `true` | 领取接口对应 `payloadJson.aiContent`。缺失时默认开启；只有接口明确传 `false` 才关闭。 |
+| `playlet.aiProductionProofFiles` | AI制作证明 | 无 | 领取接口对应 `payloadJson.aiProductionProofFiles: string[]`。开启 AI 内容声明后必填；优先使用领取任务字段，未提供、数组为空或文件不可用时，递归匹配本地剧目录中名称包含“AI制作证明”的图片/PDF。任务带百度网盘分享链接且本地未找到时，会从分享资源中匹配、下载并整理该证明。 |
 | `playlet.posters.main` | 剧目海报 | 无 | 必填文件路径，支持远程 URL 或非 `assets/` 的本地绝对路径。 |
 | `playlet.posters.promotion` | 推广海报 | 无 | 非必填文件路径，支持远程 URL 或非 `assets/` 的本地绝对路径。 |
 | `playlet.submissionIdentity` | 提审身份 | `版权方/授权播出方` | 可选 `剧目制作方`、`版权方/授权播出方`。 |
@@ -53,7 +53,7 @@
 
 ## 多小程序配置
 
-服务启动时会调用 `POST /dramaAiRpa/videoAccountConfig/page` 获取状态为 `ON` 的小程序列表，并为列表里的每个小程序启动一个独立 worker。服务运行中会按 `videoAccountSyncIntervalSeconds` 定时重新拉取小程序列表：新增小程序会自动启动 worker，已下线的小程序会停止继续领取新任务，名称变化会同步到内存状态。请求分页参数为 `page=1`、`pageSize=100`。
+小程序账号使用独立的 `fetchWechatMiniProgramAccountsApi` 获取，不调用微信视频号账号接口，也不按主体筛选。正式账号接口尚未提供时，该方法固定返回两个结构与正式分页响应一致的模拟账号；服务会按返回数量为每个账号启动一个独立 worker。服务运行中会按 `videoAccountSyncIntervalSeconds` 定时重新获取账号列表：新增账号会自动启动 worker，移除账号会停止继续领取新任务，名称变化会同步到内存状态。正式接口可用后只需替换 `requestWechatMiniProgramAccountPage` 的实现。
 
 运行时配置由 Electron 主进程从 `electron-store` 读取后注入，用户通过配置页面修改；自动化包不读取环境文件或业务 `process.env`。
 
@@ -65,26 +65,7 @@
 
 运行时由桌面端服务控制页面启动。启动后会为小程序列表中的每个账号打开一个独立的浏览器窗口，自动进入小程序剧集后台。
 
-服务会为每个小程序启动一个独立 worker。worker 会按小程序 ID 领取任务，领到后立即执行，执行完成后再领取下一单；任务失败时会调用 `/dramaAiRpa/rpa/failCallback` 上报失败，再继续领取下一单；没有领到任务时会短暂等待。领取任务前会先调用 `/dramaAiRpa/accountTask/page` 查询 `rpaStatus=READY` 的任务，再用任务 ID 调用 `/dramaAiRpa/rpa/claim`。
-
-`/dramaAiRpa/accountTask/page` 请求体：
-
-```json
-{
-  "page": 1,
-  "pageSize": 100,
-  "videoAccountId": "video-account-1001",
-  "rpaStatus": "READY"
-}
-```
-
-`/dramaAiRpa/rpa/claim` 请求体：
-
-```json
-{
-  "accountTaskId": 35
-}
-```
+服务会为每个小程序启动一个独立 worker。worker 会按小程序 ID 领取任务，领到后立即执行，执行完成后再领取下一单；没有领到任务时会短暂等待。当前 `requestWechatMiniProgramTaskApi` 是未接入网络的正式接口占位方法，`createMockWechatMiniProgramClaimResponse` 生成包含 `code/msg/data/payloadJson` 的正式响应结构，`createMockWechatMiniProgramTask` 将其转换为 worker 使用的测试任务。正式接口可用后只需实现占位方法；响应中的 `data: null` 代表当前没有任务，不会再回退到模拟任务。
 
 `/dramaAiRpa/rpa/failCallback` 请求体：
 
@@ -126,8 +107,8 @@
 - `idlePageRefreshJitterSeconds=300`：各账号保活刷新随机错峰秒数，默认 300 秒。
 - `basicInfoStepTimeoutSeconds=600`：基础信息填写步骤总超时，默认 600 秒。
 - `remoteFileDownloadTimeoutSeconds=120`：远程素材单文件下载超时，默认 120 秒。
-- `episodeUploadWaitTimeoutSeconds=14400`：剧集文件上传最长等待时间，默认 14400 秒。
-- `episodeUploadFailedRetryAttempts=3`：单个剧集文件提示“未能上传”后的最大重试次数，默认 3 次。
+- `episodeUploadWaitTimeoutSeconds=7200`：剧集文件上传与自动重试的总等待上限，默认 7200 秒（120 分钟），超时后任务失败。
+- `episodeUploadFailedRetryAttempts=5`：单个剧集文件显示“上传失败”后的最大自动重试次数，默认 5 次。
 - `materialPreparationConcurrency=3`：全局并行准备网盘资源、权属、海报和 AI 材料的任务数。
 - `taskPrefetchPerAccount=2`：每个小程序最多提前领取并准备的任务数；同一小程序仍按领取顺序串行发布。
 - `videoTranscodeConcurrency=2`：全局同时运行的 FFmpeg 转码进程数。

@@ -90,20 +90,23 @@ async function ensureRemoteMaterials(
   if (!localMaterialRoot) throw new Error("请先配置爱奇艺本地素材根目录。");
 
   const maximumAttempts = Math.max(0, options.baiduNetdiskDownloadRetryAttempts ?? 3) + 1;
+  const downloadEpisodeVideos = task.playlet.dramaType === "comic-drama";
   let lastError: unknown;
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
     try {
-      log(options, "[iqiyi-drama] downloading cover materials", {
+      log(options, "[iqiyi-drama] downloading task materials", {
         attempt,
         maximumAttempts,
+        downloadEpisodeVideos,
+        episodeCount: downloadEpisodeVideos ? task.playlet.episodeCount : 0,
         resourceName: task.originalTitle,
       });
       await options.ensureBaiduNetdiskResource({
         shareText,
         resourceName: task.originalTitle,
         localEpisodeVideoRoot: localMaterialRoot,
-        episodeCount: 0,
-        downloadEpisodeVideos: false,
+        episodeCount: downloadEpisodeVideos ? task.playlet.episodeCount : 0,
+        downloadEpisodeVideos,
         forceAssetDownload: true,
         requiredOwnership: { minimumImages: 0 },
         requiredOwnershipFiles: 0,

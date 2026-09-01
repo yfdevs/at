@@ -183,12 +183,16 @@ export async function startKuaishouDramaRuntime(
       resolvedTask.claimedTask?.accountTaskId,
       options,
     );
-    const poster = await prepareKuaishouDramaTaskMaterials(
+    const covers = await prepareKuaishouDramaTaskMaterials(
       resolvedTask.taskConfig,
       resolvedTask.resourceName,
       options,
     );
-    log(options, `[kuaishou-drama] local cover and poster ready: ${poster.file}`);
+    log(
+      options,
+      `[kuaishou-drama] local drama and episode covers ready: ` +
+        `drama=${covers.dramaCover} episode=${covers.episodeCover}`,
+    );
   };
 
   const waitForNextPoll = async () => {

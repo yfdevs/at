@@ -18,8 +18,8 @@ const electronMainExternalPatterns = [
 ];
 
 const electronMainExternals = (id: string) =>
-  electronMainExternalPatterns.some((pattern) => pattern.test(id))
-  || /[\\/]node_modules[\\/](?:ffmpeg-static|sharp|@img)(?:[\\/]|$)/.test(id);
+  electronMainExternalPatterns.some((pattern) => pattern.test(id)) ||
+  /[\\/]node_modules[\\/](?:ffmpeg-static|sharp|@img)(?:[\\/]|$)/.test(id);
 
 export function createElectronPlugin(rootDir: string) {
   return electron({
@@ -58,6 +58,13 @@ export function createElectronPlugin(rootDir: string) {
             {
               find: /^@drama\/douyin-drama-automation$/,
               replacement: path.join(rootDir, "packages/douyin-drama-automation/src/index.ts"),
+            },
+            {
+              find: /^@drama\/wechat-miniprogram-drama-automation$/,
+              replacement: path.join(
+                rootDir,
+                "packages/wechat-miniprogram-drama-automation/src/index.ts",
+              ),
             },
             {
               find: /^@drama\/drama-media-assets$/,

@@ -7,7 +7,7 @@ import type {
 import { exactTextPattern, scrollLocatorIntoView } from "./form-controls.js";
 import { log } from "./browser-session.js";
 import { maximizeKuaishouImageCropArea } from "./image-crop.js";
-import { resolveKuaishouVariantCoverFile } from "../shared/ad-cover-ai.js";
+import { resolveKuaishouEpisodeCoverFile } from "../shared/cover-materials.js";
 import { resolveUploadAssetFile } from "./upload/remote-assets.js";
 import { enterKuaishouDramaVideoUploadStep } from "./video-upload-step.js";
 import { uploadKuaishouDramaEpisodeVideos } from "./video-upload.js";
@@ -78,8 +78,8 @@ async function confirmImageCropIfVisible(page: Page) {
     .locator('.ks-dialog[aria-label="图片剪裁"],[role="dialog"][aria-label="图片剪裁"]')
     .last();
   await cropDialog.waitFor({ state: "visible", timeout: 10_000 });
-  const clickDeadline = Date.now() + 10_000;
   await maximizeKuaishouImageCropArea(page, cropDialog);
+  const clickDeadline = Date.now() + 10_000;
   const remainingMs = clickDeadline - Date.now();
   if (remainingMs <= 0) {
     throw new Error("KUAISHOU_DRAMA_IMAGE_CROP_CONFIRM_TIMEOUT");
@@ -417,7 +417,7 @@ export async function fillKuaishouDramaSaleAndEpisodes(
   if (!freeRange) {
     throw new Error(`KUAISHOU_DRAMA_FREE_EPISODE_RANGE_NOT_FOUND: ${variant.kind}`);
   }
-  const coverFile = resolveKuaishouVariantCoverFile(task, variant);
+  const coverFile = resolveKuaishouEpisodeCoverFile(task);
   const episodeCoverPath = await resolveUploadAssetFile(
     coverFile,
     options,

@@ -40,6 +40,7 @@ export type BaiduNetdiskShareDownloadOptions = {
   shareFile?: string;
   resourceName?: string;
   expectedEpisodeCount?: number;
+  inferEpisodeCount?: boolean;
   expectedOwnershipCounts?: {
     minimumImages?: number;
   };
@@ -47,6 +48,7 @@ export type BaiduNetdiskShareDownloadOptions = {
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   downloadEpisodeVideos?: boolean;
+  downloadAssetMaterials?: boolean;
   port?: number;
   downloadDir?: string;
 };
@@ -131,6 +133,7 @@ export type BaiduNetdiskShareDownloadResult = {
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  inferredEpisodeCount?: number;
   completed: boolean;
   skippedExisting: boolean;
 };

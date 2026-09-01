@@ -3,13 +3,13 @@ import { resolveFromRoot } from "../../shared/config.js";
 import { ErrorType } from "../../shared/errors.js";
 import type { Config } from "../../shared/types.js";
 import {
+  copyrightVerificationValues,
   dramaTypeValues,
   monetizationValues,
   auditFormPagePath,
   qualificationValues,
   selectors,
   submissionIdentityValues,
-  formGroup,
 } from "../constants.js";
 import { gotoMiniProgramPage } from "../portal-navigation.js";
 import {
@@ -31,6 +31,26 @@ async function fillFirstMatchingField(
   await fieldLocator.waitFor({ state: "visible", timeout: 20000 });
   await fieldLocator.fill(String(fieldValue));
   formLogger.info("字段已填写", { field: fieldLabel });
+}
+
+async function fillLegacyFieldWhenVisible(
+  page: Page,
+  fieldSelector: string,
+  fieldValue: string | number,
+  fieldLabel: string,
+): Promise<boolean> {
+  const fieldLocator = page.locator(fieldSelector).first();
+  if (
+    (await fieldLocator.count()) === 0
+    || !await fieldLocator.isVisible().catch(() => false)
+  ) {
+    formLogger.info("当前页面未显示旧版字段，已跳过", { field: fieldLabel });
+    return false;
+  }
+
+  await fieldLocator.fill(String(fieldValue), { timeout: 15000 });
+  formLogger.info("字段已填写", { field: fieldLabel });
+  return true;
 }
 
 function sanitizeDramaText(value: string, label: string): string {
@@ -157,62 +177,160 @@ async function fillInGroupByPlaceholder(
   return true;
 }
 
-async function selectCheckboxOrRadio(
-  page: Page,
-  inputSelector: string,
-  inputLabel: string,
-): Promise<void> {
-  const hiddenInput = page.locator(inputSelector).first();
-  if ((await hiddenInput.count()) === 0) {
-    formLogger.warn("未找到字段，已跳过", { field: inputLabel, selector: inputSelector });
-    return;
+const serviceAgreementText = "微信小程序微短剧剧目审核服务使用须知";
+
+function createBasicInfoValidationError(message: string): Error {
+  return Object.assign(new Error(`[basic-info-validation-failed] ${message}`), {
+    errorType: ErrorType.Validation,
+  });
+}
+
+function findServiceAgreementCheckbox(page: Page): Locator {
+  return page
+    .locator("label.weui-desktop-form__check-label")
+    .filter({ hasText: serviceAgreementText })
+    .filter({ has: page.locator('input[type="checkbox"]') })
+    .locator('input[type="checkbox"]')
+    .first();
+}
+
+async function acceptServiceAgreement(page: Page): Promise<void> {
+  const checkbox = findServiceAgreementCheckbox(page);
+  if ((await checkbox.count()) === 0) {
+    throw createBasicInfoValidationError(`未找到《${serviceAgreementText}》复选框`);
   }
 
-  const visibleIcon = page.locator(`${inputSelector} + i`).first();
-  try {
-    if ((await visibleIcon.count()) > 0 && (await visibleIcon.isVisible())) {
-      await visibleIcon.click({ timeout: 15000 });
-    } else {
-      await hiddenInput.check({ force: true, timeout: 15000 });
+  if (!await checkbox.isChecked().catch(() => false)) {
+    const icon = checkbox.locator("xpath=following-sibling::i[1]").first();
+    await icon.scrollIntoViewIfNeeded().catch(() => undefined);
+    if ((await icon.count()) > 0 && await icon.isVisible().catch(() => false)) {
+      await icon.click({ force: true, timeout: 15000 }).catch(() => undefined);
     }
-  } catch (error) {
-    await hiddenInput.evaluate((element) => {
+  }
+
+  if (!await checkbox.isChecked().catch(() => false)) {
+    await checkbox.check({ force: true, timeout: 15000 }).catch(() => undefined);
+  }
+
+  if (!await checkbox.isChecked().catch(() => false)) {
+    await checkbox.evaluate((element) => {
       const input = element as HTMLInputElement;
+      input.click();
+      if (input.checked) return;
       input.checked = true;
       input.dispatchEvent(new Event("input", { bubbles: true }));
       input.dispatchEvent(new Event("change", { bubbles: true }));
     });
-    const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
-    formLogger.warn("字段已使用兼容方式选中", { field: inputLabel, message });
   }
-  formLogger.info("选项已选择", { field: inputLabel });
+
+  await page.waitForTimeout(300);
+  if (!await checkbox.isChecked().catch(() => false)) {
+    throw createBasicInfoValidationError(`无法勾选《${serviceAgreementText}》`);
+  }
+  formLogger.info("选项状态已确认", { field: "服务须知同意", checked: true });
 }
 
-async function clickExactText(page: Page, text: string, label: string): Promise<boolean> {
-  const locator = page.getByText(text, { exact: true }).first();
-  if ((await locator.count()) === 0) return false;
-  await locator.click({ timeout: 15000 });
-  formLogger.info("选项已选择", { field: label, value: text });
+function escapeRegex(value: string): string {
+  return value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&");
+}
+
+async function findVisibleFormGroup(
+  page: Page,
+  labelPrefix: string,
+  expectedSelector: string,
+): Promise<Locator | null> {
+  const groups = page.locator(".weui-desktop-form__control-group:visible");
+  const labels = page.locator("label.weui-desktop-form__label");
+  const buildCandidates = (pattern: RegExp) => groups
+    .filter({ has: labels.filter({ hasText: pattern }) })
+    .filter({ has: page.locator(expectedSelector) });
+  const escapedLabel = escapeRegex(labelPrefix);
+  const exact = buildCandidates(new RegExp(`^\\s*${escapedLabel}\\s*$`));
+  if (await exact.count()) return exact.first();
+  const startsWith = buildCandidates(new RegExp(`^\\s*${escapedLabel}`));
+  return await startsWith.count() ? startsWith.first() : null;
+}
+
+async function selectRadioByLabel<Value extends string>(
+  page: Page,
+  labelPrefix: string,
+  values: Record<Value, string>,
+  value: Value,
+  required: boolean,
+): Promise<boolean> {
+  const radioGroup = await findVisibleFormGroup(page, labelPrefix, 'input[type="radio"]');
+  if (!radioGroup) {
+    if (required) {
+      throw new Error(`[form-control-not-found] 未找到必填选项组：${labelPrefix}`);
+    }
+    formLogger.info("当前页面未显示旧版选项，已跳过", { field: labelPrefix, value });
+    return false;
+  }
+
+  const target = radioGroup.locator(`input[type="radio"][value="${values[value]}"]`).first();
+  if ((await target.count()) === 0) {
+    throw new Error(`[form-option-not-found] ${labelPrefix} 不支持选项：${value}`);
+  }
+  await selectCheckboxOrRadioLocator(target, `${labelPrefix}: ${value}`);
   return true;
 }
 
-async function checkRadioByLabel<Value extends string>(
-  page: Page,
-  labelPrefix: string,
-  _key: string,
-  values: Record<Value, string>,
-  value: Value,
-): Promise<void> {
-  const radioGroup = await findVisibleLabeledGroup(page, labelPrefix, 'input[type="radio"]');
-  if (!radioGroup) {
-    formLogger.warn("未找到选项组，已跳过", { field: labelPrefix });
-    return;
+async function waitForCheckboxState(
+  checkbox: Locator,
+  expected: boolean,
+  timeoutMs = 2000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if ((await checkbox.isChecked().catch(() => !expected)) === expected) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  return (await checkbox.isChecked().catch(() => !expected)) === expected;
+}
+
+function createAiContentSwitchError(enabled: boolean): Error {
+  return Object.assign(
+    new Error(`[ai-content-switch-failed] 无法将AI内容声明切换为${enabled ? "开启" : "关闭"}状态`),
+    { errorType: ErrorType.Browser },
+  );
+}
+
+export async function setAiContentDeclaration(page: Page, enabled: boolean): Promise<void> {
+  const group = await findVisibleFormGroup(page, "AI内容声明", 'input[type="checkbox"]');
+  if (!group) {
+    throw new Error("[form-control-not-found] 未找到必填选项：AI内容声明");
+  }
+  const checkbox = group.locator('input[type="checkbox"]').first();
+  if ((await checkbox.isChecked().catch(() => !enabled)) !== enabled) {
+    const visibleSwitch = group.locator(".weui-desktop-switch__box:visible").first();
+    if (await visibleSwitch.count()) {
+      await visibleSwitch.scrollIntoViewIfNeeded().catch(() => undefined);
+      await visibleSwitch.click({ timeout: 15000 }).catch((error) => {
+        const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+        formLogger.warn("可见开关点击失败，准备使用兼容方式", { field: "AI内容声明", message });
+      });
+    }
   }
 
-  await selectCheckboxOrRadioLocator(
-    radioGroup.locator(`input[type="radio"][value="${values[value]}"]`).first(),
-    `${labelPrefix}: ${value}`,
-  );
+  if (!await waitForCheckboxState(checkbox, enabled)) {
+    await checkbox.evaluate((element, checked) => {
+      const input = element as HTMLInputElement;
+      if (input.checked !== checked) input.click();
+      if (input.checked === checked) return;
+      input.checked = checked;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, enabled);
+  }
+
+  if (!await waitForCheckboxState(checkbox, enabled)) {
+    throw createAiContentSwitchError(enabled);
+  }
+  formLogger.info("选项状态已确认", {
+    field: "AI内容声明",
+    checked: enabled,
+    source: "payloadJson.aiContent",
+  });
 }
 
 async function uploadMaterial(
@@ -333,8 +451,10 @@ async function uploadByLabeledGroupFileInput(
 }
 
 async function fillProducerName(page: Page, value: string): Promise<void> {
-  const textbox = page.getByRole("textbox", { name: "请填写待提审剧目的制作方主体名称" }).first();
-  if ((await textbox.count()) > 0) {
+  const textbox = page
+    .getByPlaceholder("请填写待提审剧目的制作方主体名称", { exact: true })
+    .first();
+  if ((await textbox.count()) > 0 && await textbox.isVisible().catch(() => false)) {
     await textbox.fill(value, { timeout: 15000 });
     formLogger.info("字段已填写", { field: "制作方名称" });
     return;
@@ -347,7 +467,7 @@ async function fillProducerName(page: Page, value: string): Promise<void> {
   if ((await page.locator(selectors.producerName).count()) > 0) {
     await fillFirstMatchingField(page, selectors.producerName, value, "制作方名称");
   } else {
-    formLogger.warn("未找到字段，已跳过", { field: "制作方名称", selector: selectors.producerName });
+    throw new Error("[form-control-not-found] 未找到必填字段：制作方名称");
   }
 }
 
@@ -421,6 +541,50 @@ async function assertNoBasicInfoValidationErrors(page: Page): Promise<void> {
   throw new Error(message);
 }
 
+async function submitBasicInfoAndWaitForEpisodeSelection(
+  page: Page,
+  button: Locator,
+): Promise<void> {
+  const searchInput = page.getByPlaceholder("搜索文件名").first();
+  const maxAttempts = 3;
+
+  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+    if (await searchInput.isVisible().catch(() => false)) {
+      formLogger.info("已进入剧集文件选取步骤", { attempt: attempt - 1, maxAttempts });
+      return;
+    }
+    await acceptServiceAgreement(page);
+    await button.click({ timeout: 30000 });
+    const enteredEpisodeSelection = await searchInput.waitFor({
+      state: "visible",
+      timeout: 15000,
+    }).then(() => true, () => false);
+    if (enteredEpisodeSelection) {
+      formLogger.info("已进入剧集文件选取步骤", { attempt, maxAttempts });
+      return;
+    }
+
+    const errors = await collectBasicInfoValidationErrors(page);
+    if (errors.length > 0 && !errors.some((error) => error.includes(serviceAgreementText))) {
+      await assertNoBasicInfoValidationErrors(page);
+    }
+    if (attempt < maxAttempts) {
+      formLogger.warn("点击下一步后仍停留在剧目信息页，准备重试", {
+        attempt,
+        maxAttempts,
+        errors: errors.join("；") || undefined,
+      });
+      await page.waitForTimeout(500);
+    }
+  }
+
+  const errors = await collectBasicInfoValidationErrors(page);
+  if (errors.length > 0) await assertNoBasicInfoValidationErrors(page);
+  throw new Error(
+    `[step-transition-failed] 点击“下一步”${maxAttempts} 次后仍未进入“剧集文件选取”步骤。`,
+  );
+}
+
 export async function fillBasicInfoStep(page: Page, playletConfig: Config): Promise<void> {
   const { playlet } = playletConfig;
   const dramaName = validateDramaName(playlet.name);
@@ -444,7 +608,7 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
   await fillFirstMatchingField(page, selectors.dramaName, dramaName, "剧目名称");
   await fillFirstMatchingField(page, selectors.summary, dramaSummary, "剧目简介");
   await fillFirstMatchingField(page, selectors.episodeCount, playlet.episodeCount, "总集数");
-  await fillFirstMatchingField(
+  await fillLegacyFieldWhenVisible(
     page,
     selectors.previewEpisodeCount,
     playlet.previewEpisodeCount ?? 1,
@@ -455,23 +619,13 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
   }
 
   const dramaType = playlet.dramaType ?? "数字真人";
-  if (!(await clickExactText(page, dramaType, "剧目类型"))) {
-    await selectCheckboxOrRadio(
-      page,
-      `${formGroup(7)} input[type="radio"][value="${dramaTypeValues[dramaType]}"]`,
-      `剧目类型: ${dramaType}`,
-    );
-  }
+  await selectRadioByLabel(page, "剧目类型", dramaTypeValues, dramaType, true);
   const monetization = playlet.monetization ?? "IAA广告变现";
-  await selectCheckboxOrRadio(
-    page,
-    `${formGroup(5)} input[type="radio"][value="${monetizationValues[monetization]}"]`,
-    `变现类型: ${monetization}`,
-  );
+  await selectRadioByLabel(page, "变现类型", monetizationValues, monetization, false);
 
-  if (playlet.aiContent ?? true) {
-    // AI内容声明
-    await page.locator(".weui-desktop-switch__box").first().click();
+  const aiContent = playlet.aiContent ?? true;
+  await setAiContentDeclaration(page, aiContent);
+  if (aiContent) {
     await page
       .getByText(/^\s*AI\s*制作证明\s*$/i)
       .first()
@@ -502,16 +656,22 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     60000,
   );
 
-  if (!(await clickExactText(page, playlet.submissionIdentity, "提审身份"))) {
-    await checkRadioByLabel(
-      page,
-      "提审身份",
-      "submission-identity",
-      submissionIdentityValues,
-      playlet.submissionIdentity,
-    );
-  }
+  await selectRadioByLabel(
+    page,
+    "提审身份",
+    submissionIdentityValues,
+    playlet.submissionIdentity,
+    true,
+  );
   await fillProducerName(page, playlet.producerName);
+
+  await selectRadioByLabel(
+    page,
+    "版权验证方式",
+    copyrightVerificationValues,
+    playlet.copyright.verificationMethod ?? "基于版权证明材料",
+    true,
+  );
 
   await uploadByLabeledGroupFileInput(
     page,
@@ -529,15 +689,13 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
   );
 
   const qualificationType = playlet.qualification.type ?? "其他微短剧";
-  if (!(await clickExactText(page, qualificationType, "剧目资质"))) {
-    await checkRadioByLabel(
-      page,
-      "剧目资质",
-      "qualification",
-      qualificationValues,
-      qualificationType,
-    );
-  }
+  await selectRadioByLabel(
+    page,
+    "剧目资质",
+    qualificationValues,
+    qualificationType,
+    true,
+  );
 
   if (playlet.qualification.licenseOrRecordNumber) {
     const filled = await fillInGroupByPlaceholder(
@@ -598,9 +756,5 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     remoteAssetDirectoryName,
   );
 
-  await selectCheckboxOrRadio(page, selectors.agreement, "服务须知同意");
-  await page.waitForTimeout(2000);
-  await button.click();
-  await page.waitForTimeout(1000);
-  await assertNoBasicInfoValidationErrors(page);
+  await submitBasicInfoAndWaitForEpisodeSelection(page, button);
 }

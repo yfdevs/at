@@ -130,7 +130,7 @@ const kuaishouDramaTaskBaseSchema = z.object({
   fullDramaPriceYuan: z.coerce.number().positive().max(9999).default(4.9)
     .describe("全剧付费版本的全剧价格，单位元"),
   localCoverFile: requiredText.optional()
-    .describe("运行时从百度网盘资源中匹配的封面/海报图片"),
+    .describe("运行时准备的快手 414:258 横版短剧封面"),
   summary: requiredText.min(100).max(400),
   genderChannel: z.enum(kuaishouDramaGenderChannelValues),
   categories: z.array(z.enum(kuaishouDramaCategoryValues)).min(1).max(3),
@@ -241,8 +241,8 @@ export type KuaishouDramaSaleMode = (typeof kuaishouDramaSaleModeValues)[number]
 export type KuaishouDramaEpisodePrice = (typeof kuaishouDramaEpisodePriceValues)[number];
 export type KuaishouDramaTaskInput = z.input<typeof kuaishouDramaTaskSchema>;
 export type KuaishouDramaTaskConfig = z.infer<typeof kuaishouDramaTaskSchema> & {
-  /** Generated locally and used only by the ad-unlock publish variant. */
-  localAdUnlockCoverFile?: string;
+  /** Prepared locally at Kuaishou's 224:300 episode-cover ratio. */
+  localEpisodeCoverFile?: string;
 };
 
 export type KuaishouDramaPublishVariant = {
@@ -329,8 +329,8 @@ export type KuaishouDramaRuntimeOptions = {
   videoUploadTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
   aiClient?: DramaAiClient;
-  aiModelId?: string;
-  adCoverAiAnalysisAttempts?: number;
+  aiImageModel?: string;
+  coverAiGenerationAttempts?: number;
   onLog?: (message: string) => void;
   /** Polled only after the initial idle page has displayed the authenticated edit form. */
   claimTask?: () => Promise<KuaishouDramaTaskInput | ClaimedKuaishouDramaTask | null>;

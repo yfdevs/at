@@ -2493,6 +2493,31 @@ async function countLocalPosterImages(root: string) {
   return count;
 }
 
+export function inspectContiguousEpisodeIndexes(
+  indexes: number[],
+  duplicateIndexes: number[] = [],
+) {
+  const normalizedIndexes = [...new Set(indexes)]
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .sort((left, right) => left - right);
+  const episodeCount = normalizedIndexes[normalizedIndexes.length - 1] ?? 0;
+  const expectedIndexes = Array.from({ length: episodeCount }, (_, index) => index + 1);
+  const missingIndexes = expectedIndexes.filter((index) => !normalizedIndexes.includes(index));
+  const normalizedDuplicateIndexes = [...new Set(duplicateIndexes)]
+    .filter((value) => Number.isInteger(value) && value > 0)
+    .sort((left, right) => left - right);
+  return {
+    episodeCount,
+    indexes: normalizedIndexes,
+    missingIndexes,
+    duplicateIndexes: normalizedDuplicateIndexes,
+    valid:
+      episodeCount > 0
+      && missingIndexes.length === 0
+      && normalizedDuplicateIndexes.length === 0,
+  };
+}
+
 async function submitSavedDownload(
   port: number,
   shareTarget: CdpTarget,
@@ -2504,6 +2529,8 @@ async function submitSavedDownload(
   expectedPosterImages?: number,
   expectedAiProductionProofFiles?: number,
   downloadEpisodeVideos = true,
+  inferEpisodeCount = false,
+  downloadAssetMaterials = true,
   saveOptions: SaveShareOptions = {},
 ) {
   const saved = await saveShareToOwnNetdisk(shareTarget, share, saveOptions);
@@ -2584,7 +2611,58 @@ async function submitSavedDownload(
         `文件名=${formatNameSample(remoteVideos.files.map((file) => `${file.index}:${file.name}`))}`,
     );
   }
-  if (expectedEpisodeCount !== undefined) {
+  let inferredEpisodeCount: number | undefined;
+  if (inferEpisodeCount) {
+    const inspection = inspectContiguousEpisodeIndexes(
+      remoteIndexes,
+      remoteVideos.duplicateIndexes,
+    );
+    if (inspection.episodeCount <= 0) {
+      throw new Error(
+        `百度网盘没有识别到可上传的剧集视频：${targetName}。` +
+          `请使用“第1集.mp4”“剧名-第1集.mp4”或“1.mp4”等包含集数的文件名。`,
+      );
+    }
+    inferredEpisodeCount = inspection.episodeCount;
+    const missingIndexes = inspection.missingIndexes;
+    remoteVideos.missingIndexes = missingIndexes;
+    if (!inspection.valid) {
+      if (remoteVideos.duplicateIndexes.length > 0 && !saveOptions.isolatedRoot) {
+        log(
+          `检测到复用网盘目录存在重复剧集：${formatNumberRanges(remoteVideos.duplicateIndexes)}，` +
+            "改用干净的分享专属中转目录重新转存。",
+        );
+        return submitSavedDownload(
+          port,
+          shareTarget,
+          share,
+          downloadDir,
+          expectedEpisodeCount,
+          expectedOwnershipCounts,
+          expectedOwnershipFiles,
+          expectedPosterImages,
+          expectedAiProductionProofFiles,
+          downloadEpisodeVideos,
+          inferEpisodeCount,
+          downloadAssetMaterials,
+          { isolatedRoot: true, isolatedRootUnique: true },
+        );
+      }
+      const problemParts = [
+        missingIndexes.length > 0 ? `缺失=${formatNumberRanges(missingIndexes)}` : "",
+        remoteVideos.duplicateIndexes.length > 0
+          ? `重复=${formatNumberRanges(remoteVideos.duplicateIndexes)}`
+          : "",
+      ].filter(Boolean);
+      throw new Error(
+        `百度网盘剧集不连续：${targetName}。` +
+          `系统识别为1-${inferredEpisodeCount}共${inferredEpisodeCount}集，` +
+          `实际${formatNumberRanges(remoteIndexes)}共${remoteVideos.files.length}个文件。` +
+          `问题：${problemParts.join("；")}。`,
+      );
+    }
+    log(`已自动识别总集数：${inferredEpisodeCount}集，1-${inferredEpisodeCount}连续完整。`);
+  } else if (expectedEpisodeCount !== undefined) {
     const expectedCount = Number(expectedEpisodeCount);
     const expectedIndexes =
       Number.isInteger(expectedCount) && expectedCount > 0
@@ -2615,6 +2693,8 @@ async function submitSavedDownload(
           expectedPosterImages,
           expectedAiProductionProofFiles,
           downloadEpisodeVideos,
+          inferEpisodeCount,
+          downloadAssetMaterials,
           { isolatedRoot: true, isolatedRootUnique: true },
         );
       }
@@ -2718,7 +2798,7 @@ async function submitSavedDownload(
       );
     }
   };
-  for (const ownershipRoot of remoteOwnership.roots) {
+  for (const ownershipRoot of downloadAssetMaterials ? remoteOwnership.roots : []) {
     if (!ownershipRoot.path || !ownershipRoot.fsId || submittedAssetRoots.has(ownershipRoot.path)) continue;
     assertDedicatedAssetRoot(ownershipRoot.path, "权属文件");
     const ownershipTaskName = ownershipRoot.path.split("/").filter(Boolean).pop() || "权属文件";
@@ -2749,7 +2829,7 @@ async function submitSavedDownload(
     submittedAssetRoots.add(ownershipRoot.path);
   }
 
-  for (const posterRoot of remotePosters.roots) {
+  for (const posterRoot of downloadAssetMaterials ? remotePosters.roots : []) {
     if (!posterRoot.path || !posterRoot.fsId || submittedAssetRoots.has(posterRoot.path)) continue;
     assertDedicatedAssetRoot(posterRoot.path, "海报封面");
     const posterTaskName = posterRoot.path.split("/").filter(Boolean).pop() || "海报封面";
@@ -2770,7 +2850,7 @@ async function submitSavedDownload(
     if (!posterSubmitted) throw new Error(`百度网盘海报封面目录下载任务提交失败：${posterTaskName}`);
   }
 
-  if (requiredAiProductionProofFiles > 0) {
+  if (downloadAssetMaterials && requiredAiProductionProofFiles > 0) {
     for (const proofRoot of remoteAiProductionProofs.roots) {
       if (!proofRoot.path || !proofRoot.fsId || submittedAssetRoots.has(proofRoot.path)) continue;
       assertDedicatedAssetRoot(proofRoot.path, "AI制作证明");
@@ -2798,6 +2878,7 @@ async function submitSavedDownload(
     remoteOwnership,
     remotePosters,
     remoteAiProductionProofs,
+    inferredEpisodeCount,
   };
 }
 
@@ -2856,6 +2937,7 @@ export async function downloadBaiduNetdiskShare(
     remoteOwnership,
     remotePosters,
     remoteAiProductionProofs,
+    inferredEpisodeCount,
   } = await submitSavedDownload(
     port,
     listTarget,
@@ -2867,6 +2949,8 @@ export async function downloadBaiduNetdiskShare(
     options.expectedPosterImages,
     options.expectedAiProductionProofFiles,
     options.downloadEpisodeVideos !== false,
+    options.inferEpisodeCount === true,
+    options.downloadAssetMaterials !== false,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
@@ -2887,6 +2971,7 @@ export async function downloadBaiduNetdiskShare(
     expectedOwnershipFiles: remoteOwnership.allFiles.length,
     expectedPosterImages: remotePosters.files.length,
     expectedAiProductionProofFiles: remoteAiProductionProofs.files.length,
+    inferredEpisodeCount,
     completed: false,
     skippedExisting: false,
   };

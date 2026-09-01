@@ -3,8 +3,6 @@ import type { IpcRendererEvent } from "electron"
 export type WechatMiniProgramAccountStatus = {
   videoAccountId: string
   videoAccountName: string
-  contractSubject?: string
-  contractSubjectLabel?: string
   launched: boolean
   loginState: "not-launched" | "login-required" | "logged-in" | "unknown"
   pageCount: number
@@ -15,14 +13,12 @@ export type WechatMiniProgramAccountStatus = {
 export type WechatMiniProgramServiceStatus = {
   running: boolean
   pid: number | null
-  contractSubjects: Array<{ label: string; value: string }>
   videoAccounts: WechatMiniProgramAccountStatus[]
 }
 
 export type WechatMiniProgramConfig = {
   apiBaseUrl: string
   taskApiPrefix: string
-  videoAccountContractSubjects: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -53,17 +49,6 @@ export type WechatMiniProgramConfigResult = {
   config: WechatMiniProgramConfig
   path: string
   restartRequired: boolean
-}
-
-const contractSubjectLabels: Record<string, string> = {
-  MINGXINGSHUO: "明星说",
-  MISU: "米苏",
-  WEITAO: "微淘",
-  HUANZOU: "幻走",
-  XIAOSHILIU: "小石榴",
-  YOUDIANNIU: "有点牛",
-  ZHENCUIYIHAO: "珍萃",
-  RUIXIAODOU: "瑞小豆",
 }
 
 async function invokeWechatMiniProgram<T>(channel: string, ...args: unknown[]): Promise<T> {
@@ -114,24 +99,11 @@ function readableWechatMiniProgramError(message: string) {
     return message.replace("[local-video-invalid]", "微信剧集视频不正确：")
   }
 
-  const emptyContractSubjectMatch = /Video account list must contain at least one account after contract subject filter: ([^;]+); available contract subjects: (.*)/.exec(message)
-  if (emptyContractSubjectMatch) {
-    const selectedSubjects = formatContractSubjectList(emptyContractSubjectMatch[1])
-    const availableSubjects = formatContractSubjectList(emptyContractSubjectMatch[2])
-    return `当前选择的主体没有可用小程序账号：${selectedSubjects}。当前接口返回的可用主体：${availableSubjects}。请在配置页选择已有主体，或让后端为所选主体配置 ON 状态的小程序账号。`
+  if (message.includes("微信小程序账号接口至少需要返回一个启用账号")) {
+    return "微信小程序账号接口没有返回启用账号，请检查账号接口。"
   }
 
   return message
-}
-
-function formatContractSubjectList(value: string) {
-  const subjects = value
-    .split(",")
-    .map((subject) => subject.trim())
-    .filter(Boolean)
-    .map((subject) => contractSubjectLabels[subject] ?? subject)
-
-  return subjects.length ? subjects.join("、") : "无"
 }
 
 export const wechatMiniProgramService = {

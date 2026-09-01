@@ -1,28 +1,173 @@
 import type { Locator, Page } from "playwright";
 
+const cropCoverageSafetyPx = 2;
+const cropZoomSettleMs = 80;
+const maxCropZoomSteps = 60;
+const cropGeometryEpsilonPx = 0.25;
+
+export type KuaishouCropRect = {
+  left: number;
+  top: number;
+  right: number;
+  bottom: number;
+  width: number;
+  height: number;
+};
+
+export type KuaishouCropCoverage = {
+  covers: boolean;
+  safetyPx: number;
+  overflow: {
+    left: number;
+    top: number;
+    right: number;
+    bottom: number;
+  };
+};
+
 type CropMeasurement = {
-  crop: { width: number; height: number };
+  crop: KuaishouCropRect;
+  image: KuaishouCropRect;
   viewport: { width: number; height: number };
   widthMax: boolean;
   heightMax: boolean;
+  coverage: KuaishouCropCoverage;
 };
 
+export function evaluateKuaishouCropCoverage(
+  crop: KuaishouCropRect,
+  image: KuaishouCropRect,
+  safetyPx = cropCoverageSafetyPx,
+): KuaishouCropCoverage {
+  const overflow = {
+    left: crop.left - image.left,
+    top: crop.top - image.top,
+    right: image.right - crop.right,
+    bottom: image.bottom - crop.bottom,
+  };
+
+  return {
+    covers: Object.values(overflow).every((value) => value >= safetyPx),
+    safetyPx,
+    overflow,
+  };
+}
+
 async function measureCrop(dialog: Locator): Promise<CropMeasurement> {
-  return dialog.evaluate((node) => {
+  const measurement = await dialog.evaluate((node) => {
     const viewport = node.querySelector<HTMLElement>(".vue-cropper .cropper-box");
     const cropBox = node.querySelector<HTMLElement>(".vue-cropper .cropper-crop-box");
-    if (!viewport || !cropBox) {
+    const imageCanvas = node.querySelector<HTMLElement>(".vue-cropper .cropper-box-canvas");
+    if (!viewport || !cropBox || !imageCanvas) {
       throw new Error("KUAISHOU_DRAMA_CROP_BOX_NOT_MEASURABLE");
     }
     const viewportRect = viewport.getBoundingClientRect();
     const cropRect = cropBox.getBoundingClientRect();
+    const imageRect = imageCanvas.getBoundingClientRect();
+    const serializeRect = (rect: DOMRect) => ({
+      left: rect.left,
+      top: rect.top,
+      right: rect.right,
+      bottom: rect.bottom,
+      width: rect.width,
+      height: rect.height,
+    });
     return {
-      crop: { width: cropRect.width, height: cropRect.height },
+      crop: serializeRect(cropRect),
+      image: serializeRect(imageRect),
       viewport: { width: viewportRect.width, height: viewportRect.height },
       widthMax: cropRect.width >= viewportRect.width - 3,
       heightMax: cropRect.height >= viewportRect.height - 3,
     };
   });
+
+  return {
+    ...measurement,
+    coverage: evaluateKuaishouCropCoverage(measurement.crop, measurement.image),
+  };
+}
+
+async function clickCropZoomButton(dialog: Locator, direction: "in" | "out") {
+  return dialog.evaluate((node, zoomDirection) => {
+    const handle = node.querySelector<HTMLElement>(".handle-img");
+    if (!handle) return false;
+
+    const iconSelector = zoomDirection === "in" ? ".sys-icon-add" : ".sys-icon-subtract";
+    const icon = handle.querySelector<HTMLElement>(iconSelector);
+    const fallbackButtons = Array.from(
+      handle.querySelectorAll<HTMLElement>("button,.ks-button,[role='button']"),
+    );
+    const button = icon?.closest<HTMLElement>("button,.ks-button,[role='button']") ??
+      fallbackButtons[zoomDirection === "in" ? 0 : 1];
+    const disabled = !button ||
+      button.hasAttribute("disabled") ||
+      button.getAttribute("aria-disabled") === "true" ||
+      button.classList.contains("is-disabled");
+    if (!button || disabled) return false;
+
+    button.click();
+    return true;
+  }, direction);
+}
+
+function imageGeometryChanged(before: CropMeasurement, after: CropMeasurement) {
+  return (["left", "top", "right", "bottom", "width", "height"] as const)
+    .some((key) => Math.abs(before.image[key] - after.image[key]) > cropGeometryEpsilonPx);
+}
+
+async function fitImageToCropArea(page: Page, dialog: Locator, initial: CropMeasurement) {
+  let current = initial;
+  let zoomInSteps = 0;
+  let zoomOutSteps = 0;
+  let limitReached = false;
+
+  if (!current.coverage.covers) {
+    for (let step = 0; step < maxCropZoomSteps; step += 1) {
+      if (!await clickCropZoomButton(dialog, "in")) {
+        throw new Error("KUAISHOU_DRAMA_CROP_ZOOM_IN_UNAVAILABLE");
+      }
+      await page.waitForTimeout(cropZoomSettleMs);
+      const next = await measureCrop(dialog);
+      zoomInSteps += 1;
+      if (!imageGeometryChanged(current, next) && !next.coverage.covers) {
+        throw new Error("KUAISHOU_DRAMA_CROP_ZOOM_IN_NOT_CHANGED");
+      }
+      current = next;
+      if (current.coverage.covers) {
+        return { measurement: current, zoomInSteps, zoomOutSteps, limitReached };
+      }
+    }
+
+    throw new Error("KUAISHOU_DRAMA_CROP_IMAGE_NOT_COVERED");
+  }
+
+  for (let step = 0; step < maxCropZoomSteps; step += 1) {
+    if (!await clickCropZoomButton(dialog, "out")) {
+      return { measurement: current, zoomInSteps, zoomOutSteps, limitReached };
+    }
+    await page.waitForTimeout(cropZoomSettleMs);
+    const next = await measureCrop(dialog);
+    if (!imageGeometryChanged(current, next)) {
+      return { measurement: current, zoomInSteps, zoomOutSteps, limitReached };
+    }
+    zoomOutSteps += 1;
+    current = next;
+    if (current.coverage.covers) continue;
+
+    if (!await clickCropZoomButton(dialog, "in")) {
+      throw new Error("KUAISHOU_DRAMA_CROP_ZOOM_RESTORE_UNAVAILABLE");
+    }
+    await page.waitForTimeout(cropZoomSettleMs);
+    current = await measureCrop(dialog);
+    zoomInSteps += 1;
+    if (!current.coverage.covers) {
+      throw new Error("KUAISHOU_DRAMA_CROP_ZOOM_RESTORE_FAILED");
+    }
+    return { measurement: current, zoomInSteps, zoomOutSteps, limitReached };
+  }
+
+  limitReached = true;
+  return { measurement: current, zoomInSteps, zoomOutSteps, limitReached };
 }
 
 async function dispatchCropDrag(
@@ -141,9 +286,26 @@ export async function maximizeKuaishouImageCropArea(page: Page, dialog: Locator)
         `viewport=${Math.round(after.viewport.width)}x${Math.round(after.viewport.height)}`,
     );
   }
+  const fitted = await fitImageToCropArea(page, dialog, after);
+  const final = fitted.measurement;
+  if (!final.coverage.covers) {
+    const overflow = final.coverage.overflow;
+    throw new Error(
+      `KUAISHOU_DRAMA_CROP_IMAGE_NOT_COVERED: ` +
+        `overflow=${Math.round(overflow.left)},${Math.round(overflow.top)},` +
+        `${Math.round(overflow.right)},${Math.round(overflow.bottom)}`,
+    );
+  }
   return {
     before: before.crop,
     after: after.crop,
     viewport: after.viewport,
+    image: final.image,
+    coverage: final.coverage,
+    zoom: {
+      inSteps: fitted.zoomInSteps,
+      outSteps: fitted.zoomOutSteps,
+      limitReached: fitted.limitReached,
+    },
   };
 }

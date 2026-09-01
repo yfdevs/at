@@ -13,7 +13,7 @@ import {
   kuaishouCopyrightDeclarationFile,
 } from "../shared/fixed-assets.js";
 import { createKuaishouDramaPublishVariants } from "../shared/publish-variants.js";
-import { resolveKuaishouVariantCoverFile } from "../shared/ad-cover-ai.js";
+import { resolveKuaishouDramaCoverFile } from "../shared/cover-materials.js";
 import {
   log,
   saveCredentialState,
@@ -393,11 +393,8 @@ async function uploadAssetByLabel(
       const input = await fileInputByLabel(page, labelText);
       await input.setInputFiles(filePath, { timeout: 60_000 });
       const cropDialog = await waitForImageCropDialog(page, logLabel);
-      const clickDeadline = Date.now() + 10_000;
       const cropSize = await maximizeKuaishouImageCropArea(page, cropDialog);
-      if (Date.now() >= clickDeadline) {
-        throw new Error(`KUAISHOU_DRAMA_IMAGE_CROP_CONFIRM_TIMEOUT: ${logLabel}`);
-      }
+      const clickDeadline = Date.now() + 10_000;
       log(
         options,
         `[kuaishou-drama] maximized ${logLabel} crop area (attempt ${attempt}/3): ` +
@@ -1251,7 +1248,7 @@ export async function fillKuaishouDramaEditForm(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const remoteAssetDirectoryName = `${taskConfig.title}-${variant.kind}`;
-  const coverFile = resolveKuaishouVariantCoverFile(taskConfig, variant);
+  const coverFile = resolveKuaishouDramaCoverFile(taskConfig);
 
   log(options, `[kuaishou-drama] filling drama title: ${variant.title}`);
   await fillTextboxByLabel(page, "短剧标题", variant.title, "请输入");

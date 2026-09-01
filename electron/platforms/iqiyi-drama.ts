@@ -352,6 +352,9 @@ async function startRuntime() {
         userDataDir: paths.userDataDir,
         credentialStatePath: paths.credentialStatePath,
         assetDownloadDir: paths.assetDownloadDir,
+        mockAssetRoot: app.isPackaged
+          ? path.join(app.getAppPath(), "dist", "iqiyi-drama", "mock-assets")
+          : resolveFromAppRoot("public/iqiyi-drama/mock-assets"),
         logFilePath: paths.logFilePath,
         logRetentionDays: Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3),
         localMaterialRoot: config.localMaterialRoot,

@@ -141,6 +141,93 @@ export function prepareCroppedImageVariant(
   return prepareFixedImageVariant(options, "cover");
 }
 
+/**
+ * Fits the complete source image inside an exact output ratio. Any remaining
+ * canvas area is filled with a darkened, blurred copy of the same image so the
+ * platform cropper can show every original pixel without flat letterboxing.
+ */
+export async function prepareContainedImageVariant(
+  options: FixedImageVariantOptions,
+): Promise<PreparedStretchedImageVariant> {
+  const width = Math.floor(options.width);
+  const height = Math.floor(options.height);
+  if (width <= 0 || height <= 0) {
+    throw new Error(`[image-resize-failed] 目标图片宽高必须大于 0：${width}x${height}`);
+  }
+  const sourceStat = await stat(options.inputFile).catch(() => undefined);
+  if (!sourceStat?.isFile() || sourceStat.size <= 0) {
+    throw new Error(`[poster-material-invalid] 图片文件不存在或为空：${options.inputFile}`);
+  }
+
+  const initialQuality = Math.max(80, Math.min(100, options.jpegQuality ?? 92));
+  const qualities = [initialQuality, 88, 84, 80]
+    .filter((quality, index, values) => quality <= initialQuality && values.indexOf(quality) === index)
+    .sort((left, right) => right - left);
+  const foreground = await sharp(options.inputFile, { failOn: "error" })
+    .rotate()
+    .resize({ width, height, fit: "contain" })
+    .flatten({ background: "#ffffff" })
+    .toColourspace("srgb")
+    .jpeg({ quality: initialQuality, chromaSubsampling: "4:4:4" })
+    .toBuffer({ resolveWithObject: true });
+  const left = Math.floor((width - foreground.info.width) / 2);
+  const top = Math.floor((height - foreground.info.height) / 2);
+  const blurSigma = Math.max(8, Math.min(48, Math.round(Math.min(width, height) / 40)));
+  await mkdir(path.dirname(options.outputFile), { recursive: true });
+
+  let outputBuffer: Buffer | undefined;
+  let selectedQuality = initialQuality;
+  for (const quality of qualities) {
+    const candidate = await sharp(options.inputFile, { failOn: "error" })
+      .rotate()
+      .resize({ width, height, fit: "cover", position: "centre" })
+      .blur(blurSigma)
+      .modulate({ brightness: 0.58, saturation: 0.82 })
+      .composite([{ input: foreground.data, left, top }])
+      .flatten({ background: "#ffffff" })
+      .toColourspace("srgb")
+      .jpeg({
+        quality,
+        progressive: true,
+        mozjpeg: true,
+        chromaSubsampling: "4:4:4",
+      })
+      .toBuffer();
+    if (options.maxFileBytes && candidate.length > options.maxFileBytes) continue;
+    outputBuffer = candidate;
+    selectedQuality = quality;
+    break;
+  }
+  if (!outputBuffer) {
+    throw new Error(
+      `[image-resize-failed] 在 JPEG 质量不低于 80 的前提下无法压缩到 ` +
+        `${options.maxFileBytes} 字节以内：${options.inputFile}`,
+    );
+  }
+  await writeFile(options.outputFile, outputBuffer);
+
+  const outputStat = await stat(options.outputFile);
+  const metadata = await sharp(options.outputFile, { failOn: "error" }).metadata();
+  if (metadata.width !== width || metadata.height !== height || outputStat.size <= 0) {
+    throw new Error(
+      `[image-resize-failed] 生成图片校验失败：expected=${width}x${height} ` +
+        `actual=${metadata.width ?? 0}x${metadata.height ?? 0} file=${options.outputFile}`,
+    );
+  }
+  options.onLog?.(
+    `[image-resize] 完整适配图片：${options.inputFile} -> ${options.outputFile} ` +
+      `${width}x${height} quality=${selectedQuality} size=${outputStat.size}`,
+  );
+  return {
+    sourceFile: options.inputFile,
+    file: options.outputFile,
+    size: outputStat.size,
+    width,
+    height,
+    quality: selectedQuality,
+  };
+}
+
 function orientedDimensions(metadata: Awaited<ReturnType<ReturnType<typeof sharp>["metadata"]>>) {
   const width = metadata.width ?? 0;
   const height = metadata.height ?? 0;

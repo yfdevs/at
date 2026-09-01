@@ -10,7 +10,6 @@ import { readImageDimensions } from "@drama/drama-media-assets";
 import {
   BAIDU_DRAMA_LANDSCAPE_COVER_SIZE,
   BAIDU_DRAMA_PORTRAIT_COVER_SIZE,
-  cleanupBaiduAiCoverTemporaryFile,
   prepareBaiduDramaCoverVariants,
 } from "./resources.js";
 
@@ -66,45 +65,6 @@ async function assertBaiduCoverDimensions(result: Awaited<ReturnType<typeof prep
   assert.ok((await stat(result.landscape.file)).size > 0);
   assert.ok((await stat(result.portrait.file)).size > 0);
 }
-
-test("retries a locked AI cover temporary file without failing the task", async () => {
-  let attempts = 0;
-  const warnings: string[] = [];
-  const cleaned = await cleanupBaiduAiCoverTemporaryFile("locked.image", {
-    maxAttempts: 5,
-    onWarning: (message) => warnings.push(message),
-    removeFile: async () => {
-      attempts += 1;
-      if (attempts < 3) {
-        throw Object.assign(new Error("file is locked"), { code: "EPERM" });
-      }
-    },
-    wait: async () => undefined,
-  });
-
-  assert.equal(cleaned, true);
-  assert.equal(attempts, 3);
-  assert.deepEqual(warnings, []);
-});
-
-test("ignores a persistent AI cover temporary file cleanup failure", async () => {
-  let attempts = 0;
-  const warnings: string[] = [];
-  const cleaned = await cleanupBaiduAiCoverTemporaryFile("locked.image", {
-    maxAttempts: 3,
-    onWarning: (message) => warnings.push(message),
-    removeFile: async () => {
-      attempts += 1;
-      throw Object.assign(new Error("file is still locked"), { code: "EPERM" });
-    },
-    wait: async () => undefined,
-  });
-
-  assert.equal(cleaned, false);
-  assert.equal(attempts, 3);
-  assert.equal(warnings.length, 1);
-  assert.match(warnings[0] ?? "", /已忽略并等待定时清理/);
-});
 
 test("uses existing landscape and portrait covers without AI or stretching", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "baidu-drama-cover-"));

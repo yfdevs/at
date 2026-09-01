@@ -11,6 +11,27 @@ import type {
 import { createLogger } from "../../shared/logger.js";
 
 const vodLogger = createLogger("upload");
+const uploadProgressPollMs = 2_000;
+
+export interface VodUploadProgressContext {
+  batchIndex?: number;
+  batchCount?: number;
+  completedBefore?: number;
+  totalCount?: number;
+  accountName?: string;
+  maxRetryAttempts?: number;
+  startedAt?: number;
+  totalTimeoutMs?: number;
+}
+
+interface PageUploadProgress {
+  signature: string;
+  summary: string;
+  failure?: string;
+}
+
+const failedUploadPattern = /上传失败|未能上传|上传异常|上传出错/;
+const retryStateWaitMs = 30_000;
 
 function parseJsonPayload(value: string | null): unknown {
   if (!value) return null;
@@ -123,33 +144,210 @@ async function writeVodUploadReport(report: VodUploadReport): Promise<void> {
   vodLogger.info("上传诊断报告已保存", { path: reportPath });
 }
 
+async function readPageUploadProgress(page: Page): Promise<PageUploadProgress | null> {
+  const rowTexts = (await page.locator("table tbody tr:visible").allInnerTexts().catch(() => []))
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean);
+  if (rowTexts.length === 0) return null;
+
+  const failedCount = rowTexts.filter((text) => failedUploadPattern.test(text)).length;
+  const failure = rowTexts.find((text) => failedUploadPattern.test(text));
+  const succeededCount = rowTexts.filter((text) => /上传成功|上传完成|已上传|处理完成/.test(text)).length;
+  const uploadingCount = rowTexts.filter((text) => /上传中|正在上传|等待上传|处理中/.test(text)).length;
+  const percentages = Array.from(new Set(rowTexts.flatMap((text) =>
+    Array.from(text.matchAll(/(\d{1,3}(?:\.\d+)?)\s*%/g), (match) => `${match[1]}%`)
+  )));
+  const parts = [
+    succeededCount > 0 ? `页面成功 ${succeededCount} 个` : "",
+    uploadingCount > 0 ? `上传中 ${uploadingCount} 个` : "",
+    failedCount > 0 ? `上传失败 ${failedCount} 个，准备重试` : "",
+    percentages.length > 0 ? `文件进度 ${percentages.join("、")}` : "",
+  ].filter(Boolean);
+  const summary = parts.join("，") || `上传列表 ${rowTexts.length} 个文件，等待状态更新`;
+
+  return {
+    signature: `${succeededCount}|${uploadingCount}|${percentages.join(",")}|${failure ?? ""}`,
+    summary,
+    failure,
+  };
+}
+
+async function retryFailedEpisodeRows(
+  page: Page,
+  retryAttemptsByFile: Map<string, number>,
+  retryPendingSinceByFile: Map<string, number>,
+  maxRetryAttempts: number,
+  startedAt: number,
+  timeout: number,
+  accountName?: string,
+): Promise<void> {
+  const rows = page.locator("table tbody tr:visible");
+  const rowCount = await rows.count();
+  const failedFileNames = new Set<string>();
+
+  for (let rowIndex = 0; rowIndex < rowCount; rowIndex += 1) {
+    const row = rows.nth(rowIndex);
+    const rowText = (await row.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
+    if (!failedUploadPattern.test(rowText)) continue;
+
+    const fileName = (
+      await row.locator("td.table-name").first().innerText().catch(() => "")
+      || await row.locator("td").first().innerText().catch(() => "")
+      || `第 ${rowIndex + 1} 行剧集文件`
+    ).replace(/\s+/g, " ").trim();
+    failedFileNames.add(fileName);
+
+    const pendingSince = retryPendingSinceByFile.get(fileName);
+    if (pendingSince && Date.now() - pendingSince < retryStateWaitMs) continue;
+
+    const attempts = retryAttemptsByFile.get(fileName) ?? 0;
+    if (attempts >= maxRetryAttempts) {
+      throw new Error(
+        `[upload-failed] 剧集视频 ${fileName}: 重试 ${attempts} 次后仍显示“上传失败”。`,
+      );
+    }
+
+    const retryLink = row
+      .locator("a.error_link, a.action-link")
+      .filter({ hasText: /^\s*重试\s*$/ })
+      .first();
+    if ((await retryLink.count()) === 0 || !await retryLink.isVisible().catch(() => false)) {
+      throw new Error(
+        `[upload-failed] 剧集视频 ${fileName}: 页面显示“上传失败”，但找不到可点击的“重试”。`,
+      );
+    }
+
+    const nextAttempt = attempts + 1;
+    retryAttemptsByFile.set(fileName, nextAttempt);
+    retryPendingSinceByFile.set(fileName, Date.now());
+    vodLogger.warn("剧集上传失败，准备重试", {
+      accountName,
+      fileName,
+      attempt: nextAttempt,
+      maxAttempts: maxRetryAttempts,
+      elapsedMinutes: Math.round((Date.now() - startedAt) / 6000) / 10,
+      timeoutMinutes: Math.round(timeout / 60000),
+    });
+
+    await retryLink.scrollIntoViewIfNeeded().catch(() => undefined);
+    await retryLink.click({ timeout: 15000 });
+    vodLogger.info("已点击剧集上传重试", {
+      accountName,
+      fileName,
+      attempt: nextAttempt,
+      maxAttempts: maxRetryAttempts,
+    });
+
+    const failureStatus = row.locator("p.error-text, div.status-error")
+      .filter({ hasText: failedUploadPattern })
+      .first();
+    const leftFailureState = await failureStatus.waitFor({
+      state: "hidden",
+      timeout: 1000,
+    }).then(() => true, () => false);
+    if (leftFailureState) {
+      retryPendingSinceByFile.delete(fileName);
+    } else {
+      vodLogger.info("已点击重试，等待页面更新上传状态", {
+        accountName,
+        fileName,
+        attempt: nextAttempt,
+        stateWaitSeconds: retryStateWaitMs / 1000,
+      });
+    }
+  }
+
+  for (const fileName of retryPendingSinceByFile.keys()) {
+    if (!failedFileNames.has(fileName)) retryPendingSinceByFile.delete(fileName);
+  }
+}
+
 export async function monitorEpisodeVodUploads(
   page: Page,
   expectedCount: number,
   action: () => Promise<void>,
-  timeout = minutesToMs(30),
+  timeout = minutesToMs(120),
+  progressContext: VodUploadProgressContext = {},
 ): Promise<VodUploadReport> {
   const observationsById = new Map<string, VodUploadObservation>();
-  const successesById = new Map<string, VodUploadSuccess>();
+  const successesByFile = new Map<string, VodUploadSuccess>();
   const failures: VodUploadFailure[] = [];
   const fileNameById = new Map<string, string>();
+  const retryAttemptsByFile = new Map<string, number>();
+  const retryPendingSinceByFile = new Map<string, number>();
+  const completedBefore = Math.max(0, progressContext.completedBefore ?? 0);
+  const totalCount = Math.max(expectedCount, progressContext.totalCount ?? expectedCount);
+  const maxRetryAttempts = Math.max(0, progressContext.maxRetryAttempts ?? 5);
+  const startedAt = progressContext.startedAt ?? Date.now();
+  const totalTimeout = progressContext.totalTimeoutMs ?? timeout;
+
+  const progressFields = (status?: string) => {
+    const current = Math.min(totalCount, completedBefore + successesByFile.size);
+    const percent = totalCount > 0 ? Math.round(current / totalCount * 100) : 100;
+    return {
+      batch: progressContext.batchIndex,
+      batchCount: progressContext.batchCount,
+      current,
+      total: totalCount,
+      progress: `${current}/${totalCount} (${percent}%)`,
+      elapsedMinutes: Math.round((Date.now() - startedAt) / 6000) / 10,
+      timeoutMinutes: Math.round(totalTimeout / 60000),
+      retryCount: Array.from(retryAttemptsByFile.values()).reduce((sum, value) => sum + value, 0),
+      retryLimit: maxRetryAttempts,
+      status,
+    };
+  };
 
   return new Promise<VodUploadReport>((resolve, reject) => {
     let settled = false;
     let actionDone = false;
+    let readingPageProgress = false;
+    let lastPageProgressSignature = "";
     const timer = setTimeout(() => {
-      finish(new Error(`[upload-failed] 剧集视频: timed out waiting for ${expectedCount} VOD upload report(s), got ${observationsById.size}.`));
+      finish(new Error(
+        `[upload-failed] 剧集上传超时：总等待时间达到 ${Math.round(totalTimeout / 60000)} 分钟后仍未完成，`
+        + `本批次已成功 ${successesByFile.size}/${expectedCount} 个文件。`,
+      ));
     }, timeout);
+    const progressTimer = setInterval(() => {
+      if (settled || readingPageProgress) return;
+      readingPageProgress = true;
+      void readPageUploadProgress(page)
+        .then(async (pageProgress) => {
+          if (settled || !pageProgress) return;
+          if (pageProgress.signature !== lastPageProgressSignature) {
+            lastPageProgressSignature = pageProgress.signature;
+            vodLogger.info("video upload progress", progressFields(pageProgress.summary));
+          }
+          await retryFailedEpisodeRows(
+            page,
+            retryAttemptsByFile,
+            retryPendingSinceByFile,
+            maxRetryAttempts,
+            startedAt,
+            totalTimeout,
+            progressContext.accountName,
+          );
+        })
+        .catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          finish(new Error(message));
+        })
+        .finally(() => {
+          readingPageProgress = false;
+        });
+    }, uploadProgressPollMs);
 
     const buildReport = (): VodUploadReport => ({
       expectedCount,
       observations: Array.from(observationsById.values()),
-      successes: Array.from(successesById.values()),
+      successes: Array.from(successesByFile.values()),
       failures,
     });
 
     const cleanup = () => {
       clearTimeout(timer);
+      clearInterval(progressTimer);
       page.off("request", onRequest);
       page.off("response", onResponse);
     };
@@ -167,7 +365,7 @@ export async function monitorEpisodeVodUploads(
     };
 
     const finishIfComplete = () => {
-      if (actionDone && successesById.size >= expectedCount) {
+      if (actionDone && successesByFile.size >= expectedCount) {
         finish();
       }
     };
@@ -181,6 +379,8 @@ export async function monitorEpisodeVodUploads(
       vodLogger.info("已记录上传文件", {
         fileId: observation.fileId,
         file: observation.fileName,
+        discoveredCount: observationsById.size,
+        total: expectedCount,
       });
       finishIfComplete();
     };
@@ -195,12 +395,25 @@ export async function monitorEpisodeVodUploads(
           if ("errMsg" in result) {
             failures.push(result);
             const target = [result.fileName, result.fileId].filter(Boolean).join(" / ") || "unknown file";
-            finish(new Error(`[upload-failed] 剧集视频 ${target}: ${result.errMsg}`));
+            vodLogger.warn("检测到剧集上传失败回调，等待页面重试", {
+              accountName: progressContext.accountName,
+              target,
+              errorMessage: result.errMsg,
+              maxAttempts: maxRetryAttempts,
+            });
             return;
           }
 
-          successesById.set(result.fileId, result);
+          const successKey = result.fileName && result.fileName !== "Unknown Video"
+            ? result.fileName
+            : result.fileId;
+          if (successesByFile.has(successKey)) return;
+          successesByFile.set(successKey, result);
+          retryPendingSinceByFile.delete(result.fileName);
           vodLogger.info("文件上传成功", { fileId: result.fileId, file: result.fileName });
+          vodLogger.info("video upload progress", progressFields(
+            `本批次已成功 ${successesByFile.size}/${expectedCount} 个文件`,
+          ));
           finishIfComplete();
         })
         .catch((error: unknown) => {
@@ -211,9 +424,17 @@ export async function monitorEpisodeVodUploads(
 
     page.on("request", onRequest);
     page.on("response", onResponse);
+    vodLogger.info("开始监控剧集上传进度", progressFields(
+      `等待本批次 ${expectedCount} 个文件上传，单文件最多重试 ${maxRetryAttempts} 次`,
+    ));
     void action()
       .then(() => {
         actionDone = true;
+        vodLogger.info("已点击开始上传，正在等待微信上传回调", {
+          batch: progressContext.batchIndex,
+          batchCount: progressContext.batchCount,
+          expectedCount,
+        });
         finishIfComplete();
       })
       .catch((error: unknown) => {

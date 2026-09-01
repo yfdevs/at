@@ -94,6 +94,58 @@ async function selectOption(page: Page, value: string) {
   await option.click({ timeout: 10_000 });
 }
 
+async function iqiyiChoiceInput(choice: Locator) {
+  const isInput = await choice.evaluate((element) =>
+    element.matches("input[type='radio'],input[type='checkbox']")
+  ).catch(() => false);
+  return isInput
+    ? choice
+    : choice.locator("input[type='radio'],input[type='checkbox']").first();
+}
+
+async function iqiyiChoiceSelected(choice: Locator) {
+  if (await choice.getAttribute("aria-checked").catch(() => null) === "true") return true;
+  const input = await iqiyiChoiceInput(choice);
+  return await input.count() > 0 && await input.isChecked().catch(() => false);
+}
+
+async function waitForIqiyiChoiceSelected(page: Page, choice: Locator, timeoutMs = 1500) {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if (await iqiyiChoiceSelected(choice)) return true;
+    await page.waitForTimeout(50);
+  } while (Date.now() < deadline);
+  return iqiyiChoiceSelected(choice);
+}
+
+async function selectIqiyiChoice(page: Page, choice: Locator, value: string) {
+  if (await iqiyiChoiceSelected(choice)) return;
+
+  await choice.scrollIntoViewIfNeeded().catch(() => undefined);
+  const visibleText = choice.getByText(value, { exact: true }).filter({ visible: true }).last();
+  const clickTarget = await visibleText.count() > 0 ? visibleText : choice;
+  await clickTarget.click({ force: true, timeout: 3000 }).catch(() => undefined);
+  if (await waitForIqiyiChoiceSelected(page, choice)) return;
+
+  await choice.evaluate((element) => (element as HTMLElement).click()).catch(() => undefined);
+  if (await waitForIqiyiChoiceSelected(page, choice)) return;
+
+  const input = await iqiyiChoiceInput(choice);
+  if (await input.count() > 0) {
+    await input.evaluate((element) => {
+      const control = element as HTMLInputElement;
+      if (!control.checked) control.click();
+      if (control.checked) return;
+      control.checked = true;
+      control.dispatchEvent(new Event("input", { bubbles: true }));
+      control.dispatchEvent(new Event("change", { bubbles: true }));
+    });
+  }
+  if (await waitForIqiyiChoiceSelected(page, choice)) return;
+
+  throw new Error(`IQIYI_DRAMA_RADIO_SELECTION_FAILED: ${value}`);
+}
+
 export async function fillIqiyiField(
   page: Page,
   options: IqiyiDramaRuntimeOptions,
@@ -126,10 +178,13 @@ export async function fillIqiyiField(
   await root.scrollIntoViewIfNeeded().catch(() => undefined);
   if (config.kind === "radio" || config.kind === "choice") {
     for (const role of ["radio", "checkbox"] as const) {
-      const choice = root.getByRole(role, { name: value, exact: true })
+      const explicitChoice = root.locator(`[role='${role}']`)
+        .filter({ hasText: exact(value), visible: true }).last();
+      const semanticChoice = root.getByRole(role, { name: value, exact: true })
         .filter({ visible: true }).last();
+      const choice = await explicitChoice.count() > 0 ? explicitChoice : semanticChoice;
       if (await choice.count() === 0) continue;
-      await choice.click({ timeout: 10_000 });
+      await selectIqiyiChoice(page, choice, value);
       return true;
     }
     const radio = root.getByText(value, { exact: true }).filter({ visible: true }).last();
@@ -137,7 +192,7 @@ export async function fillIqiyiField(
       if (config.required) throw new Error(`IQIYI_DRAMA_RADIO_NOT_FOUND: ${value}`);
       return false;
     }
-    await radio.click({ timeout: 10_000 });
+    await radio.click({ force: true, timeout: 3000 });
     return true;
   }
   if (config.kind === "select") {
@@ -350,6 +405,55 @@ async function waitForUploadSettled(
   throw new Error(`IQIYI_DRAMA_FILE_UPLOAD_TIMEOUT: ${label}`);
 }
 
+async function settleIqiyiCoverEditor(page: Page, options: IqiyiDramaRuntimeOptions) {
+  let confirmClicks = 0;
+  for (let attempt = 0; attempt < 3; attempt += 1) {
+    const dialog = page.locator([
+      ".mp-popup.base-popup-block",
+      ".mp-popup",
+      "[role='dialog']",
+      ".mp-modal",
+      ".mp-dialog",
+      ".ant-modal",
+      ".el-dialog",
+    ].join(",")).filter({
+      hasText: /设置封面图|裁剪\s*16:9|裁剪\s*3:4|封面/u,
+      visible: true,
+    }).last();
+    const appeared = await dialog.waitFor({
+      state: "visible",
+      timeout: attempt === 0 ? 15_000 : 2_000,
+    }).then(() => true, () => false);
+    if (!appeared) break;
+
+    await dialog.locator(".base-loading-block:not(.dn):visible")
+      .waitFor({ state: "hidden", timeout: 30_000 })
+      .catch(() => undefined);
+    await dialog.locator(".cropper-container:visible,.thumbnail-preview img:visible")
+      .first().waitFor({ state: "visible", timeout: 15_000 })
+      .catch(() => undefined);
+
+    const confirm = dialog.getByRole("button", { name: /^(确定|确认|完成|保存)$/u })
+      .filter({ visible: true }).last();
+    if (await confirm.count() === 0) {
+      throw new Error("IQIYI_DRAMA_COVER_EDITOR_CONFIRM_NOT_FOUND");
+    }
+    await confirm.scrollIntoViewIfNeeded().catch(() => undefined);
+    await confirm.click({ force: true, timeout: 5000 });
+    confirmClicks += 1;
+    log(options, `[iqiyi-drama] confirmed cover editor: ${confirmClicks}`);
+
+    const closed = await dialog.waitFor({ state: "hidden", timeout: 10_000 })
+      .then(() => true, () => false);
+    if (closed) continue;
+    if (attempt === 2) throw new Error("IQIYI_DRAMA_COVER_EDITOR_CONFIRM_FAILED");
+    await page.waitForTimeout(500);
+  }
+  if (confirmClicks === 0) {
+    log(options, "[iqiyi-drama] cover editor did not appear after upload");
+  }
+}
+
 export async function uploadIqiyiFiles(
   page: Page,
   options: IqiyiDramaRuntimeOptions,
@@ -378,19 +482,21 @@ export async function uploadIqiyiFiles(
     options,
     `[iqiyi-drama] uploading ${config.aliases[0]}: ${config.files.map((file) => path.basename(file)).join(" | ")}`,
   );
-  await input.setInputFiles(config.files, { timeout: 120_000 });
-  await waitForUploadSettled(page, root!, config.aliases[0]!);
-  if (config.settleCoverEditor) {
-    for (let attempt = 0; attempt < 3; attempt += 1) {
-      const dialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")
-        .filter({ hasText: /裁剪|封面/, visible: true }).last();
-      if (await dialog.count() === 0) break;
-      const confirm = dialog.getByRole("button", { name: /^(确定|确认|完成|保存)$/ })
-        .filter({ visible: true }).last();
-      if (await confirm.count() === 0) break;
-      await confirm.click({ timeout: 10_000 });
-      await page.waitForTimeout(500);
+  const supportsMultiple = await input.getAttribute("multiple") !== null;
+  const batches = supportsMultiple
+    ? [config.files]
+    : config.files.map((file) => [file]);
+  for (const [index, batch] of batches.entries()) {
+    const currentInput = await fileInput(root!);
+    if (!currentInput) {
+      throw new Error(`IQIYI_DRAMA_FILE_INPUT_NOT_FOUND: ${config.aliases.join("/")}`);
     }
+    log(options, `[iqiyi-drama] uploading ${config.aliases[0]} batch: ${index + 1}/${batches.length}`);
+    await currentInput.setInputFiles(batch, { timeout: 120_000 });
+    await waitForUploadSettled(page, root!, config.aliases[0]!);
+  }
+  if (config.settleCoverEditor) {
+    await settleIqiyiCoverEditor(page, options);
   }
   await throwIfIqiyiFormInvalid(page);
   return true;

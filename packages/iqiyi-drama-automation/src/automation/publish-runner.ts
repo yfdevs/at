@@ -2,6 +2,7 @@ import type { BrowserContext, Page } from "playwright";
 
 import { iqiyiCreateUrl } from "../shared/constants.js";
 import { log } from "../shared/logger.js";
+import { resolveIqiyiRecommendation } from "../shared/recommendation.js";
 import type { ClaimedIqiyiDramaTask, IqiyiDramaRuntimeOptions } from "../shared/types.js";
 import {
   iqiyiDramaLoginStateFromUrl,
@@ -18,6 +19,7 @@ import {
   throwIfIqiyiFormInvalid,
   uploadIqiyiFiles,
 } from "./form-controls.js";
+import { uploadIqiyiEpisodeVideos } from "./video-upload.js";
 
 async function waitForCreateForm(page: Page) {
   const deadline = Date.now() + 60_000;
@@ -77,8 +79,9 @@ export async function runIqiyiPublishTask(
   task: ClaimedIqiyiDramaTask,
   options: IqiyiDramaRuntimeOptions,
 ) {
-  await openIqiyiCreatePage(page, context, task, options);
   const payload = task.playlet;
+  const recommendation = await resolveIqiyiRecommendation(payload, options);
+  await openIqiyiCreatePage(page, context, task, options);
   log(
     options,
     `[iqiyi-drama] filling ${payload.dramaType} project: accountTaskId=${task.accountTaskId}`,
@@ -190,9 +193,11 @@ export async function runIqiyiPublishTask(
   });
   const companyDialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")
     .filter({ hasText: /无制作方|不可更改|确认/, visible: true }).last();
-  if (await companyDialog.count() > 0) {
-    await companyDialog.getByRole("button", { name: /^(确定|确认)$/ })
-      .filter({ visible: true }).last().click({ timeout: 10_000 });
+  if (await companyDialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
+    const confirm = companyDialog.getByRole("button", { name: /^(确定|确认)$/ })
+      .filter({ visible: true }).last();
+    await confirm.waitFor({ state: "visible", timeout: 5000 });
+    await confirm.click({ force: true, timeout: 5000 });
   }
   await fillIqiyiField(page, options, {
     aliases: ["联合出品方"],
@@ -208,7 +213,7 @@ export async function runIqiyiPublishTask(
   });
   await fillIqiyiField(page, options, {
     aliases: ["一句话推荐"],
-    value: payload.title,
+    value: recommendation,
     required: true,
   });
   await fillIqiyiField(page, options, {
@@ -278,6 +283,11 @@ export async function runIqiyiPublishTask(
     required: true,
     settleCoverEditor: true,
   });
+
+  if (!isShortDrama) {
+    await openIqiyiSection(page, "上传正片");
+    await uploadIqiyiEpisodeVideos(page, task, options);
+  }
 
   await throwIfIqiyiFormInvalid(page);
   const clicked = payload.submit

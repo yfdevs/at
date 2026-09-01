@@ -204,7 +204,11 @@ export async function startMeituanCreationRuntime(
         publishVideoUrl: MEITUAN_CREATION_PUBLISH_VIDEO_URL,
         running,
         accounts: accountBrowsers.map((browser) => {
-          const activeUrl = browser.page.url();
+          const openPages = browser.context.pages().filter((page) => !page.isClosed());
+          const activePage = openPages.find((page) => page.url().includes("/new/login"))
+            ?? openPages[openPages.length - 1]
+            ?? browser.page;
+          const activeUrl = activePage.url();
           return {
             accountId: browser.account.accountId,
             accountName: browser.account.accountName,

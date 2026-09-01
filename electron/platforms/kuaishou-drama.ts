@@ -7,7 +7,7 @@ import { createElectronPlatformLogger } from "../platform-logger";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
-  getConfiguredAiClientOptions,
+  getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import {
@@ -409,13 +409,15 @@ async function startRuntime() {
 
   const config = readConfig();
   let aiClient: ReturnType<typeof createConfiguredAiClient> | undefined;
-  let aiModelId: string | undefined;
+  let aiImageModel: string | undefined;
   try {
-    aiModelId = getConfiguredAiClientOptions().model;
-    aiClient = createConfiguredAiClient();
+    const configuredAiClient = createConfiguredAiClient();
+    const configuredAiImageModel = getConfiguredAiImageModel();
+    aiClient = configuredAiClient;
+    aiImageModel = configuredAiImageModel;
   } catch (error) {
     kuaishouPlatformLogger("material").warn(
-      "AI 配置不可用，服务仍会启动；广告解锁版封面生成将不可用",
+      "AI 配置不可用，服务仍会启动；缺少横版或竖版封面时无法自动补图",
       { error },
     );
   }
@@ -475,7 +477,7 @@ async function startRuntime() {
         videoUploadTimeoutMinutes,
         taskPollIntervalMs,
         aiClient,
-        aiModelId,
+        aiImageModel,
         apiConfig: apiOptions.apiConfig,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,

@@ -19,6 +19,7 @@ import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
 } from '../global-app-config'
+import { WechatMiniProgramDirectUploadCoordinator } from './wechat-miniprogram-drama/direct-upload'
 
 type WechatMiniProgramRuntime = {
   getStatus: () => {
@@ -31,8 +32,6 @@ type WechatMiniProgramRuntime = {
 export type WechatMiniProgramAccountStatus = {
   videoAccountId: string
   videoAccountName: string
-  contractSubject?: string
-  contractSubjectLabel?: string
   launched: boolean
   loginState: 'not-launched' | 'login-required' | 'logged-in' | 'unknown'
   pageCount: number
@@ -43,14 +42,12 @@ export type WechatMiniProgramAccountStatus = {
 export type WechatMiniProgramServiceStatus = {
   running: boolean
   pid: number | null
-  contractSubjects: Array<{ label: string; value: string }>
   videoAccounts: WechatMiniProgramAccountStatus[]
 }
 
 export type WechatMiniProgramConfig = {
   apiBaseUrl: string
   taskApiPrefix: string
-  videoAccountContractSubjects: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -90,7 +87,6 @@ type WechatMiniProgramStore = {
 const defaultWechatMiniProgramConfig: WechatMiniProgramConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
   taskApiPrefix: '/dramaAiRpa/wechatMiniProgram',
-  videoAccountContractSubjects: 'MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU,YOUDIANNIU,ZHENCUIYIHAO,RUIXIAODOU',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-miniprogram-drama',
@@ -113,51 +109,31 @@ const defaultWechatMiniProgramConfig: WechatMiniProgramConfig = {
   episodeVideoMaxFileMegabytes: '490',
   episodeVideoTargetFileMegabytes: '480',
   episodeUploadWaitTimeoutSeconds: '7200',
-  episodeUploadFailedRetryAttempts: '3',
+  episodeUploadFailedRetryAttempts: '5',
   feishuBotWebhookUrl: '',
 }
-
-const contractSubjectOptions = [
-  { label: '明星说', value: 'MINGXINGSHUO' },
-  { label: '米苏', value: 'MISU' },
-  { label: '微淘', value: 'WEITAO' },
-  { label: '幻走', value: 'HUANZOU' },
-  { label: '小石榴', value: 'XIAOSHILIU' },
-  { label: '有点牛', value: 'YOUDIANNIU' },
-  { label: '珍萃', value: 'ZHENCUIYIHAO' },
-  { label: '瑞小豆', value: 'RUIXIAODOU' },
-]
-
-const contractSubjectAliases: Record<string, string> = {
-  明星说: 'MINGXINGSHUO',
-  米苏: 'MISU',
-  微淘: 'WEITAO',
-  幻走: 'HUANZOU',
-  小石榴: 'XIAOSHILIU',
-  有点牛: 'YOUDIANNIU',
-  珍萃: 'ZHENCUIYIHAO',
-  瑞小豆: 'RUIXIAODOU',
-}
-
-const legacyDefaultContractSubjectSets = [
-  new Set(['MINGXINGSHUO', 'MISU', 'WEITAO', 'HUANZOU', 'XIAOSHILIU']),
-  new Set(['MINGXINGSHUO', 'MISU', 'WEITAO', 'HUANZOU', 'XIAOSHILIU', 'YOUDIANNIU']),
-]
 
 const invalidLogFileSegmentChars = new Set(['<', '>', ':', '"', '/', '\\', '|', '?', '*'])
 
 const runtimeController = new RuntimeController<WechatMiniProgramRuntime>()
+const directUploadBrowserId = 'baidu-direct-upload'
+const directUploadCoordinator = new WechatMiniProgramDirectUploadCoordinator({
+  getSettings: () => readConfig(),
+  regularServiceRunning: () => runtimeController.running || runtimeController.startingPromise !== null,
+  playwrightBrowsersPath,
+})
 let store: Store<WechatMiniProgramStore> | null = null
 let contractCleanupTask: ScheduledTask | null = null
 
 export function getWechatMiniProgramBrowserInstanceCount() {
-  return runtimeController.current
+  const regularBrowserCount = runtimeController.current
     ?.getStatus()
     .videoAccounts.filter((account) => account.launched).length ?? 0
+  return regularBrowserCount + directUploadCoordinator.getBrowserInstanceCount()
 }
 
 export function getWechatMiniProgramRunningPlatformCount() {
-  return runtimeController.running ? 1 : 0
+  return runtimeController.running || directUploadCoordinator.isActive() ? 1 : 0
 }
 
 export function getWechatMiniProgramPlatformRuntimeSummary() {
@@ -170,6 +146,15 @@ export function getWechatMiniProgramPlatformRuntimeSummary() {
       loginState: account.loginState,
       activeUrl: account.activeUrl,
     })) ?? []
+  const directBrowser = directUploadCoordinator.workspace().browser
+  if (directBrowser.launched) {
+    browserInstances.push({
+      id: directUploadBrowserId,
+      label: '百度资源直传',
+      loginState: directBrowser.loginState,
+      activeUrl: directBrowser.activeUrl,
+    })
+  }
 
   return {
     platform: 'wechat-miniprogram-drama' as const,
@@ -186,35 +171,13 @@ export function openWechatMiniProgramLogDir() {
   return openExistingPath(logsDir)
 }
 
-function readSelectedContractSubjects(config = readConfig()) {
-  const selectedSubjects = new Set(
-    config.videoAccountContractSubjects
-      .split(',')
-      .map((subject) => subject.trim())
-      .filter(Boolean),
-  )
-
-  return contractSubjectOptions.filter((option) => selectedSubjects.has(option.value))
-}
-
-function formatContractSubjectLabel(value: string | undefined) {
-  if (!value) return undefined
-  const trimmedValue = value.trim()
-  const normalizedValue = contractSubjectAliases[trimmedValue] ?? trimmedValue.toUpperCase()
-  return contractSubjectOptions.find((option) => option.value === normalizedValue)?.label ?? value
-}
-
 async function status(): Promise<WechatMiniProgramServiceStatus> {
   const runtime = runtimeController.current
 
   return {
     running: runtimeController.running,
     pid: runtime ? process.pid : null,
-    contractSubjects: readSelectedContractSubjects(),
-    videoAccounts: runtime?.getStatus().videoAccounts.map((account) => ({
-      ...account,
-      contractSubjectLabel: formatContractSubjectLabel(account.contractSubject),
-    })) ?? [],
+    videoAccounts: runtime?.getStatus().videoAccounts ?? [],
   }
 }
 
@@ -261,29 +224,9 @@ function broadcastConfigChanged(result: WechatMiniProgramConfigResult) {
 function normalizeConfig(
   config: Partial<WechatMiniProgramConfig> & Record<string, string | undefined>,
 ): WechatMiniProgramConfig {
-  const selectedContractSubjects = new Set(
-    (config.videoAccountContractSubjects ?? defaultWechatMiniProgramConfig.videoAccountContractSubjects)
-      .split(',')
-      .map((subject) => subject.trim())
-      .filter(Boolean),
-  )
-  const usesLegacyDefaultContractSubjects = legacyDefaultContractSubjectSets.some((legacySubjects) => (
-    selectedContractSubjects.size === legacySubjects.size
-    && [...legacySubjects].every((subject) => selectedContractSubjects.has(subject))
-  ))
-  if (usesLegacyDefaultContractSubjects) {
-    selectedContractSubjects.add('YOUDIANNIU')
-    selectedContractSubjects.add('ZHENCUIYIHAO')
-    selectedContractSubjects.add('RUIXIAODOU')
-  }
-
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatMiniProgramConfig.apiBaseUrl,
     taskApiPrefix: config.taskApiPrefix?.trim() || defaultWechatMiniProgramConfig.taskApiPrefix,
-    videoAccountContractSubjects: contractSubjectOptions
-      .map((option) => option.value)
-      .filter((subject) => selectedContractSubjects.has(subject))
-      .join(','),
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatMiniProgramConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatMiniProgramConfig.closeFailedTaskPages,
     runDataDir:
@@ -469,7 +412,12 @@ async function startRuntime() {
 
   const { startWechatMiniProgramRuntime } = await import('@drama/wechat-miniprogram-drama-automation')
   return startWechatMiniProgramRuntime({
-    settings: readConfig(),
+    settings: {
+      ...readConfig(),
+      mockAssetRoot: app.isPackaged
+        ? path.join(app.getAppPath(), 'dist', 'wechat-miniprogram-drama', 'mock-assets')
+        : resolveFromAppRoot('public/wechat-miniprogram-drama/mock-assets'),
+    },
     ensureBaiduNetdiskResource: (request) => ensureBaiduNetdiskShareDownloaded({
       ...request,
       requesterPlatform: "wechat-miniprogram-drama",
@@ -479,6 +427,7 @@ async function startRuntime() {
 
 export function registerWechatMiniProgramPlatformHandlers() {
   scheduleWechatCopyrightProofCleanup()
+  directUploadCoordinator.registerHandlers()
 
   ipcMain.handle('wechat-miniprogram-drama:config:get', () => ({
     config: readConfig(),
@@ -519,6 +468,9 @@ export function registerWechatMiniProgramPlatformHandlers() {
   ipcMain.handle('wechat-miniprogram-drama:service:status', () => status())
 
   ipcMain.handle('wechat-miniprogram-drama:service:start', async () => {
+    if (directUploadCoordinator.isActive()) {
+      throw new Error('百度资源直传正在运行或浏览器尚未关闭，请先暂停队列并关闭直传浏览器。')
+    }
     assertGlobalDirectoriesConfigured()
     assertWechatMiniProgramConfigReady()
     await runtimeController.start(startRuntime)
@@ -531,6 +483,10 @@ export function registerWechatMiniProgramPlatformHandlers() {
   })
 
   ipcMain.handle('wechat-miniprogram-drama:service:video-account:focus', async (_event, videoAccountId: string) => {
+    if (videoAccountId === directUploadBrowserId) {
+      await directUploadCoordinator.focusBrowser()
+      return status()
+    }
     const runtime = await runtimeController.resolveStarting()
 
     if (!runtime) {
@@ -557,4 +513,5 @@ export function registerWechatMiniProgramPlatformHandlers() {
 
 export function stopWechatMiniProgramPlatformRuntime() {
   runtimeController.stopInBackground()
+  void directUploadCoordinator.stop()
 }

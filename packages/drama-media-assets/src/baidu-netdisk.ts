@@ -39,6 +39,7 @@ export type BaiduNetdiskShareDownloadResult = {
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  inferredEpisodeCount?: number;
   completed: boolean;
   skippedExisting: boolean;
 };
@@ -71,8 +72,10 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   shareText: string;
   resourceName: string;
   localEpisodeVideoRoot: string;
-  episodeCount: number;
+  episodeCount?: number;
+  inferEpisodeCount?: boolean;
   downloadEpisodeVideos?: boolean;
+  downloadAssetMaterials?: boolean;
   forceAssetDownload?: boolean;
   requiredOwnership?: OwnershipMaterialRequirements;
   requiredOwnershipFiles?: number;
@@ -91,11 +94,13 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
     shareText: string;
     resourceName: string;
     expectedEpisodeCount?: number;
+    inferEpisodeCount?: boolean;
     expectedOwnershipCounts?: OwnershipMaterialRequirements;
     expectedOwnershipFiles?: number;
     expectedPosterImages?: number;
     expectedAiProductionProofFiles?: number;
     downloadEpisodeVideos?: boolean;
+    downloadAssetMaterials?: boolean;
     downloadDir: string;
   }) => Promise<BaiduNetdiskShareDownloadResult>;
   getDownloadTaskStatus?: (request: {
@@ -108,6 +113,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
 
 export type EnsureBaiduNetdiskEpisodeVideosResult = {
   localPath: string;
+  episodeCount: number;
   skippedExisting: boolean;
   completed: boolean;
 };
@@ -861,6 +867,12 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const stableCompletePolls = options.stableCompletePolls ?? 2;
   const downloadEpisodeVideos = options.downloadEpisodeVideos !== false;
+  const configuredEpisodeCount = Number(options.episodeCount);
+  const hasConfiguredEpisodeCount = Number.isInteger(configuredEpisodeCount)
+    && configuredEpisodeCount > 0;
+  if (downloadEpisodeVideos && !hasConfiguredEpisodeCount && !options.inferEpisodeCount) {
+    throw new Error("剧集数量必须是正整数，或启用自动识别集数。")
+  }
   const targetLocalPath = playletDir(options.localEpisodeVideoRoot, options.resourceName);
   const ownershipRequirements = options.requiredOwnership ?? {};
   const requiredOwnershipFiles = Math.max(0, options.requiredOwnershipFiles ?? 0);
@@ -891,7 +903,10 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   if (
     !options.forceAssetDownload
     &&
-    (!downloadEpisodeVideos || isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount))
+    (!downloadEpisodeVideos || (
+      hasConfiguredEpisodeCount
+      && isCompleteEpisodeFileSet(existingEpisodes, configuredEpisodeCount)
+    ))
     && hasRequiredOwnershipMaterials(existingOwnership, ownershipRequirements)
     && existingRawOwnershipFiles.length >= requiredOwnershipFiles
     && existingPosters.length >= requiredPosterImages
@@ -908,16 +923,17 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     });
     return {
       localPath: targetLocalPath,
+      episodeCount: configuredEpisodeCount,
       skippedExisting: true,
       completed: true,
     };
   }
 
-  if (downloadEpisodeVideos) {
+  if (downloadEpisodeVideos && hasConfiguredEpisodeCount) {
     await logEpisodeDirectoryDetails({
       root: options.localEpisodeVideoRoot,
       resourceName: options.resourceName,
-      episodeCount: options.episodeCount,
+      episodeCount: configuredEpisodeCount,
       reason: "启动前未发现完整文件",
       onLog: options.onLog,
     });
@@ -928,9 +944,11 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     shareText: options.shareText,
     resourceName: options.resourceName,
     expectedEpisodeCount: !downloadEpisodeVideos
-      || isCompleteEpisodeFileSet(existingEpisodes, options.episodeCount)
+      || !hasConfiguredEpisodeCount
+      || isCompleteEpisodeFileSet(existingEpisodes, configuredEpisodeCount)
       ? undefined
-      : options.episodeCount,
+      : configuredEpisodeCount,
+    inferEpisodeCount: options.inferEpisodeCount === true,
     expectedOwnershipCounts: {
       minimumImages: Math.max(
         0,
@@ -947,8 +965,19 @@ export async function ensureBaiduNetdiskEpisodeVideos(
       requiredAiProductionProofFiles - existingAiProductionProofs.length,
     ),
     downloadEpisodeVideos,
+    downloadAssetMaterials: options.downloadAssetMaterials,
     downloadDir,
   });
+
+  const resolvedEpisodeCount = hasConfiguredEpisodeCount
+    ? configuredEpisodeCount
+    : Number(result.inferredEpisodeCount);
+  if (
+    downloadEpisodeVideos
+    && (!Number.isInteger(resolvedEpisodeCount) || resolvedEpisodeCount <= 0)
+  ) {
+    throw new Error("百度网盘资源检查完成，但未能确定有效总集数。")
+  }
 
   await options.onProgress?.({
     phase: "download-submitted",
@@ -971,7 +1000,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     expectedPosterImages: result.expectedPosterImages,
     expectedAiProductionProofFiles: result.expectedAiProductionProofFiles,
     requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
-    episodeCount: options.episodeCount,
+    episodeCount: downloadEpisodeVideos ? resolvedEpisodeCount : 0,
     requireEpisodeVideos: downloadEpisodeVideos,
     ownershipRequirements,
     requiredOwnershipFiles,
@@ -995,6 +1024,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
 
   return {
     localPath: completedPath,
+    episodeCount: downloadEpisodeVideos ? resolvedEpisodeCount : 0,
     skippedExisting: result.skippedExisting,
     completed: true,
   };

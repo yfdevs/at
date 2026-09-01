@@ -139,6 +139,12 @@ const fieldLabels: Record<string, string> = {
   path: "路径",
   platformApplyId: "平台申请ID",
   progress: "进度",
+  batch: "批次",
+  batchCount: "总批次",
+  discoveredCount: "已发现",
+  completedCount: "已完成",
+  mode: "模式",
+  step: "步骤",
   previewCount: "预览数",
   reason: "原因",
   removed: "移除",
@@ -180,6 +186,7 @@ const exactMessageTranslations: Record<string, string> = {
   "claim request": "正在领取任务",
   "claim response": "任务领取请求完成",
   "claimed account task": "任务领取成功",
+  "claiming task": "正在领取任务",
   "claimed pinduoduo drama task, submitting shortplay apply edit": "已领取任务，开始提报剧目",
   "cleared stale active task lock": "已清理失效的任务锁",
   "clicked confirm after upload prompt": "已确认上传提示",
@@ -363,6 +370,10 @@ const exactMessageTranslations: Record<string, string> = {
 export function createAutomationLogger(
   options: CreateAutomationLoggerOptions,
 ): AutomationLogger {
+  // Automation services run in the Electron main process. Keep their structured
+  // logs visible in an attached terminal by default; callers can still opt out
+  // explicitly with `console: false`.
+  const consoleEnabled = options.console ?? true;
   const write = (
     level: AutomationLogLevel,
     scope: string,
@@ -392,7 +403,7 @@ export function createAutomationLogger(
       // One unavailable sink must not block the remaining sinks.
     }
     try {
-      if (options.console) writeConsole(entry);
+      if (consoleEnabled) writeConsole(entry);
     } catch {
       // Logging is observational and must never change an automation result.
     }
@@ -580,6 +591,7 @@ function normalizeMessage(message: string) {
     .replace(/^closed dedicated task page:\s*/i, "已关闭任务页：")
     .replace(/^opening add page for\s*/i, "正在打开新建页面：")
     .replace(/^local cover and poster ready:\s*/i, "封面与海报已准备：")
+    .replace(/^local drama and episode covers ready:\s*/i, "短剧横版与单集竖版封面已准备：")
     .replace(/^local (collection )?cover ready:\s*/i, "本地封面已准备：")
     .replace(/^AI configuration is unavailable; using the original cover for ad-unlock$/i, "AI 未配置，广告解锁版将使用原始封面")
     .replace(/^reused AI landscape cover cache:\s*/i, "已复用 AI 横图缓存：")
@@ -590,6 +602,12 @@ function normalizeMessage(message: string) {
     .replace(/^ad cover AI coordinates:\s*/i, "广告封面裁剪区域：")
     .replace(/^ad cover AI result rejected,? retrying:\s*/i, "广告封面分析结果不可用，准备重试：")
     .replace(/^ad-unlock AI cover ready:\s*/i, "广告解锁版封面已准备：")
+    .replace(/^reused prepared (drama|episode) cover:\s*/i, "已复用准备好的快手封面：")
+    .replace(/^reused AI (drama|episode) cover cache:\s*/i, "已复用快手 AI 封面缓存：")
+    .replace(/^generating AI (drama|episode) cover:\s*/i, "正在生成快手 AI 封面：")
+    .replace(/^AI (drama|episode) cover attempt failed:\s*/i, "快手 AI 封面生成失败，准备重试：")
+    .replace(/^AI (drama|episode) cover ready:\s*/i, "快手 AI 封面已准备：")
+    .replace(/^unified cover files ready:\s*/i, "快手统一横竖封面已准备：")
     .replace(/^task has no baidu netdisk resource; download check skipped$/i, "任务未配置网盘素材，已跳过下载")
     .replace(/^ensuring baidu netdisk resource(?::\s*)?/i, "正在准备网盘素材：")
     .replace(/^baidu netdisk resource ready(?::\s*)?/i, "网盘素材已就绪：")

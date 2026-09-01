@@ -1,9 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import {
-  cleanupEpisodeUploadFiles,
-  prepareEpisodeUploadFiles,
-} from "@drama/drama-media-assets";
+import { prepareEpisodeUploadFiles } from "@drama/drama-media-assets";
 import type { Page } from "playwright";
 import type { BaiduDramaRuntimeOptions, ClaimedBaiduDramaTask } from "../shared/types.js";
 import { baiduDramaLocalRoot, baiduDramaResourceName } from "../shared/resources.js";
@@ -274,92 +271,88 @@ async function uploadEpisodes(
       uploadRootDir,
       uploadBaseName: task.playlet.title,
     }));
-  try {
-    const uploadPanel = await runAction("点击上传短剧并等待本地上传面板", async () => {
-      const uploadButton = page
-        .getByRole("button", { name: "上传短剧", exact: true })
-        .filter({ visible: true })
-        .first();
-      await uploadButton.waitFor({ state: "visible", timeout: 15_000 });
-      await uploadButton.click();
+  const uploadPanel = await runAction("点击上传短剧并等待本地上传面板", async () => {
+    const uploadButton = page
+      .getByRole("button", { name: "上传短剧", exact: true })
+      .filter({ visible: true })
+      .first();
+    await uploadButton.waitFor({ state: "visible", timeout: 15_000 });
+    await uploadButton.click();
 
-      const panel = page
-        .locator('[role="tabpanel"][aria-hidden="false"]')
-        .filter({ has: page.getByText("本地上传", { exact: true }) })
-        .first();
-      await panel.waitFor({ state: "visible", timeout: 15_000 });
-      await panel
-        .locator('input[type="file"][multiple][accept*=".mp4"]')
-        .first()
-        .waitFor({ state: "attached", timeout: 15_000 });
-      return panel;
-    });
-    await runAction(`选择并上传剧集视频=${prepared.files.length}个文件`, async () => {
-      const videoInput = uploadPanel
-        .locator('input[type="file"][multiple][accept*=".mp4"]')
-        .first();
-      await videoInput.setInputFiles(prepared.files, { timeout: 120_000 });
-      await page.waitForTimeout(500);
-      await assertNoBaiduFormError(page, "上传剧集视频");
-    });
-    const timeout = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
-    await runAction(`等待${prepared.files.length}集上传完成，超时=${timeout / 60_000}分钟`, async () => {
-      const expectedCount = prepared.files.length;
-      const deadline = Date.now() + timeout;
-      let lastStatus = "";
+    const panel = page
+      .locator('[role="tabpanel"][aria-hidden="false"]')
+      .filter({ has: page.getByText("本地上传", { exact: true }) })
+      .first();
+    await panel.waitFor({ state: "visible", timeout: 15_000 });
+    await panel
+      .locator('input[type="file"][multiple][accept*=".mp4"]')
+      .first()
+      .waitFor({ state: "attached", timeout: 15_000 });
+    return panel;
+  });
+  await runAction(`选择并上传剧集视频=${prepared.files.length}个文件`, async () => {
+    const videoInput = uploadPanel
+      .locator('input[type="file"][multiple][accept*=".mp4"]')
+      .first();
+    await videoInput.setInputFiles(prepared.files, { timeout: 120_000 });
+    await page.waitForTimeout(500);
+    await assertNoBaiduFormError(page, "上传剧集视频");
+  });
+  const timeout = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
+  await runAction(`等待${prepared.files.length}集上传完成，超时=${timeout / 60_000}分钟`, async () => {
+    const expectedCount = prepared.files.length;
+    const deadline = Date.now() + timeout;
+    let lastStatus = "";
 
-      while (Date.now() < deadline) {
-        await assertNoBaiduFormError(page, "等待剧集上传完成");
+    while (Date.now() < deadline) {
+      await assertNoBaiduFormError(page, "等待剧集上传完成");
 
-        const episodeCards = page
-          .locator('div[class*="-selfVideo"]')
-          .filter({ has: page.locator('div[class*="-num"]') });
-        const totalCount = await episodeCards.count();
-        const completedCount = await episodeCards
-          .filter({ has: page.getByText("改剧集", { exact: true }) })
-          .count();
-        const uploadingCount = await episodeCards
-          .filter({ has: page.locator('[role="progressbar"]') })
-          .count();
-        const waitingCount = Math.max(0, totalCount - completedCount - uploadingCount);
-        const failedCards = await episodeCards
-          .filter({ hasText: /上传失败|处理失败|转码失败|上传异常/ })
-          .allInnerTexts();
-        if (failedCards.length > 0) {
-          throw new Error(
-            `BAIDU_DRAMA_EPISODE_UPLOAD_FAILED: ${failedCards
-              .map((text) => text.replace(/\s+/g, " ").trim())
-              .join("；")}`,
-          );
-        }
-
-        const status =
-          `已出现=${totalCount}/${expectedCount}，已完成=${completedCount}/${expectedCount}，` +
-          `上传中=${uploadingCount}，等待中=${waitingCount}`;
-        if (status !== lastStatus) {
-          lastStatus = status;
-          log(options, `[baidu-drama] 剧集上传进度：${status}`, undefined, "automation");
-        }
-        if (
-          totalCount === expectedCount &&
-          completedCount === expectedCount &&
-          uploadingCount === 0
-        ) {
-          await assertNoBaiduFormError(page, "剧集全部上传完成");
-          return;
-        }
-
-        await page.waitForTimeout(episodeUploadPollIntervalMs);
+      const episodeCards = page
+        .locator('div[class*="-selfVideo"]')
+        .filter({ has: page.locator('div[class*="-num"]') });
+      const totalCount = await episodeCards.count();
+      const completedCount = await episodeCards
+        .filter({ has: page.getByText("改剧集", { exact: true }) })
+        .count();
+      const uploadingCount = await episodeCards
+        .filter({ has: page.locator('[role="progressbar"]') })
+        .count();
+      const waitingCount = Math.max(0, totalCount - completedCount - uploadingCount);
+      const failedCards = await episodeCards
+        .filter({ hasText: /上传失败|处理失败|转码失败|上传异常/ })
+        .allInnerTexts();
+      if (failedCards.length > 0) {
+        throw new Error(
+          `BAIDU_DRAMA_EPISODE_UPLOAD_FAILED: ${failedCards
+            .map((text) => text.replace(/\s+/g, " ").trim())
+            .join("；")}`,
+        );
       }
 
-      throw new Error(
-        `BAIDU_DRAMA_EPISODE_UPLOAD_TIMEOUT: timeoutMinutes=${timeout / 60_000}；` +
-          (lastStatus || `未检测到剧集卡片，期望=${prepared.files.length}`),
-      );
-    });
-  } finally {
-    await runAction("清理剧集上传临时文件", () => cleanupEpisodeUploadFiles(prepared));
-  }
+      const status =
+        `已出现=${totalCount}/${expectedCount}，已完成=${completedCount}/${expectedCount}，` +
+        `上传中=${uploadingCount}，等待中=${waitingCount}`;
+      if (status !== lastStatus) {
+        lastStatus = status;
+        log(options, `[baidu-drama] 剧集上传进度：${status}`, undefined, "automation");
+      }
+      if (
+        totalCount === expectedCount &&
+        completedCount === expectedCount &&
+        uploadingCount === 0
+      ) {
+        await assertNoBaiduFormError(page, "剧集全部上传完成");
+        return;
+      }
+
+      await page.waitForTimeout(episodeUploadPollIntervalMs);
+    }
+
+    throw new Error(
+      `BAIDU_DRAMA_EPISODE_UPLOAD_TIMEOUT: timeoutMinutes=${timeout / 60_000}；` +
+        (lastStatus || `未检测到剧集卡片，期望=${prepared.files.length}`),
+    );
+  });
 }
 
 export async function runBaiduDramaPublishTask(

@@ -1,9 +1,9 @@
-import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
-import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import {
-  filterVideoAccountsByContractSubjects,
-  type ServiceConfig,
-} from "../shared/config.js";
+  fetchWechatMiniProgramAccountsApi,
+  type WechatMiniProgramAccount,
+} from "../api/mini-program-accounts.js";
+import { BrowserContextManager } from "../automation/browser-context-manager.js";
+import type { ServiceConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
 import { TaskWorkerPool } from "./task-worker-pool.js";
 
@@ -43,20 +43,16 @@ export class VideoAccountSyncService {
     this.syncing = true;
 
     try {
-      const allVideoAccounts = await fetchVideoAccountsApi();
-      const videoAccounts = filterVideoAccountsByContractSubjects(
-        allVideoAccounts,
-        this.serviceConfig.videoAccountContractSubjects,
-      );
+      const videoAccounts = await fetchWechatMiniProgramAccountsApi();
       this.validateVideoAccounts(videoAccounts);
       const changes = this.browserContexts.syncVideoAccounts(videoAccounts);
       this.taskWorkerPool.syncVideoAccounts(videoAccounts);
+      await this.browserContexts.closeRemovedVideoAccounts(changes.removed);
       this.serviceConfig.videoAccounts = videoAccounts;
       this.idlePageRefreshService?.syncVideoAccounts();
       logger.info("synced video accounts", {
-        selectedContractSubjects: this.serviceConfig.videoAccountContractSubjects,
-        totalCount: allVideoAccounts.length,
-        filteredCount: videoAccounts.length,
+        accountCount: videoAccounts.length,
+        source: "wechat-mini-program-account-api",
       });
 
       if (changes.added.length || changes.removed.length || changes.renamed.length) {
@@ -81,7 +77,7 @@ export class VideoAccountSyncService {
     }
   }
 
-  private validateVideoAccounts(videoAccounts: VideoAccount[]): void {
+  private validateVideoAccounts(videoAccounts: WechatMiniProgramAccount[]): void {
     const accountIds = videoAccounts.map((account) => account.id);
     if (new Set(accountIds).size !== accountIds.length) {
       throw new Error("Video account list must not contain duplicate account ids.");

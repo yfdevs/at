@@ -23,9 +23,11 @@ export const selectors = {
   recommendation: `${rootSelector} input[placeholder="选填，请给出剧目推荐理由，该内容后续将在特定场景向用户展示"]`,
   episodeCount: `${rootSelector} input[placeholder="请填写待提审剧目的总剧集数量（注：提交审核后不支持变更剧集数量）"]`,
   previewEpisodeCount: `${rootSelector} input[placeholder="请填写试看集数"]`,
-  producerName: `${rootSelector} input[placeholder="请填写待提审剧目的制作方主体名称"]`,
+  producerName: [
+    `${rootSelector} input[placeholder="请填写待提审剧目的制作方主体名称"]`,
+    `${rootSelector} textarea[placeholder="请填写待提审剧目的制作方主体名称"]`,
+  ].join(", "),
   qualificationNumber: `${rootSelector} input[placeholder="请填写网络剧片发行许可证号或16位备案号"]`,
-  agreement: `${rootSelector} .form_footer input[type="checkbox"]`,
 } as const;
 
 export const monetizationValues: Record<Monetization, string> = {

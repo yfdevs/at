@@ -131,7 +131,7 @@ export const platformNavigation: PlatformNavigationItem[] = [
     routePrefix: "wechat-miniprogram-drama",
     serviceRoute: "wechat-miniprogram-drama/service",
     configRoute: "wechat-miniprogram-drama/config",
-    logoSrc: `${import.meta.env.BASE_URL}wx.svg`,
+    logoSrc: `${import.meta.env.BASE_URL}wechat-miniprogram.svg`,
   },
   {
     id: "meituan-drama",

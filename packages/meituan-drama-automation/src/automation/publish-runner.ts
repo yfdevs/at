@@ -1,8 +1,7 @@
 import type { BrowserContext, Page } from "playwright";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
-import { MEITUAN_CREATION_PUBLISH_VIDEO_URL } from "../shared/constants.js";
 import type { ClaimedMeituanDramaTask, MeituanCreationRuntimeOptions } from "../shared/types.js";
-import { log, saveCredentialState, waitForLogin } from "./browser-session.js";
+import { log, saveCredentialState, waitForPublishPageReady } from "./browser-session.js";
 import {
   getMeituanLocalEpisodeVideoRoot,
   getMeituanOriginalTitle,
@@ -83,21 +82,7 @@ async function openPublishPage(
   options: MeituanCreationRuntimeOptions,
 ) {
   log(options, "[meituan-drama] opening publish page");
-  await page.goto(MEITUAN_CREATION_PUBLISH_VIDEO_URL, {
-    waitUntil: "domcontentloaded",
-    timeout: 60_000,
-  });
-  await waitForLogin(page, options);
-
-  if (!page.url().includes("/new/publishVideo")) {
-    await page.goto(MEITUAN_CREATION_PUBLISH_VIDEO_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    });
-  }
-
-  await page.waitForLoadState("networkidle", { timeout: 30_000 }).catch(() => undefined);
-  await page.getByText("发布至合集").waitFor({ state: "visible", timeout: 60_000 });
+  await waitForPublishPageReady(page, options);
   await saveCredentialState(context, options);
 }
 

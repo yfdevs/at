@@ -109,9 +109,11 @@ const defaultConfig: BaiduDramaConfig = {
 
 const runtimeController = new RuntimeController<BaiduDramaRuntime>();
 const baiduAiCoverTemporaryFilePattern = /^\.generated-(?:landscape|portrait)-\d+-\d+\.image$/;
+const baiduEpisodeUploadDirectoryPattern = /^episode-upload-\d+$/;
 const baiduAiCoverTemporaryFileRetentionMs = 24 * 60 * 60 * 1_000;
+const baiduEpisodeUploadRetentionBufferMinutes = 60;
 let store: Store<BaiduDramaStore> | null = null;
-let aiCoverTemporaryFileCleanupTask: ScheduledTask | null = null;
+let temporaryAssetCleanupTask: ScheduledTask | null = null;
 
 function getStore() {
   store ??= new Store<BaiduDramaStore>({
@@ -200,10 +202,23 @@ function isMissingPathError(error: unknown) {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
 }
 
-async function removeBaiduAiCoverTemporaryFile(file: string) {
+async function latestModifiedAtMs(target: string): Promise<number> {
+  const targetStat = await lstat(target);
+  let latest = targetStat.mtimeMs;
+  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest;
+
+  const entries = await readdir(target, { withFileTypes: true });
+  for (const entry of entries) {
+    if (entry.isSymbolicLink()) continue;
+    latest = Math.max(latest, await latestModifiedAtMs(path.join(target, entry.name)));
+  }
+  return latest;
+}
+
+async function removeBaiduTemporaryAsset(target: string, recursive = false) {
   for (let attempt = 1; attempt <= 5; attempt += 1) {
     try {
-      await rm(file, { force: true });
+      await rm(target, { recursive, force: true });
       return;
     } catch (error) {
       const code = (error as NodeJS.ErrnoException)?.code;
@@ -216,44 +231,154 @@ async function removeBaiduAiCoverTemporaryFile(file: string) {
   }
 }
 
-async function cleanupStaleBaiduAiCoverTemporaryFiles(now = new Date()) {
-  const assetsRoot = path.resolve(resolveFromAppRoot(readConfig().runDataDir), "assets");
-  const cutoffMs = now.getTime() - baiduAiCoverTemporaryFileRetentionMs;
-  const accountEntries = await readdir(assetsRoot, { withFileTypes: true }).catch((error: unknown) => {
+function safeDirectChild(root: string, entryName: string) {
+  const target = path.resolve(root, entryName);
+  const relative = path.relative(root, target);
+  if (
+    relative !== entryName
+    || relative.startsWith("..")
+    || path.isAbsolute(relative)
+  ) {
+    return null;
+  }
+  return target;
+}
+
+async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
+  const config = readConfig();
+  const assetsRoot = path.resolve(resolveFromAppRoot(config.runDataDir), "assets");
+  const uploadTimeoutMinutes = Math.max(
+    1,
+    Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
+  );
+  const episodeUploadRetentionMinutes =
+    uploadTimeoutMinutes + baiduEpisodeUploadRetentionBufferMinutes;
+  const episodeUploadCutoffMs = now.getTime() - episodeUploadRetentionMinutes * 60_000;
+  const aiCoverCutoffMs = now.getTime() - baiduAiCoverTemporaryFileRetentionMs;
+  const rootEntries = await readdir(assetsRoot, { withFileTypes: true }).catch((error: unknown) => {
     if (isMissingPathError(error)) return [];
     throw error;
   });
-  let deletedCount = 0;
+  const accountAssetRoots: string[] = [];
+  const episodeUploadDirectories: string[] = [];
+  let deletedFileCount = 0;
+  let deletedDirectoryCount = 0;
   let failedCount = 0;
 
-  for (const accountEntry of accountEntries) {
-    if (!accountEntry.isDirectory() || accountEntry.isSymbolicLink()) continue;
-    const cacheRoot = path.join(assetsRoot, accountEntry.name, "ai-cover-cache");
+  for (const rootEntry of rootEntries) {
+    if (!rootEntry.isDirectory() || rootEntry.isSymbolicLink()) continue;
+    const rootDirectory = safeDirectChild(assetsRoot, rootEntry.name);
+    if (!rootDirectory) continue;
+
+    // Older versions wrote upload directories directly below assets. Current
+    // versions place them below an account directory; both layouts are supported.
+    if (baiduEpisodeUploadDirectoryPattern.test(rootEntry.name)) {
+      episodeUploadDirectories.push(rootDirectory);
+      continue;
+    }
+
+    accountAssetRoots.push(rootDirectory);
+    const accountAssetEntries = await readdir(rootDirectory, { withFileTypes: true })
+      .catch((error: unknown) => {
+        if (isMissingPathError(error)) return [];
+        failedCount += 1;
+        baiduDramaPlatformLogger("storage").warn("账号临时素材目录扫描失败，已忽略", {
+          path: rootDirectory,
+          error,
+        });
+        return [];
+      });
+    for (const entry of accountAssetEntries) {
+      if (
+        !entry.isDirectory()
+        || entry.isSymbolicLink()
+        || !baiduEpisodeUploadDirectoryPattern.test(entry.name)
+      ) {
+        continue;
+      }
+
+      const uploadDirectory = safeDirectChild(rootDirectory, entry.name);
+      if (uploadDirectory) episodeUploadDirectories.push(uploadDirectory);
+    }
+  }
+
+  for (const uploadDirectory of episodeUploadDirectories) {
+    const modifiedAtMs = await latestModifiedAtMs(uploadDirectory).catch((error: unknown) => {
+      if (isMissingPathError(error)) return now.getTime();
+      failedCount += 1;
+      baiduDramaPlatformLogger("storage").warn("剧集上传临时目录检查失败，已忽略", {
+        path: uploadDirectory,
+        error,
+      });
+      return now.getTime();
+    });
+    if (modifiedAtMs > episodeUploadCutoffMs) continue;
+
+    try {
+      await removeBaiduTemporaryAsset(uploadDirectory, true);
+      deletedDirectoryCount += 1;
+    } catch (error) {
+      failedCount += 1;
+      baiduDramaPlatformLogger("storage").warn("剧集上传临时目录清理失败，已忽略", {
+        path: uploadDirectory,
+        error,
+      });
+    }
+  }
+
+  for (const accountAssetRoot of accountAssetRoots) {
+    const cacheRoot = path.join(accountAssetRoot, "ai-cover-cache");
     const cacheRootStat = await lstat(cacheRoot).catch((error: unknown) => {
       if (isMissingPathError(error)) return undefined;
-      throw error;
+      failedCount += 1;
+      baiduDramaPlatformLogger("storage").warn("AI封面缓存目录检查失败，已忽略", {
+        path: cacheRoot,
+        error,
+      });
+      return undefined;
     });
     if (!cacheRootStat?.isDirectory() || cacheRootStat.isSymbolicLink()) continue;
 
-    const cacheEntries = await readdir(cacheRoot, { withFileTypes: true });
+    const cacheEntries = await readdir(cacheRoot, { withFileTypes: true }).catch((error: unknown) => {
+      if (isMissingPathError(error)) return [];
+      failedCount += 1;
+      baiduDramaPlatformLogger("storage").warn("AI封面缓存目录扫描失败，已忽略", {
+        path: cacheRoot,
+        error,
+      });
+      return [];
+    });
     for (const cacheEntry of cacheEntries) {
       if (!cacheEntry.isDirectory() || cacheEntry.isSymbolicLink()) continue;
-      const cacheDirectory = path.join(cacheRoot, cacheEntry.name);
-      const entries = await readdir(cacheDirectory, { withFileTypes: true });
+      const cacheDirectory = safeDirectChild(cacheRoot, cacheEntry.name);
+      if (!cacheDirectory) continue;
+      const entries = await readdir(cacheDirectory, { withFileTypes: true }).catch((error: unknown) => {
+        if (isMissingPathError(error)) return [];
+        failedCount += 1;
+        baiduDramaPlatformLogger("storage").warn("AI封面缓存子目录扫描失败，已忽略", {
+          path: cacheDirectory,
+          error,
+        });
+        return [];
+      });
       for (const entry of entries) {
         if (!entry.isFile() || !baiduAiCoverTemporaryFilePattern.test(entry.name)) continue;
-        const file = path.resolve(cacheDirectory, entry.name);
-        const relativeFile = path.relative(assetsRoot, file);
-        if (!relativeFile || relativeFile.startsWith("..") || path.isAbsolute(relativeFile)) continue;
+        const file = safeDirectChild(cacheDirectory, entry.name);
+        if (!file) continue;
         const fileStat = await stat(file).catch((error: unknown) => {
           if (isMissingPathError(error)) return undefined;
-          throw error;
+          failedCount += 1;
+          baiduDramaPlatformLogger("storage").warn("AI封面临时文件检查失败，已忽略", {
+            path: file,
+            error,
+          });
+          return undefined;
         });
-        if (!fileStat?.isFile() || fileStat.mtimeMs > cutoffMs) continue;
+        if (!fileStat?.isFile() || fileStat.mtimeMs > aiCoverCutoffMs) continue;
 
         try {
-          await removeBaiduAiCoverTemporaryFile(file);
-          deletedCount += 1;
+          await removeBaiduTemporaryAsset(file);
+          deletedFileCount += 1;
         } catch (error) {
           failedCount += 1;
           baiduDramaPlatformLogger("storage").warn("AI封面临时文件清理失败，已忽略", {
@@ -265,28 +390,34 @@ async function cleanupStaleBaiduAiCoverTemporaryFiles(now = new Date()) {
     }
   }
 
-  baiduDramaPlatformLogger("storage").info("AI封面临时文件清理完成", {
-    deletedCount,
+  baiduDramaPlatformLogger("storage").info("临时文件定时清理完成", {
+    scannedDirectoryCount: episodeUploadDirectories.length,
+    deletedFileCount,
+    deletedDirectoryCount,
     failedCount,
+    episodeUploadRetentionMinutes,
+    aiCoverRetentionHours: baiduAiCoverTemporaryFileRetentionMs / 3_600_000,
   });
 }
 
-function scheduleBaiduAiCoverTemporaryFileCleanup() {
-  if (aiCoverTemporaryFileCleanupTask) return;
+function scheduleBaiduTemporaryAssetCleanup() {
+  if (temporaryAssetCleanupTask) return;
 
-  const runCleanup = () => cleanupStaleBaiduAiCoverTemporaryFiles().catch((error: unknown) => {
-    baiduDramaPlatformLogger("storage").error("AI封面临时文件定时清理失败", { error });
+  const runCleanup = () => cleanupStaleBaiduTemporaryAssets().catch((error: unknown) => {
+    baiduDramaPlatformLogger("storage").warn("临时文件定时清理失败，已忽略", { error });
   });
-  aiCoverTemporaryFileCleanupTask = cron.schedule("0 1 * * *", runCleanup, {
-    name: "baidu-ai-cover-temporary-file-cleanup",
+  temporaryAssetCleanupTask = cron.schedule("0 * * * *", runCleanup, {
+    name: "baidu-temporary-asset-cleanup",
     timezone: "Asia/Shanghai",
     noOverlap: true,
     unref: true,
   });
   void runCleanup();
-  baiduDramaPlatformLogger("storage").info("AI封面临时文件定时清理已启用", {
-    retention: "24小时",
-    schedule: "每天 01:00",
+  baiduDramaPlatformLogger("storage").info("临时文件定时清理已启用", {
+    targets: "AI封面原图、剧集上传临时目录",
+    episodeUploadRetention: `上传超时+${baiduEpisodeUploadRetentionBufferMinutes}分钟`,
+    aiCoverRetention: "24小时",
+    schedule: "程序启动时、每小时整点",
   });
 }
 
@@ -446,7 +577,7 @@ export function openBaiduDramaLogDir() {
 }
 
 export function registerBaiduDramaPlatformHandlers() {
-  scheduleBaiduAiCoverTemporaryFileCleanup();
+  scheduleBaiduTemporaryAssetCleanup();
 
   ipcMain.handle("baidu-drama:config:get", () => ({
     config: readConfig(),

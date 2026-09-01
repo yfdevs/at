@@ -10,6 +10,7 @@ import {
   type IqiyiDramaType,
   iqiyiContentSourceValues,
 } from "../shared/types.js";
+import { ensureIqiyiMockAssets, iqiyiMockAssetPaths } from "../shared/mock-assets.js";
 
 export type IqiyiDramaTaskApiEndpoints = {
   accountTaskPage: string;
@@ -262,6 +263,7 @@ export function createMockIqiyiDramaTask(
   const accountId = runtimeOptions.iqiyiAccountId?.trim() || "iqiyi-drama-test-account";
   const accountName = runtimeOptions.iqiyiAccountName?.trim() || "爱奇艺漫剧测试账号";
   const originalTitle = "赶海救下美人鱼，她让整片大海来报恩";
+  const mockAssets = iqiyiMockAssetPaths(runtimeOptions);
 
   return normalizeClaimedTask(
     {
@@ -278,8 +280,8 @@ export function createMockIqiyiDramaTask(
           + "链接: https://pan.baidu.com/s/1DqxBmsaWkLKKol5uHKxDNQ?pwd=hm6f 提取码: hm6f",
         producerName: "明星说（北京）科技有限公司",
         copyright: {
-          productionProofFiles: [],
-          licenseProofFiles: [],
+          productionProofFiles: [mockAssets.productionContract],
+          licenseProofFiles: [mockAssets.copyrightProof],
         },
         iqiyiPlaylet: {
           dramaType: "comic-drama",
@@ -319,6 +321,7 @@ export async function claimNextIqiyiDramaTaskApi(
   options: ClaimNextIqiyiDramaTaskOptions,
 ): Promise<ClaimedIqiyiDramaTask | null> {
   if (mockTaskClaimed) return null;
+  ensureIqiyiMockAssets(options.runtimeOptions);
   mockTaskClaimed = true;
   return createMockIqiyiDramaTask(options.runtimeOptions);
 }

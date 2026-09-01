@@ -8,7 +8,7 @@ import {
   readImageDimensions,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
-import { log, warn } from "./logger.js";
+import { log } from "./logger.js";
 import type { BaiduDramaRuntimeOptions, ClaimedBaiduDramaTask } from "./types.js";
 
 export const BAIDU_DRAMA_LANDSCAPE_COVER_SIZE = {
@@ -25,48 +25,6 @@ type BaiduCoverKind = "landscape" | "portrait";
 
 const baiduAiCoverPromptVersion = "baidu-counterpart-cover-v1";
 const activeAiCoverGenerations = new Map<string, Promise<string>>();
-
-type BaiduAiCoverTemporaryFileCleanupOptions = {
-  maxAttempts?: number;
-  onWarning?: (message: string) => void;
-  removeFile?: (file: string) => Promise<void>;
-  wait?: (delayMs: number) => Promise<void>;
-};
-
-export async function cleanupBaiduAiCoverTemporaryFile(
-  file: string,
-  options: BaiduAiCoverTemporaryFileCleanupOptions = {},
-) {
-  const maxAttempts = Math.max(1, Math.floor(options.maxAttempts ?? 5));
-  const removeFile = options.removeFile ?? ((target) => rm(target, { force: true }));
-  const wait = options.wait ?? ((delayMs) => new Promise<void>((resolve) => {
-    setTimeout(resolve, delayMs);
-  }));
-  let lastError: unknown;
-
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await removeFile(file);
-      return true;
-    } catch (error) {
-      const code = (error as NodeJS.ErrnoException)?.code;
-      if (code === "ENOENT") return true;
-      lastError = error;
-      if (!["EBUSY", "EACCES", "EPERM"].includes(code ?? "") || attempt >= maxAttempts) {
-        break;
-      }
-      await wait(attempt * 200).catch(() => undefined);
-    }
-  }
-
-  const message = lastError instanceof Error ? lastError.message : String(lastError);
-  try {
-    options.onWarning?.(`AI封面临时文件清理失败，已忽略并等待定时清理：${file}；错误=${message}`);
-  } catch {
-    // Cleanup diagnostics must never change the task result.
-  }
-  return false;
-}
 
 const baiduCoverDetails = {
   landscape: {
@@ -182,7 +140,6 @@ async function generateMissingBaiduCover(options: {
   aiImageModel: string;
   getAiClient: () => DramaAiClient;
   onLog?: (message: string) => void;
-  onWarn?: (message: string) => void;
 }) {
   const reference = await readFile(options.referenceFile);
   const cacheKey = createHash("sha256")
@@ -223,21 +180,15 @@ async function generateMissingBaiduCover(options: {
       cacheDirectory,
       `.generated-${options.kind}-${process.pid}-${Date.now()}.image`,
     );
-    try {
-      await writeFile(temporarySource, Buffer.from(generated.data));
-      await prepareCroppedImageVariant({
-        inputFile: temporarySource,
-        outputFile: output,
-        ...baiduCoverDetails[options.kind].target,
-        jpegQuality: 92,
-        maxFileBytes: 4_700_000,
-        onLog: options.onLog,
-      });
-    } finally {
-      await cleanupBaiduAiCoverTemporaryFile(temporarySource, {
-        onWarning: options.onWarn,
-      });
-    }
+    await writeFile(temporarySource, Buffer.from(generated.data));
+    await prepareCroppedImageVariant({
+      inputFile: temporarySource,
+      outputFile: output,
+      ...baiduCoverDetails[options.kind].target,
+      jpegQuality: 92,
+      maxFileBytes: 4_700_000,
+      onLog: options.onLog,
+    });
     options.onLog?.(`[baidu-cover-ai] AI ${baiduCoverDetails[options.kind].label}封面已生成：${output}`);
     return output;
   })().finally(() => {
@@ -257,7 +208,6 @@ export async function prepareBaiduDramaCoverVariants(options: {
   aiImageModel?: string;
   createAiClient?: () => DramaAiClient;
   onLog?: (message: string) => void;
-  onWarn?: (message: string) => void;
 }) {
   await rm(options.outputDir, { recursive: true, force: true });
   const aiCacheDir = options.aiCacheDir ?? path.join(path.dirname(options.outputDir), "ai-cover-cache");
@@ -284,7 +234,6 @@ export async function prepareBaiduDramaCoverVariants(options: {
       aiImageModel: aiImageModel!,
       getAiClient,
       onLog: options.onLog,
-      onWarn: options.onWarn,
     });
   } else if (!portraitSourceFile && landscapeSourceFile) {
     portraitSourceFile = await generateMissingBaiduCover({
@@ -296,7 +245,6 @@ export async function prepareBaiduDramaCoverVariants(options: {
       aiImageModel: aiImageModel!,
       getAiClient,
       onLog: options.onLog,
-      onWarn: options.onWarn,
     });
   } else if (!landscapeSourceFile && !portraitSourceFile) {
     [landscapeSourceFile, portraitSourceFile] = await Promise.all([
@@ -309,7 +257,6 @@ export async function prepareBaiduDramaCoverVariants(options: {
         aiImageModel: aiImageModel!,
         getAiClient,
         onLog: options.onLog,
-        onWarn: options.onWarn,
       }),
       generateMissingBaiduCover({
         referenceFile: options.sourceFile,
@@ -320,7 +267,6 @@ export async function prepareBaiduDramaCoverVariants(options: {
         aiImageModel: aiImageModel!,
         getAiClient,
         onLog: options.onLog,
-        onWarn: options.onWarn,
       }),
     ]);
   }
@@ -425,8 +371,6 @@ export async function prepareBaiduDramaResources(
   );
   const onResizeLog = (message: string) =>
     log(options, `[baidu-drama] ${message}`, undefined, "resources");
-  const onResizeWarn = (message: string) =>
-    warn(options, `[baidu-drama] ${message}`, undefined, "resources");
   const { landscape, portrait } = await prepareBaiduDramaCoverVariants({
     sourceFile: coverSource.file,
     landscapeSourceFile: landscapeSource?.file,
@@ -440,7 +384,6 @@ export async function prepareBaiduDramaResources(
     aiImageModel: options.aiImageModel,
     createAiClient: options.createAiClient,
     onLog: onResizeLog,
-    onWarn: onResizeWarn,
   });
   task.playlet.localCoverFile = landscape.file;
   task.playlet.localLandscapeCoverFile = landscape.file;

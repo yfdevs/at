@@ -19,6 +19,30 @@ import { cleanupWechatProductionProofMaterials } from "../shared/production-proo
 
 const publishLogger = createLogger("publish");
 
+function errorMessage(error: unknown): string {
+  return error instanceof Error ? error.message : String(error);
+}
+
+async function runLoggedStep<T>(step: string, action: () => Promise<T>): Promise<T> {
+  const startedAt = Date.now();
+  publishLogger.info("自动化步骤开始", { step });
+  try {
+    const result = await action();
+    publishLogger.info("自动化步骤完成", {
+      step,
+      durationMs: Date.now() - startedAt,
+    });
+    return result;
+  } catch (error) {
+    publishLogger.error("自动化步骤失败", {
+      step,
+      durationMs: Date.now() - startedAt,
+      errorMessage: errorMessage(error),
+    });
+    throw error;
+  }
+}
+
 function shouldCloseFailedTaskPages(): boolean {
   return booleanSetting(getWechatMiniProgramRuntimeSettings().closeFailedTaskPages);
 }
@@ -26,6 +50,8 @@ function shouldCloseFailedTaskPages(): boolean {
 function getBasicInfoStepTimeoutMs(): number {
   return secondsSettingToMs(getWechatMiniProgramRuntimeSettings().basicInfoStepTimeoutSeconds, 600);
 }
+
+const episodeSelectionStepTimeoutMs = 5 * 60 * 1000;
 
 async function runStepWithTimeout<T>(
   name: string,
@@ -109,11 +135,13 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
 
   try {
     try {
-      await page.goto(playletUrl, { waitUntil: "domcontentloaded" });
-      const loggedIn = await waitForLoginIfNeeded(page);
-      if (loggedIn && runOptions.channelId) {
-        publishLogger.info("登录状态已保存", { accountId: runOptions.channelId });
-      }
+      await runLoggedStep("打开小程序管理后台并确认登录", async () => {
+        await page.goto(playletUrl, { waitUntil: "domcontentloaded" });
+        const loggedIn = await waitForLoginIfNeeded(page);
+        if (loggedIn && runOptions.channelId) {
+          publishLogger.info("登录状态已保存", { accountId: runOptions.channelId });
+        }
+      });
     } catch (error) {
       throw attachFailStage(error, "LOGIN");
     }
@@ -126,41 +154,66 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
       throw new Error("playletConfig or dramaAiRpaId is required to start a run task.");
     }
 
-    publishLogger.info("开始上传剧集到微信小程序素材库");
+    publishLogger.info("小程序发布流程开始", {
+      title: playletConfig.playlet.name,
+      episodeCount: playletConfig.playlet.episodeCount,
+      mode: runOptions.mode,
+    });
     try {
-      await uploadEpisodeFilesStep(page, playletConfig, {
-        episodeVideos: runOptions.preparedEpisodeVideos,
-        videoAccountLabel: runOptions.channelId
-          ? `videoAccountId=${runOptions.channelId} name=${runOptions.videoAccountName ?? runOptions.channelId}`
-          : undefined,
-      });
+      await runLoggedStep(
+        "上传剧集到微信小程序素材库",
+        () => uploadEpisodeFilesStep(page, playletConfig, {
+          episodeVideos: runOptions.preparedEpisodeVideos,
+          videoAccountLabel: runOptions.channelId
+            ? `videoAccountId=${runOptions.channelId} name=${runOptions.videoAccountName ?? runOptions.channelId}`
+            : undefined,
+        }),
+      );
     } catch (error) {
       throw attachFailStage(error, "UPLOAD_FILE");
     }
 
-    publishLogger.info("开始填写剧目信息");
     try {
-      await runStepWithTimeout(
-        "fillBasicInfoStep",
-        getBasicInfoStepTimeoutMs(),
-        () => fillBasicInfoStep(page, playletConfig),
-        () => closeTimedOutTaskPage(page, "fillBasicInfoStep"),
+      await runLoggedStep(
+        "填写剧目信息",
+        () => runStepWithTimeout(
+          "fillBasicInfoStep",
+          getBasicInfoStepTimeoutMs(),
+          () => fillBasicInfoStep(page, playletConfig),
+          () => closeTimedOutTaskPage(page, "fillBasicInfoStep"),
+        ),
       );
     } catch (error) {
       throw attachFailStage(error, "FILL_FORM");
     }
-    publishLogger.info("开始从已上传文件库选择剧集");
     try {
-      await selectUploadedEpisodeFilesStep(page, playletConfig);
+      await runLoggedStep(
+        "从已上传文件库选择剧集",
+        () => runStepWithTimeout(
+          "selectUploadedEpisodeFilesStep",
+          episodeSelectionStepTimeoutMs,
+          () => selectUploadedEpisodeFilesStep(page, playletConfig),
+          () => closeTimedOutTaskPage(page, "selectUploadedEpisodeFilesStep"),
+        ),
+      );
     } catch (error) {
       throw attachFailStage(error, "UPLOAD_FILE");
     }
-    publishLogger.info("开始检查并提交");
     try {
-      await confirmAndMaybeSubmitStep(page);
+      await runLoggedStep("检查并提交审核", async () => {
+        if (playletConfig.mockTask) {
+          publishLogger.info("模拟任务已完成，跳过最终确认提审");
+        } else {
+          await confirmAndMaybeSubmitStep(page);
+        }
+      });
     } catch (error) {
       throw attachFailStage(error, "SUBMIT");
     }
+    publishLogger.info("小程序发布流程完成", {
+      title: playletConfig.playlet.name,
+      episodeCount: playletConfig.playlet.episodeCount,
+    });
   } catch (error) {
     failed = true;
     throw error;

@@ -3,7 +3,10 @@ import { getWechatMiniProgramRuntimeSettings } from "./runtime-settings.js";
 import { numberSetting, secondsSettingToMs } from "./settings-value.js";
 import type { ClaimedAccountTask, Config } from "./types.js";
 import { fetchDramaAiRpaDetailApi } from "../api/drama-ai-rpa.js";
-import { fetchVideoAccountsApi, type VideoAccount } from "../api/video-accounts.js";
+import {
+  fetchWechatMiniProgramAccountsApi,
+  type WechatMiniProgramAccount,
+} from "../api/mini-program-accounts.js";
 import { createLogger } from "./logger.js";
 
 const configLogger = createLogger("config");
@@ -28,70 +31,11 @@ const contractSubjectAliases: Record<string, string> = {
   "珍萃": "ZHENCUIYIHAO",
   "瑞小豆": "RUIXIAODOU",
 };
-// 兼容后端历史数据：contractSubject=0 表示未写入有效主体枚举，精确匹配不到时兜底使用。
-const legacyUnscopedContractSubjects = new Set(["0"]);
 export const mingxingshuoContractSubject = "MINGXINGSHUO";
 
 export function normalizeContractSubject(value: string): string {
   const trimmedValue = value.trim();
   return contractSubjectAliases[trimmedValue] ?? trimmedValue.toUpperCase();
-}
-
-function isLegacyUnscopedContractSubject(value: string | undefined): boolean {
-  return value ? legacyUnscopedContractSubjects.has(value.trim()) : false;
-}
-
-function parseContractSubjects(setting: string): Set<string> {
-  return new Set(
-    setting
-      .split(",")
-      .map(normalizeContractSubject)
-      .filter(Boolean),
-  );
-}
-
-export function filterVideoAccountsByContractSubjects(
-  videoAccounts: VideoAccount[],
-  contractSubjectsSetting = getWechatMiniProgramRuntimeSettings().videoAccountContractSubjects,
-): VideoAccount[] {
-  const contractSubjects = parseContractSubjects(contractSubjectsSetting);
-  const matchedAccounts = videoAccounts.filter((account) => (
-    account.contractSubject ? contractSubjects.has(normalizeContractSubject(account.contractSubject)) : false
-  ));
-
-  if (matchedAccounts.length > 0) {
-    return matchedAccounts;
-  }
-
-  const legacyUnscopedAccounts = videoAccounts.filter((account) => (
-    isLegacyUnscopedContractSubject(account.contractSubject)
-  ));
-  if (legacyUnscopedAccounts.length > 0) {
-    configLogger.warn("未找到完全匹配的主体，已使用未分组账号", {
-      selectedContractSubjects: Array.from(contractSubjects),
-      legacyUnscopedCount: legacyUnscopedAccounts.length,
-    });
-  }
-
-  return legacyUnscopedAccounts;
-}
-
-function summarizeContractSubjects(videoAccounts: VideoAccount[]): Array<{ raw: string; normalized: string; count: number }> {
-  const stats = new Map<string, { raw: string; normalized: string; count: number }>();
-
-  for (const account of videoAccounts) {
-    const raw = account.contractSubject?.trim() || "-";
-    const normalized = raw === "-" ? "-" : normalizeContractSubject(raw);
-    const key = `${raw}\u0000${normalized}`;
-    const current = stats.get(key);
-    if (current) {
-      current.count += 1;
-    } else {
-      stats.set(key, { raw, normalized, count: 1 });
-    }
-  }
-
-  return Array.from(stats.values());
 }
 
 export function resolveFromRoot(filePath: string): string {
@@ -104,8 +48,7 @@ export function resolveRunDataPath(...segments: string[]): string {
 }
 
 export interface ServiceConfig {
-  videoAccounts: VideoAccount[];
-  videoAccountContractSubjects: string;
+  videoAccounts: WechatMiniProgramAccount[];
   authRoot: string;
   browser: {
     headless: boolean;
@@ -128,21 +71,15 @@ export interface ServiceConfig {
 
 export async function loadServiceConfig(): Promise<ServiceConfig> {
   const settings = getWechatMiniProgramRuntimeSettings();
-  const allVideoAccounts = await fetchVideoAccountsApi();
-  const videoAccounts = filterVideoAccountsByContractSubjects(allVideoAccounts, settings.videoAccountContractSubjects);
+  const videoAccounts = await fetchWechatMiniProgramAccountsApi();
   const accountIds = videoAccounts.map((account) => account.id);
   configLogger.info("账号列表已更新", {
-    selectedContractSubjects: settings.videoAccountContractSubjects,
-    totalCount: allVideoAccounts.length,
-    filteredCount: videoAccounts.length,
-    contractSubjectStats: summarizeContractSubjects(allVideoAccounts),
+    accountCount: videoAccounts.length,
+    source: "wechat-mini-program-account-api",
   });
 
   if (videoAccounts.length === 0) {
-    const availableContractSubjects = Array.from(new Set(
-      allVideoAccounts.map((account) => account.contractSubject?.trim()).filter(Boolean),
-    ));
-    throw new Error(`Video account list must contain at least one account after contract subject filter: ${settings.videoAccountContractSubjects}; available contract subjects: ${availableContractSubjects.join(", ") || "-"}`);
+    throw new Error("微信小程序账号接口至少需要返回一个启用账号");
   }
   if (new Set(accountIds).size !== accountIds.length) {
     throw new Error("Video account list must not contain duplicate account ids.");
@@ -152,7 +89,6 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   }
   return {
     videoAccounts,
-    videoAccountContractSubjects: settings.videoAccountContractSubjects,
     authRoot: resolveRunDataPath("auth", "channels"),
     browser: {
       headless: serviceBrowserHeadless,
@@ -174,12 +110,35 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   };
 }
 
+function normalizeWechatAiContent(playletConfig: Config): Config {
+  const rawPlaylet = playletConfig.playlet as Config["playlet"] & {
+    aiContent?: unknown;
+    aiProductionProofFiles?: unknown;
+  };
+  const aiContent = typeof rawPlaylet.aiContent === "boolean" ? rawPlaylet.aiContent : true;
+  const aiProductionProofFiles = aiContent && Array.isArray(rawPlaylet.aiProductionProofFiles)
+    ? rawPlaylet.aiProductionProofFiles.filter(
+      (value): value is string => typeof value === "string" && Boolean(value.trim()),
+    )
+    : [];
+
+  return {
+    ...playletConfig,
+    playlet: {
+      ...rawPlaylet,
+      aiContent,
+      aiProductionProofFiles,
+    },
+  };
+}
+
 function validatePlayletConfig(playletConfig: Config, contractSubject?: string): Config {
-  if (!playletConfig.originalTitle) throw new Error("data.originalTitle is required");
-  if (!playletConfig.playlet?.name) throw new Error("data.playlet.name is required");
-  if (!playletConfig.playlet.summary) throw new Error("data.playlet.summary is required");
-  if (!playletConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
-  const productionProofFileCount = playletConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
+  const normalizedConfig = normalizeWechatAiContent(playletConfig);
+  if (!normalizedConfig.originalTitle) throw new Error("data.originalTitle is required");
+  if (!normalizedConfig.playlet?.name) throw new Error("data.playlet.name is required");
+  if (!normalizedConfig.playlet.summary) throw new Error("data.playlet.summary is required");
+  if (!normalizedConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
+  const productionProofFileCount = normalizedConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
   const isMingxingshuo = Boolean(
     contractSubject
     && normalizeContractSubject(contractSubject) === mingxingshuoContractSubject,
@@ -188,7 +147,7 @@ function validatePlayletConfig(playletConfig: Config, contractSubject?: string):
     throw new Error("data.playlet.copyright.productionProofFiles must contain at least 1 contract file.");
   }
 
-  return playletConfig;
+  return normalizedConfig;
 }
 
 function parseDataJson(dataJson: unknown): Config {
@@ -203,14 +162,10 @@ function parseDataJson(dataJson: unknown): Config {
 
 export function normalizeClaimedTaskConfig(task: ClaimedAccountTask, contractSubject?: string): Config {
   const taskPlaylet = task.playlet as Config["playlet"] & Partial<Config>;
-  const aiProductionProofFiles = Array.isArray(taskPlaylet.aiProductionProofFiles)
-    ? taskPlaylet.aiProductionProofFiles.filter((value) => typeof value === "string" && Boolean(value.trim()))
-    : undefined;
   const playlet = {
     ...taskPlaylet,
     name: task.originalTitle,
     dramaType: taskPlaylet.dramaType === "漫剧" ? "漫剧" : "数字真人",
-    aiProductionProofFiles,
   };
   const videoAccountConfig = (task.videoAccountConfig ?? {}) as Partial<Config>;
   const accountTask = (task.accountTask ?? {}) as Partial<Config>;

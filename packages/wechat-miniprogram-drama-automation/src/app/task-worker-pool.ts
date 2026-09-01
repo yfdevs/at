@@ -17,11 +17,11 @@ import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { validateLocalEpisodeVideos } from "../shared/local-episode-videos.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
 import {
-  claimNextTaskForVideoAccountApi,
+  claimNextWechatMiniProgramTaskApi,
   reportClaimedTaskErrorApi,
   reportClaimedTaskSuccessApi,
 } from "../api/task.js";
-import type { VideoAccount } from "../api/video-accounts.js";
+import type { WechatMiniProgramAccount } from "../api/mini-program-accounts.js";
 import { BrowserContextManager } from "../automation/browser-context-manager.js";
 import { TaskService } from "./task-service.js";
 import { classifyError, ErrorType, inferRpaFailStage } from "../shared/errors.js";
@@ -62,14 +62,14 @@ function episodeVideoSizePolicy(
 }
 
 interface AccountWorkerControl {
-  videoAccount: VideoAccount;
+  videoAccount: WechatMiniProgramAccount;
   stopped: boolean;
   promise: Promise<void>;
   abortController: AbortController;
   activeAccountTaskIds: Set<number>;
 }
 
-type ClaimedTask = NonNullable<Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>>;
+type ClaimedTask = NonNullable<Awaited<ReturnType<typeof claimNextWechatMiniProgramTaskApi>>>;
 
 type PreparedClaimedTask = {
   playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>;
@@ -127,7 +127,7 @@ export class TaskWorkerPool {
     }
   }
 
-  syncVideoAccounts(videoAccounts: VideoAccount[]): void {
+  syncVideoAccounts(videoAccounts: WechatMiniProgramAccount[]): void {
     const nextAccountIds = new Set(videoAccounts.map((account) => account.id));
 
     for (const [videoAccountId, worker] of this.accountWorkersByVideoAccountId) {
@@ -146,7 +146,7 @@ export class TaskWorkerPool {
     }
   }
 
-  private addAccountWorker(videoAccount: VideoAccount): void {
+  private addAccountWorker(videoAccount: WechatMiniProgramAccount): void {
     const existingWorker = this.accountWorkersByVideoAccountId.get(videoAccount.id);
     if (existingWorker) {
       existingWorker.videoAccount = videoAccount;
@@ -231,13 +231,15 @@ export class TaskWorkerPool {
             nextLoginCheckAt = Date.now() + loginRequiredDelayMs;
           }
 
-          logger.info("claiming task", {
-            videoAccountId,
-            videoAccountName: videoAccount.name,
-            inFlightCount: inFlightTasks.size,
-            prefetchLimit,
-          });
-          const claimedAccountTask = await claimNextTaskForVideoAccountApi(videoAccount, {
+          if (consecutiveEmptyClaims === 0) {
+            logger.info("claiming task", {
+              videoAccountId,
+              videoAccountName: videoAccount.name,
+              inFlightCount: inFlightTasks.size,
+              prefetchLimit,
+            });
+          }
+          const claimedAccountTask = await claimNextWechatMiniProgramTaskApi(videoAccount, {
             excludedAccountTaskIds: worker.activeAccountTaskIds,
           });
           if (!claimedAccountTask) {
@@ -245,6 +247,16 @@ export class TaskWorkerPool {
             const retryDelayMs = consecutiveEmptyClaims >= this.serviceConfig.worker.slowEmptyClaimThreshold
               ? this.serviceConfig.worker.slowEmptyClaimDelayMs
               : this.serviceConfig.worker.emptyClaimDelayMs;
+            if (
+              consecutiveEmptyClaims === 1
+              || consecutiveEmptyClaims === this.serviceConfig.worker.slowEmptyClaimThreshold
+            ) {
+              logger.info("no claimable account task", {
+                videoAccountId,
+                videoAccountName: videoAccount.name,
+                delayMs: retryDelayMs,
+              });
+            }
             reservation.release();
             await sleep(retryDelayMs);
             continue;
@@ -500,8 +512,8 @@ export class TaskWorkerPool {
   }
 
   private async ensureBaiduNetdiskResourceReady(
-    videoAccount: VideoAccount,
-    claimedAccountTask: Awaited<ReturnType<typeof claimNextTaskForVideoAccountApi>>,
+    videoAccount: WechatMiniProgramAccount,
+    claimedAccountTask: Awaited<ReturnType<typeof claimNextWechatMiniProgramTaskApi>>,
     playletConfig: ReturnType<typeof normalizeClaimedTaskConfig>,
     signal: AbortSignal,
   ): Promise<void> {

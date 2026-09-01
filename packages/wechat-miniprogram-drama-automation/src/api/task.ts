@@ -1,9 +1,13 @@
 import type { ClaimedAccountTask } from "../shared/types.js";
 import type { RpaFailStage } from "../shared/errors.js";
-import type { VideoAccount } from "./video-accounts.js";
+import type { WechatMiniProgramAccount } from "./mini-program-accounts.js";
 import { createLogger } from "../shared/logger.js";
 import { httpClient } from "./http-client.js";
 import { getWechatMiniProgramRuntimeSettings } from "../shared/runtime-settings.js";
+import {
+  ensureWechatMiniProgramMockAssets,
+  wechatMiniProgramMockAssetPaths,
+} from "../shared/mock-assets.js";
 
 export interface ClaimedTaskErrorReport {
   accountTaskId: number;
@@ -30,38 +34,179 @@ function taskApiUrl(pathname: string): string {
   return `${prefix}/${pathname.replace(/^\/+/, "")}`;
 }
 
-interface ClaimTaskResponse {
+interface TaskCallbackResponse {
+  code?: number;
+  msg?: string;
+}
+
+export interface WechatMiniProgramClaimTaskResponse {
   code: number;
   msg: string;
   data?: {
     accountTaskId: number;
-    originalTitle?: string;
+    originalTitle: string;
     dramaId?: number;
-    payloadJson?: unknown;
+    accountId: string;
+    accountName: string;
+    rpaProfileKey?: string | null;
+    accountConfigJson?: Record<string, unknown> | null;
+    payloadJson: WechatMiniProgramTaskPayload | string;
   } | null;
 }
 
-export interface AccountTaskPageItem {
-  id: number;
-  dramaId?: number;
-  videoAccountId: string;
-  videoAccountName?: string;
-  rpaStatus?: string;
-  originalTitle?: string;
+/**
+ * 微信小程序任务接口 payloadJson 中与 AI 声明相关的字段。
+ * aiContent 缺省为 true；仅当接口明确返回 false 时关闭声明并跳过证明上传。
+ */
+export interface WechatMiniProgramTaskPayload extends Record<string, unknown> {
+  aiContent?: boolean;
+  aiProductionProofFiles?: string[];
 }
 
-interface AccountTaskPageResponse {
-  code: number;
-  msg: string;
-  data?: {
-    total: number;
-    data: AccountTaskPageItem[];
-  } | null;
+const mockClaimedAccountIds = new Set<string>();
+const mockAccountTaskIds = new Set<number>();
+
+function stableMockSequence(value: string): number {
+  let hash = 0;
+  for (const character of value) {
+    hash = (hash * 31 + character.charCodeAt(0)) % 90_000;
+  }
+  return hash + 1;
 }
 
-interface TaskCallbackResponse {
-  code?: number;
-  msg?: string;
+export function createMockWechatMiniProgramClaimResponse(
+  account: WechatMiniProgramAccount,
+): WechatMiniProgramClaimTaskResponse {
+  const sequence = stableMockSequence(account.id);
+  const originalTitle = "赶海救下美人鱼，她让整片大海来报恩";
+  const mockAssets = wechatMiniProgramMockAssetPaths();
+
+  return {
+    code: 0,
+    msg: "操作成功",
+    data: {
+      accountTaskId: 900_000 + sequence,
+      dramaId: 800_000 + sequence,
+      originalTitle,
+      accountId: account.id,
+      accountName: account.name,
+      rpaProfileKey: account.rpaProfileKey ?? null,
+      accountConfigJson: null,
+      payloadJson: {
+        name: originalTitle,
+        platform: "wechatMiniProgram",
+        summary:
+          "一次意外让主人公重新站在人生的岔路口。面对亲情、事业与命运的多重考验，他凭借勇气和智慧弥补遗憾，也找到了真正值得守护的人。",
+        recommendation: "改写遗憾，奔赴新的人生。",
+        episodeCount: 11,
+        baiduPanResourceLink:
+          "通过网盘分享的文件：赶海救下美人鱼，她让整片大海来报恩\n" +
+          "链接: https://pan.baidu.com/s/1DqxBmsaWkLKKol5uHKxDNQ?pwd=hm6f 提取码: hm6f\n" +
+          "小桃漫画新剧@柒 ",
+        monetization: "IAA广告变现",
+        previewEpisodeCount: 1,
+        dramaType: "数字真人",
+        aiContent: true,
+        aiProductionProofFiles: [mockAssets.aiProductionProof],
+        posters: {
+          main: "",
+          promotion: "",
+        },
+        submissionIdentity: "版权方/授权播出方",
+        producerName: "星河映像（北京）文化传媒有限公司",
+        copyright: {
+          applyProtection: true,
+          verificationMethod: "基于版权证明材料",
+          productionProofFiles: [mockAssets.productionContract],
+          licenseProofFiles: [mockAssets.licenseAuthorization],
+        },
+        qualification: {
+          type: "其他微短剧",
+          proofFiles: [],
+        },
+        productionCost: {
+          amountWan: 10,
+          proofFiles: [mockAssets.productionCostProof],
+        },
+        otherMaterials: [],
+      },
+    },
+  };
+}
+
+function normalizeWechatMiniProgramClaimResponse(
+  payload: WechatMiniProgramClaimTaskResponse,
+  account: WechatMiniProgramAccount,
+): ClaimedAccountTask | null {
+  if (payload.code !== 0) {
+    throw new Error(`微信小程序任务领取失败：${payload.msg || `code=${payload.code}`}`);
+  }
+  if (!payload.data) return null;
+  if (!payload.data.accountTaskId || !payload.data.originalTitle || !payload.data.payloadJson) {
+    throw new Error("微信小程序任务响应缺少 accountTaskId、originalTitle 或 payloadJson");
+  }
+
+  const playlet =
+    typeof payload.data.payloadJson === "string"
+      ? (JSON.parse(payload.data.payloadJson) as unknown)
+      : payload.data.payloadJson;
+  if (typeof playlet !== "object" || playlet === null || Array.isArray(playlet)) {
+    throw new Error("微信小程序任务响应的 payloadJson 必须是 JSON 对象");
+  }
+
+  return {
+    accountTaskId: payload.data.accountTaskId,
+    dramaId: payload.data.dramaId,
+    originalTitle: payload.data.originalTitle,
+    videoAccountId: account.id,
+    videoAccountName: account.name,
+    playlet: playlet as Record<string, unknown>,
+    videoAccountConfig: payload.data.accountConfigJson ?? undefined,
+    accountTask: {
+      mockTask: true,
+      dryRun: true,
+      publish: {
+        submit: false,
+      },
+    },
+  };
+}
+
+/**
+ * 创建一条字段完整、但不会与正式数据冲突的微信小程序测试任务。
+ * 测试素材目录应使用返回的 originalTitle 作为本地剧目目录名。
+ */
+export function createMockWechatMiniProgramTask(
+  account: WechatMiniProgramAccount,
+): ClaimedAccountTask {
+  const task = normalizeWechatMiniProgramClaimResponse(
+    createMockWechatMiniProgramClaimResponse(account),
+    account,
+  );
+  if (!task) throw new Error("微信小程序模拟任务创建失败");
+  return task;
+}
+
+export function resetMockWechatMiniProgramTaskApi(): void {
+  mockClaimedAccountIds.clear();
+  mockAccountTaskIds.clear();
+}
+
+export function resetMockWechatMiniProgramTaskApiForTesting(): void {
+  resetMockWechatMiniProgramTaskApi();
+}
+
+/**
+ * 微信小程序正式领取接口占位方法。
+ * 正式接口可用后只需在这里发起请求并返回标准化任务。
+ */
+async function requestWechatMiniProgramTaskApi(
+  account: WechatMiniProgramAccount,
+  options: ClaimNextTaskOptions,
+): Promise<WechatMiniProgramClaimTaskResponse | undefined> {
+  void account;
+  void options;
+  return undefined;
 }
 
 function assertTaskApiResponseOk(payload: TaskCallbackResponse, action: string): void {
@@ -70,132 +215,44 @@ function assertTaskApiResponseOk(payload: TaskCallbackResponse, action: string):
   }
 }
 
-async function findNextUnclaimedAccountTaskId(
-  videoAccount: VideoAccount,
-  options: ClaimNextTaskOptions = {},
-): Promise<number | null> {
-  const requestPayload = {
-    page: 1,
-    pageSize: 100,
-    videoAccountId: videoAccount.id,
-    rpaStatus: "READY",
-  };
-  const url = taskApiUrl("accountTask/page");
-
-  logger.info("account task page request", {
-    url,
-    videoAccountId: videoAccount.id,
-    videoAccountName: videoAccount.name,
-    page: requestPayload.page,
-    pageSize: requestPayload.pageSize,
-    rpaStatus: requestPayload.rpaStatus,
-  });
-  const payload = await httpClient.post<AccountTaskPageResponse>(url, requestPayload);
-  if (payload.code !== 0) {
-    throw new Error(`Failed to query account task page: ${payload.msg || `code=${payload.code}`}`);
-  }
-
-  const total = payload.data?.total ?? 0;
-  const items = payload.data?.data ?? [];
-  const statusSummary = items.reduce<Record<string, number>>((summary, item) => {
-    const status = item.rpaStatus ?? "UNKNOWN";
-    summary[status] = (summary[status] ?? 0) + 1;
-    return summary;
-  }, {});
-  logger.info("account task page response", {
-    videoAccountId: videoAccount.id,
-    total,
-    rows: items.length,
-    statusSummary,
-  });
-
-  const excludedAccountTaskIds = options.excludedAccountTaskIds;
-  const skippedItems = excludedAccountTaskIds
-    ? items.filter((item) => excludedAccountTaskIds.has(item.id))
-    : [];
-  if (skippedItems.length > 0) {
-    logger.info("skip cooling account tasks", {
-      videoAccountId: videoAccount.id,
-      accountTaskIds: skippedItems.map((item) => item.id),
-    });
-  }
-
-  const accountTask = items.find((item) => !excludedAccountTaskIds?.has(item.id)) ?? null;
-  if (!accountTask) {
-    logger.info("no claimable account task", {
-      videoAccountId: videoAccount.id,
-      videoAccountName: videoAccount.name,
-      rpaStatus: "READY",
-    });
-    return null;
-  }
-
-  logger.info("selected account task", {
-    accountTaskId: accountTask.id,
-    rpaStatus: accountTask.rpaStatus,
-    originalTitle: accountTask.originalTitle,
-    videoAccountId: videoAccount.id,
-  });
-  return accountTask.id;
-}
-
-export async function claimNextTaskForVideoAccountApi(
-  videoAccount: VideoAccount,
+export async function claimNextWechatMiniProgramTaskApi(
+  account: WechatMiniProgramAccount,
   options: ClaimNextTaskOptions = {},
 ): Promise<ClaimedAccountTask | null> {
-  const accountTaskId = await findNextUnclaimedAccountTaskId(videoAccount, options);
-  if (!accountTaskId) return null;
-
-  const url = taskApiUrl("rpa/claim");
-  logger.info("claim request", {
-    url,
-    accountTaskId,
-    videoAccountId: videoAccount.id,
-  });
-  const payload = await httpClient.post<ClaimTaskResponse>(url, {
-    accountTaskId,
-  });
-  logger.info("claim response", {
-    accountTaskId,
-    code: payload.code,
-    responseMessage: payload.msg,
-  });
-  if (payload.code !== 0) {
-    throw new Error(`Failed to claim task: ${payload.msg || `code=${payload.code}`}`);
-  }
-  if (!payload.data) {
-    return null;
-  }
-  if (!payload.data.accountTaskId || !payload.data.originalTitle || !payload.data.payloadJson) {
-    throw new Error("Claim task response data.accountTaskId, data.originalTitle and data.payloadJson are required.");
+  const apiResponse = await requestWechatMiniProgramTaskApi(account, options);
+  if (apiResponse !== undefined) {
+    return normalizeWechatMiniProgramClaimResponse(apiResponse, account);
   }
 
-  const playlet = typeof payload.data.payloadJson === "string"
-    ? JSON.parse(payload.data.payloadJson) as Record<string, unknown>
-    : payload.data.payloadJson;
-  if (typeof playlet !== "object" || playlet === null || Array.isArray(playlet)) {
-    throw new Error("Claim task response data.payloadJson must be a JSON object.");
-  }
+  if (mockClaimedAccountIds.has(account.id)) return null;
 
-  const task: ClaimedAccountTask = {
-    accountTaskId: payload.data.accountTaskId,
-    originalTitle: payload.data.originalTitle,
-    dramaId: payload.data.dramaId,
-    videoAccountId: videoAccount.id,
-    videoAccountName: videoAccount.name,
-    playlet: playlet as Record<string, unknown>,
-  };
-  logger.info("claimed account task", {
-    accountTaskId: task.accountTaskId,
-    dramaId: task.dramaId,
-    originalTitle: task.originalTitle,
-    videoAccountId: task.videoAccountId,
-    videoAccountName: task.videoAccountName,
+  await ensureWechatMiniProgramMockAssets();
+  const mockTask = createMockWechatMiniProgramTask(account);
+  if (options.excludedAccountTaskIds?.has(mockTask.accountTaskId)) return null;
+
+  mockClaimedAccountIds.add(account.id);
+  mockAccountTaskIds.add(mockTask.accountTaskId);
+  logger.info("mock claimed account task", {
+    accountTaskId: mockTask.accountTaskId,
+    dramaId: mockTask.dramaId,
+    originalTitle: mockTask.originalTitle,
+    videoAccountId: mockTask.videoAccountId,
+    videoAccountName: mockTask.videoAccountName,
   });
-  return task;
+  return mockTask;
 }
 
-export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSuccessReport): Promise<void> {
+export async function reportClaimedTaskSuccessApi(
+  successReport: ClaimedTaskSuccessReport,
+): Promise<void> {
+  if (mockAccountTaskIds.has(successReport.accountTaskId)) {
+    logger.info("success callback completed", {
+      accountTaskId: successReport.accountTaskId,
+      mock: true,
+    });
+    return;
+  }
+
   const url = taskApiUrl("rpa/successCallback");
   const requestPayload = {
     accountTaskId: successReport.accountTaskId,
@@ -216,7 +273,18 @@ export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSucc
   });
 }
 
-export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorReport): Promise<void> {
+export async function reportClaimedTaskErrorApi(
+  errorReport: ClaimedTaskErrorReport,
+): Promise<void> {
+  if (mockAccountTaskIds.has(errorReport.accountTaskId)) {
+    logger.info("fail callback completed", {
+      accountTaskId: errorReport.accountTaskId,
+      failStage: errorReport.failStage,
+      mock: true,
+    });
+    return;
+  }
+
   const url = taskApiUrl("rpa/failCallback");
   const requestPayload = {
     accountTaskId: errorReport.accountTaskId,

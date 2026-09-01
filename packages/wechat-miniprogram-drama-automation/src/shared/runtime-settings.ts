@@ -1,7 +1,7 @@
 export interface WechatMiniProgramRuntimeSettings {
   apiBaseUrl: string;
   taskApiPrefix: string;
-  videoAccountContractSubjects: string;
+  mockAssetRoot: string;
   localEpisodeVideoRoot: string;
   closeFailedTaskPages: string;
   runDataDir: string;
@@ -31,7 +31,7 @@ export interface WechatMiniProgramRuntimeSettings {
 export const defaultWechatMiniProgramRuntimeSettings: WechatMiniProgramRuntimeSettings = {
   apiBaseUrl: "http://180.184.76.232:19090",
   taskApiPrefix: "/dramaAiRpa/wechatMiniProgram",
-  videoAccountContractSubjects: "MINGXINGSHUO,MISU,WEITAO,HUANZOU,XIAOSHILIU",
+  mockAssetRoot: "",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/wechat-miniprogram-drama",
@@ -54,7 +54,7 @@ export const defaultWechatMiniProgramRuntimeSettings: WechatMiniProgramRuntimeSe
   episodeVideoMaxFileMegabytes: "490",
   episodeVideoTargetFileMegabytes: "480",
   episodeUploadWaitTimeoutSeconds: "7200",
-  episodeUploadFailedRetryAttempts: "3",
+  episodeUploadFailedRetryAttempts: "5",
   feishuBotWebhookUrl: "",
 };
 

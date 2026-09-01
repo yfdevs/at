@@ -114,6 +114,7 @@ export type IqiyiDramaRuntimeOptions = {
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;
+  mockAssetRoot?: string;
   logFilePath?: string;
   logRetentionDays?: number;
   iqiyiAccountId?: string;
@@ -121,6 +122,7 @@ export type IqiyiDramaRuntimeOptions = {
   apiConfig?: IqiyiDramaApiConfig;
   localMaterialRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
+  videoUploadTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
   closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;

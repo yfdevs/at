@@ -4,7 +4,7 @@ import { chromium, type BrowserContext, type Page } from "playwright";
 import { resolveFromRoot, type ServiceConfig } from "../shared/config.js";
 import type { UpdateCredentialsRequest } from "../shared/types.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
-import type { VideoAccount } from "../api/video-accounts.js";
+import type { WechatMiniProgramAccount } from "../api/mini-program-accounts.js";
 import { loginQrCodeSelector, playletUrl } from "./constants.js";
 import { waitForLoginIfNeeded } from "./browser-session.js";
 import { createLogger, runWithLogContext } from "../shared/logger.js";
@@ -19,11 +19,11 @@ interface ManagedChannel {
 }
 
 export interface VideoAccountSyncChanges {
-  added: VideoAccount[];
-  removed: VideoAccount[];
+  added: WechatMiniProgramAccount[];
+  removed: WechatMiniProgramAccount[];
   renamed: Array<{
-    previous: VideoAccount;
-    next: VideoAccount;
+    previous: WechatMiniProgramAccount;
+    next: WechatMiniProgramAccount;
   }>;
 }
 
@@ -40,7 +40,7 @@ export type VideoAccountRuntimeStatus = {
 
 export class BrowserContextManager {
   private readonly channels = new Map<string, ManagedChannel>();
-  private readonly videoAccountsById = new Map<string, VideoAccount>();
+  private readonly videoAccountsById = new Map<string, WechatMiniProgramAccount>();
   private readonly loginRequiredNotifiedChannelIds = new Set<string>();
 
   constructor(
@@ -132,7 +132,7 @@ export class BrowserContextManager {
   }
 
   getDefaultChannelId(): string {
-    const firstAccount = this.videoAccountsById.values().next().value as VideoAccount | undefined;
+    const firstAccount = this.videoAccountsById.values().next().value as WechatMiniProgramAccount | undefined;
     if (!firstAccount) throw new Error("Video account list must contain at least one account.");
     return firstAccount.id;
   }
@@ -141,10 +141,10 @@ export class BrowserContextManager {
     return this.videoAccountsById.get(channelId)?.name ?? channelId;
   }
 
-  syncVideoAccounts(videoAccounts: VideoAccount[]): VideoAccountSyncChanges {
+  syncVideoAccounts(videoAccounts: WechatMiniProgramAccount[]): VideoAccountSyncChanges {
     const nextAccountsById = new Map(videoAccounts.map((account) => [account.id, account]));
-    const added: VideoAccount[] = [];
-    const removed: VideoAccount[] = [];
+    const added: WechatMiniProgramAccount[] = [];
+    const removed: WechatMiniProgramAccount[] = [];
     const renamed: VideoAccountSyncChanges["renamed"] = [];
 
     for (const account of videoAccounts) {
@@ -172,6 +172,32 @@ export class BrowserContextManager {
     }
 
     return { added, removed, renamed };
+  }
+
+  async closeRemovedVideoAccounts(videoAccounts: WechatMiniProgramAccount[]): Promise<void> {
+    await Promise.all(videoAccounts.map(async (account) => {
+      const channel = this.channels.get(account.id);
+      if (!channel) return;
+
+      await this.writeStorageState(channel).catch(() => undefined);
+      try {
+        await channel.context.close();
+      } catch (error: unknown) {
+        browserLogger.warn("关闭已删除账号浏览器失败", {
+          accountId: account.id,
+          accountName: account.name,
+          errorMessage: error instanceof Error ? error.message : String(error),
+        });
+        return;
+      }
+      if (this.channels.get(account.id) === channel) {
+        this.channels.delete(account.id);
+      }
+      browserLogger.info("已关闭删除账号的浏览器", {
+        accountId: account.id,
+        accountName: account.name,
+      });
+    }));
   }
 
   async updateCredentials(channelId: string, credentials: UpdateCredentialsRequest): Promise<void> {

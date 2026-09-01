@@ -41,6 +41,15 @@ function reportableErrorMessage(error: unknown) {
     return "美团页面或浏览器已关闭，无法继续执行页面操作";
   }
 
+  if (message.includes("MEITUAN_LOGIN_PAGE_OPEN_FAILED")) {
+    return "美团登录已失效，但登录页打开失败，请检查网络后重新登录";
+  }
+
+  const loginRequired = message.match(/MEITUAN_LOGIN_REQUIRED:\s*(.*)$/s);
+  if (loginRequired) {
+    return loginRequired[1]?.trim() || "美团登录已失效，请重新登录";
+  }
+
   const locatorTimeout = message.match(
     /^locator\.(click|waitFor|fill|check|setInputFiles): Timeout (\d+)ms exceeded\.?$/i,
   );

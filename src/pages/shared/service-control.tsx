@@ -142,6 +142,7 @@ export function ServiceControlButtonPage({
   running,
   startLabel = "启动服务",
   stopLabel = "关闭服务",
+  additionalAction,
   onToggle,
 }: {
   loading: boolean;
@@ -149,6 +150,7 @@ export function ServiceControlButtonPage({
   running: boolean;
   startLabel?: string;
   stopLabel?: string;
+  additionalAction?: ReactNode;
   onToggle: () => void;
 }) {
   const label =
@@ -162,36 +164,39 @@ export function ServiceControlButtonPage({
 
   return (
     <main className="relative flex min-h-svh flex-1 items-center justify-center bg-transparent p-6">
-      <Button
-        aria-busy={loading}
-        aria-label={label}
-        aria-pressed={running}
-        className={cn(
-          "h-10 min-w-32 gap-2 rounded-lg px-6",
-          running &&
-            "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20",
-        )}
-        disabled={loading}
-        size="lg"
-        type="button"
-        variant={running ? "destructive" : "default"}
-        onClick={onToggle}
-      >
-        <ThinkingOrb
+      <div className="flex items-center justify-center gap-3">
+        <Button
+          aria-busy={loading}
           aria-label={label}
-          state={loading ? "working" : running ? "composing" : "solving"}
-          size={20}
-          style={
-            running
-              ? {
-                  filter:
-                    "brightness(0) saturate(100%) invert(34%) sepia(88%) saturate(1800%) hue-rotate(335deg) brightness(92%) contrast(92%)",
-                }
-              : undefined
-          }
-        />
-        <ShinyButtonText disabled={loading}>{label}</ShinyButtonText>
-      </Button>
+          aria-pressed={running}
+          className={cn(
+            "h-10 min-w-32 gap-2 rounded-lg px-6",
+            running &&
+              "border-destructive/30 bg-destructive/10 text-destructive hover:bg-destructive/20",
+          )}
+          disabled={loading}
+          size="lg"
+          type="button"
+          variant={running ? "destructive" : "default"}
+          onClick={onToggle}
+        >
+          <ThinkingOrb
+            aria-label={label}
+            state={loading ? "working" : running ? "composing" : "solving"}
+            size={20}
+            style={
+              running
+                ? {
+                    filter:
+                      "brightness(0) saturate(100%) invert(34%) sepia(88%) saturate(1800%) hue-rotate(335deg) brightness(92%) contrast(92%)",
+                  }
+                : undefined
+            }
+          />
+          <ShinyButtonText disabled={loading}>{label}</ShinyButtonText>
+        </Button>
+        {additionalAction}
+      </div>
     </main>
   );
 }

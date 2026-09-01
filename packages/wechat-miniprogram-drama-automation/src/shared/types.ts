@@ -8,6 +8,7 @@ export type CopyrightVerificationMethod = "基于版权证明材料" | "基于�
 
 export interface Config {
   originalTitle: string;
+  mockTask?: boolean;
   browser?: {
     userDataDir?: string;
     headless?: boolean;

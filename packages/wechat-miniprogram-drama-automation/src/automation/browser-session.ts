@@ -7,6 +7,7 @@ import { resolveFromRoot } from "../shared/config.js";
 import { minutesToMs } from "../shared/settings-value.js";
 import type { Config, TaskRunOptions } from "../shared/types.js";
 import { createLogger } from "../shared/logger.js";
+import { loginQrCodeSelector } from "./constants.js";
 
 const authLogger = createLogger("auth");
 
@@ -28,15 +29,23 @@ export async function saveStorageState(context: BrowserContext, stateFile: strin
   await writeFile(statePath, JSON.stringify(await context.storageState(), null, 2), "utf8");
 }
 
-function isLoginUrl(url: string): boolean {
+export function isWechatMiniProgramLoginUrl(url: string): boolean {
   try {
     const parsed = new URL(url);
     return parsed.href.includes("login")
-      || (parsed.hostname === "mp.weixin.qq.com" && !parsed.searchParams.has("token"));
+      || parsed.pathname.includes("loginpage");
   } catch {
     return url.includes("login");
   }
 }
+
+const authenticatedPageSelector = [
+  'a[href*="token="]',
+  'a[href*="/wxamp/"]',
+  ".weui-desktop-layout",
+  'input[placeholder="搜索文件名"]',
+  'button:has-text("选择文件")',
+].join(", ");
 
 export async function waitForLoginIfNeeded(
   page: Page,
@@ -44,11 +53,18 @@ export async function waitForLoginIfNeeded(
   loginPageTitle?: string,
   onLoginRequired?: () => void | Promise<void>,
 ): Promise<boolean> {
-  if (!isLoginUrl(page.url())) {
+  const loginQrCode = page.locator(loginQrCodeSelector).first();
+  const authenticatedPage = page.locator(authenticatedPageSelector).first();
+  const loginPageVisible = isWechatMiniProgramLoginUrl(page.url())
+    || await loginQrCode.isVisible().catch(() => false);
+
+  if (!loginPageVisible) {
     const loginState = await Promise.race([
-      page.waitForURL((url) => isLoginUrl(url.href), { timeout: 8000 }).then(() => "login" as const),
-      page.locator('a[href*="token="], input[placeholder="搜索文件名"], button:has-text("选择文件")')
-        .first()
+      page.waitForURL((url) => isWechatMiniProgramLoginUrl(url.href), { timeout: 8000 }).then(() => "login" as const),
+      loginQrCode
+        .waitFor({ state: "visible", timeout: 8000 })
+        .then(() => "login" as const),
+      authenticatedPage
         .waitFor({ state: "attached", timeout: 8000 })
         .then(() => "logged-in" as const),
     ]).catch(() => "unknown" as const);
@@ -65,8 +81,12 @@ export async function waitForLoginIfNeeded(
 
   const label = accountLabel ? ` ${accountLabel}` : "";
   authLogger.info("请使用微信扫码并确认登录", { accountName: label.trim() || undefined });
-  await page.waitForURL((url) => !isLoginUrl(url.href), { timeout: minutesToMs(10) });
-  await page.waitForLoadState("domcontentloaded");
+  await Promise.race([
+    page.waitForURL((url) => !isWechatMiniProgramLoginUrl(url.href), { timeout: minutesToMs(10) }),
+    loginQrCode.waitFor({ state: "hidden", timeout: minutesToMs(10) }),
+    authenticatedPage.waitFor({ state: "attached", timeout: minutesToMs(10) }),
+  ]);
+  await page.waitForLoadState("domcontentloaded").catch(() => undefined);
   authLogger.info("登录成功", { accountName: label.trim() || undefined });
   return true;
 }
