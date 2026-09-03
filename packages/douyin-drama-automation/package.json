@@ -13,7 +13,8 @@
   },
   "scripts": {
     "build": "vp pack",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsx --conditions=development --test tests/**/*.test.ts"
   },
   "dependencies": {
     "@drama/automation-logging": "workspace:*",
@@ -23,6 +24,7 @@
   },
   "devDependencies": {
     "@types/node": "latest",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "catalog:"
   }

@@ -19,16 +19,19 @@
   "scripts": {
     "build": "vp pack",
     "check": "tsc --noEmit",
+    "test": "tsx --conditions=development --test tests/**/*.test.ts",
     "download:share": "node --experimental-strip-types src/download-baidu-folder.ts"
   },
   "devDependencies": {
     "@types/node": "latest",
     "@types/ws": "^8.18.1",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "catalog:"
   },
   "dependencies": {
     "@drama/automation-logging": "workspace:*",
+    "effect": "3.22.1",
     "ws": "^8.21.0"
   }
 }

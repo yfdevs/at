@@ -14,7 +14,7 @@
   "scripts": {
     "build": "vp pack && node scripts/copy-assets.mjs",
     "check": "tsc --noEmit",
-    "test": "tsx --conditions=development --test src/**/*.test.ts"
+    "test": "tsx --conditions=development --test tests/**/*.test.ts"
   },
   "dependencies": {
     "@drama/ai": "workspace:*",

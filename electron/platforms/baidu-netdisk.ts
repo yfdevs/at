@@ -2,6 +2,7 @@ import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
 import { ensureAiPoster, VideoTranscodeQueue } from "@drama/drama-media-assets";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
+import { formatDateKey } from "@drama/automation-logging";
 import { createHash } from "node:crypto";
 import { lstat, readdir, rm, statfs, utimes } from "node:fs/promises";
 import path from "node:path";
@@ -15,6 +16,7 @@ import {
   getConfiguredAiImageModel,
   getConfiguredBaiduNetdiskDownloadTimeoutMs,
   isAiPosterFallbackEnabled,
+  resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import { resolveFromAppRoot } from "./shared";
 import { createElectronPlatformLogger } from "../platform-logger";
@@ -147,6 +149,21 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   }>) => void;
 };
 
+function baiduNetdiskRunDataDir() {
+  return resolveGlobalPlatformDirectories("baidu-netdisk", {
+    runDataDir: resolveFromAppRoot(".drama-runs/baidu-netdisk"),
+    localMaterialRoot: defaultBaiduNetdiskDownloadDir,
+  }).runDataDir;
+}
+
+function baiduNetdiskLogDir() {
+  return path.join(baiduNetdiskRunDataDir(), "logs");
+}
+
+function baiduNetdiskLogFilePath() {
+  return path.join(baiduNetdiskLogDir(), `app-${formatDateKey()}.log`);
+}
+
 function baiduNetdiskLogger(
   scope = "netdisk",
   context?: Record<string, unknown>,
@@ -155,7 +172,7 @@ function baiduNetdiskLogger(
     platform: "baidu-netdisk",
     scope,
     context,
-    logDir: resolveFromAppRoot(".drama-runs/baidu-netdisk/logs"),
+    logDir: baiduNetdiskLogDir(),
     retentionDays: 3,
   });
 }
@@ -667,7 +684,11 @@ function cdpPort(config = readConfig()) {
 }
 
 async function importBaiduNetdiskRuntimePackage() {
-  return import("@drama/baidu-netdisk-automation") as Promise<{
+  const runtime = await import("@drama/baidu-netdisk-automation") as {
+    configureBaiduNetdiskAutomationLogging: (options: {
+      logFilePath: string;
+      retentionDays?: number;
+    }) => void;
     checkBaiduNetdiskCdpStatus: (options: {
       port: number;
       executablePath?: string;
@@ -677,11 +698,20 @@ async function importBaiduNetdiskRuntimePackage() {
       executablePath?: string;
       restart?: boolean;
     }) => Promise<BaiduNetdiskLaunchResult>;
-  }>;
+  };
+  runtime.configureBaiduNetdiskAutomationLogging({
+    logFilePath: baiduNetdiskLogFilePath(),
+    retentionDays: 3,
+  });
+  return runtime;
 }
 
 async function importBaiduNetdiskDownloadRuntimePackage() {
-  return import("@drama/baidu-netdisk-automation/download-baidu-folder") as Promise<{
+  const runtime = await import("@drama/baidu-netdisk-automation/download-baidu-folder") as {
+    configureBaiduNetdiskAutomationLogging: (options: {
+      logFilePath: string;
+      retentionDays?: number;
+    }) => void;
     downloadBaiduNetdiskShare: (options: {
       shareText: string;
       resourceName?: string;
@@ -715,7 +745,12 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       action: "pause" | "resume" | "delete";
       expectedDownloadRoot?: string;
     }) => Promise<boolean>;
-  }>;
+  };
+  runtime.configureBaiduNetdiskAutomationLogging({
+    logFilePath: baiduNetdiskLogFilePath(),
+    retentionDays: 3,
+  });
+  return runtime;
 }
 
 async function status() {
@@ -1023,7 +1058,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       const fallbackEnabled = isAiPosterFallbackEnabled();
       const missingPoster = request.requiredPosterImages
         && request.requiredPosterImages > 0
-        && readableError(error).includes("百度网盘海报封面数量不足");
+        && isRemoteMaterialValidationError(error, "poster");
       if (!fallbackEnabled || !missingPoster) throw error;
 
       const summary = request.posterFallback?.summary.trim();
@@ -1107,6 +1142,20 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       }).warn("清理下载临时资源失败", { error });
     });
   }
+}
+
+function isRemoteMaterialValidationError(
+  error: unknown,
+  material: "episode" | "ownership-images" | "ownership-files" | "poster" | "ai-production-proof",
+) {
+  return Boolean(
+    error
+    && typeof error === "object"
+    && "_tag" in error
+    && error._tag === "RemoteMaterialValidationError"
+    && "material" in error
+    && error.material === material,
+  );
 }
 
 function readableError(error: unknown) {

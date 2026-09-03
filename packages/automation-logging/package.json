@@ -14,7 +14,7 @@
   "scripts": {
     "build": "vp pack",
     "check": "tsc --noEmit",
-    "test": "tsx --test src/**/*.test.ts"
+    "test": "tsx --conditions=development --test tests/**/*.test.ts"
   },
   "dependencies": {
     "winston": "^3.19.0"

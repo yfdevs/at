@@ -14,6 +14,7 @@
     "release": "node scripts/create-release.mjs",
     "release:win": "node scripts/release-win.mjs",
     "prepare": "vp config",
+    "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --if-present test",
     "wechat-miniprogram-drama:check": "pnpm --filter @drama/wechat-miniprogram-drama-automation check",
     "wechat-miniprogram-drama:build": "pnpm --filter @drama/wechat-miniprogram-drama-automation build",
     "kuaishou-drama:preview-covers": "pnpm --filter @drama/drama-media-assets build && pnpm --filter @drama/kuaishou-drama-automation build && electron scripts/preview-kuaishou-covers.mjs",
@@ -106,7 +107,7 @@
     "typescript": "^6.0.3",
     "vite": "catalog:",
     "vite-plugin-electron": "^0.28.6",
-    "vite-plugin-electron-renderer": "^0.14.5",
+    "vite-plugin-electron-renderer": "^1.0.0",
     "vite-plus": "catalog:"
   },
   "packageManager": "pnpm@11.8.0"
