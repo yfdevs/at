@@ -1476,8 +1476,11 @@ export async function runPublishTask(
   await openKuaishouDramaEditPage(context, page, options, true);
   const { taskConfig, resourceName } = resolvedTask;
 
-  const [fullPaidVariant, adUnlockVariant] = createKuaishouDramaPublishVariants(taskConfig);
-  log(options, "[kuaishou-drama] filling publish variants one at a time");
+  const variants = createKuaishouDramaPublishVariants(taskConfig);
+  log(
+    options,
+    `[kuaishou-drama] publish variants selected: ${variants.map((item) => item.kind).join(",")}`,
+  );
   const runVariant = async (
     targetPage: Page,
     variant: KuaishouDramaPublishVariant,
@@ -1495,14 +1498,18 @@ export async function runPublishTask(
     }
   };
 
-  await runVariant(page, fullPaidVariant);
+  await runVariant(page, variants[0]!);
 
-  log(options, "[kuaishou-drama] full-paid form completed; opening ad-unlock form");
-  const adUnlockPage = await context.newPage();
-  try {
-    await openKuaishouDramaEditPage(context, adUnlockPage, options, false);
-    await runVariant(adUnlockPage, adUnlockVariant);
-  } finally {
-    await adUnlockPage.close().catch(() => undefined);
+  for (const variant of variants.slice(1)) {
+    log(options, `[kuaishou-drama] opening next publish variant: ${variant.kind}`);
+    const variantPage = await context.newPage();
+    try {
+      await openKuaishouDramaEditPage(context, variantPage, options, false);
+      await runVariant(variantPage, variant);
+    } finally {
+      await variantPage.close().catch(() => undefined);
+    }
   }
+
+  return variants.map((variant) => variant.kind);
 }

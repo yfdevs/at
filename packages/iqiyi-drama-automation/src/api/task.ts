@@ -2,7 +2,6 @@ import { z } from "zod";
 
 import {
   claimedIqiyiDramaTaskSchema,
-  iqiyiDramaTaskPayloadSchema,
   type ClaimedIqiyiDramaTask,
   type IqiyiDramaApiConfig,
   type IqiyiDramaRuntimeOptions,
@@ -44,9 +43,9 @@ export type IqiyiDramaTaskErrorReport = IqiyiDramaTaskApiOptions & {
 };
 
 const defaultEndpoints: IqiyiDramaTaskApiEndpoints = {
-  accountTaskPage: "/api/dramaAiRpa/iqiyi/accountTask/page",
-  claimTask: "/api/dramaAiRpa/iqiyi/rpa/claim",
-  reportTask: "/api/dramaAiRpa/iqiyi/rpa/report",
+  accountTaskPage: "/dramaAiRpa/iqiyi/accountTask/page",
+  claimTask: "/dramaAiRpa/iqiyi/rpa/claim",
+  reportTask: "/dramaAiRpa/iqiyi/rpa/report",
 };
 const readyTaskPageSize = 100;
 const apiResponseBaseSchema = z.object({
@@ -83,8 +82,8 @@ const claimResponseSchema = apiResponseBaseSchema.extend({
 });
 const claimPayloadJsonSchema = z.object({
   name: z.string().trim().min(1),
-  copyright: iqiyiDramaTaskPayloadSchema.shape.copyright,
-  iqiyiPlaylet: iqiyiDramaTaskPayloadSchema.omit({ copyright: true }),
+  copyright: z.unknown(),
+  iqiyiPlaylet: z.record(z.unknown()),
 }).passthrough();
 const reportResponseSchema = apiResponseBaseSchema.extend({
   data: z.boolean().nullish(),
@@ -113,6 +112,29 @@ function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action
   }
 }
 
+function formatZodIssues(
+  issues: z.ZodIssue[],
+  playlet?: Record<string, unknown>,
+): string[] {
+  return issues.flatMap((issue) => {
+    if (issue.code === z.ZodIssueCode.invalid_union) {
+      const branchIndex = playlet?.dramaType === "comic-drama"
+        ? 0
+        : playlet?.dramaType === "short-drama"
+          ? playlet.paymentStatus === "免费" ? 2 : 1
+          : -1;
+      if (branchIndex >= 0) {
+        return formatZodIssues(issue.unionErrors[branchIndex]?.issues ?? []);
+      }
+      const discriminatorIssues = issue.unionErrors
+        .flatMap((error) => error.issues)
+        .filter((item) => item.path[item.path.length - 1] === "dramaType");
+      return formatZodIssues(discriminatorIssues.slice(0, 1));
+    }
+    return `${issue.path.join(".") || "task"}: ${issue.message}`;
+  });
+}
+
 function normalizeClaimedTask(
   claimed: ClaimData,
   listed: ReadyTask | undefined,
@@ -129,22 +151,21 @@ function normalizeClaimedTask(
   const payload = claimPayloadJsonSchema.parse(
     typeof claimed.payloadJson === "string" ? JSON.parse(claimed.payloadJson) : claimed.payloadJson,
   );
+  const playlet = {
+    ...payload.iqiyiPlaylet,
+    copyright: payload.copyright,
+  };
   const result = claimedIqiyiDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
     dramaId: listed?.dramaId,
     originalTitle: claimed.originalTitle ?? listed?.originalTitle ?? payload.name,
     iqiyiAccountId: claimedAccountId ?? listed?.accountId ?? expectedAccountId,
     iqiyiAccountName: listed?.accountName ?? runtimeOptions?.iqiyiAccountName,
-    playlet: {
-      ...payload.iqiyiPlaylet,
-      copyright: payload.copyright,
-    },
+    playlet,
   });
   if (result.success) return result.data;
   throw new Error(
-    `IQIYI_DRAMA_CLAIMED_TASK_INVALID: ${result.error.issues
-      .map((issue) => `${issue.path.join(".") || "task"}: ${issue.message}`)
-      .join("; ")}`,
+    `IQIYI_DRAMA_CLAIMED_TASK_INVALID: ${formatZodIssues(result.error.issues, playlet).join("; ")}`,
   );
 }
 

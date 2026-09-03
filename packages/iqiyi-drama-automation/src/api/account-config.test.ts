@@ -27,7 +27,7 @@ test("loads enabled iQIYI accounts from the unified API prefix", async () => {
 
   assert.equal(
     requests[0]?.url,
-    "http://api.example.test/api/dramaAiRpa/iqiyi/accountConfig/page",
+    "http://api.example.test/dramaAiRpa/iqiyi/accountConfig/page",
   );
   assert.deepEqual(requests[0]?.body, {
     page: 1,

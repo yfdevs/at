@@ -15,8 +15,7 @@ const requiredText = z.string().trim().min(1);
 const optionalText = z.string().trim().optional();
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
 const iqiyiCopyrightSchema = z.object({
-  productionProofFiles: z.array(fileReference).max(20),
-  licenseProofFiles: z.array(fileReference).max(20),
+  productionProofFiles: z.array(fileReference).min(1).max(20),
 }).strict();
 
 export const iqiyiDramaTypeValues = ["short-drama", "comic-drama"] as const;
@@ -36,24 +35,117 @@ export const iqiyiVisualTypeValues = [
   "其他",
 ] as const;
 export const iqiyiAudienceTypeValues = ["男频", "女频", "平衡"] as const;
+export const iqiyiShortDramaTagValues = [
+  "爱情",
+  "恐怖",
+  "武侠",
+  "生活",
+  "穿越",
+  "玄幻",
+  "逆袭",
+  "重生",
+  "刑侦",
+  "预知",
+  "志怪",
+  "打脸虐渣",
+  "现代言情",
+  "都市",
+  "总裁",
+  "甜宠",
+  "都市日常",
+  "家庭伦理",
+  "虐恋",
+  "复仇",
+  "神豪",
+  "萌宝",
+  "大女主",
+  "其他题材",
+] as const;
+export const iqiyiComicDramaTagValues = [
+  "大女主",
+  "大男主",
+  "战神",
+  "废柴",
+  "扮猪吃老虎",
+  "悬疑",
+  "科幻",
+  "搞笑",
+  "穿越",
+  "校园",
+  "恋爱",
+  "末日",
+  "玄幻",
+  "系统",
+  "诡秘",
+  "逆袭",
+  "异能",
+  "洪荒",
+  "氪金",
+  "脑洞",
+  "开局",
+  "无限流",
+  "修仙",
+  "御兽",
+  "无敌",
+  "高武",
+  "变异体",
+  "规则怪谈",
+  "觉醒",
+] as const;
 
-export const iqiyiDramaTaskPayloadSchema = z.object({
-  dramaType: z.enum(iqiyiDramaTypeValues),
+const iqiyiDramaCommonShape = {
   title: requiredText.max(30),
   summary: requiredText.min(100).max(300),
   episodeCount: z.coerce.number().int().min(1).max(2000),
   baiduPanResourceLink: optionalText,
   verticalCoverFile: fileReference.optional(),
   horizontalCoverFile: fileReference.optional(),
+  productionOrganization: requiredText,
+  productionCostYuan: z.coerce.number().finite().nonnegative().max(999_999_999),
+};
+
+const iqiyiComicDramaTaskPayloadSchema = z.object({
+  ...iqiyiDramaCommonShape,
+  dramaType: z.literal("comic-drama"),
   copyright: iqiyiCopyrightSchema,
   audienceType: z.enum(iqiyiAudienceTypeValues),
   visualType: z.enum(iqiyiVisualTypeValues),
-  primaryCategory: optionalText,
-  secondaryCategories: z.array(requiredText),
-  productionOrganization: requiredText,
-  productionCostYuan: z.coerce.number().finite().nonnegative().max(999_999_999),
   contentSource: z.enum(iqiyiContentSourceValues),
+  secondaryCategories: z.array(z.enum(iqiyiComicDramaTagValues)).min(1),
 }).strict();
+
+const iqiyiShortDramaCommonShape = {
+  ...iqiyiDramaCommonShape,
+  dramaType: z.literal("short-drama"),
+  copyright: iqiyiCopyrightSchema,
+  audienceType: z.enum(["男频", "女频"]),
+  secondaryCategories: z.array(z.enum(iqiyiShortDramaTagValues)).min(1),
+};
+
+const iqiyiPaidShortDramaTaskPayloadSchema = z.object({
+  ...iqiyiShortDramaCommonShape,
+  paymentStatus: z.literal("付费"),
+  convertibleToFree: z.enum(["是", "否"]),
+  paidStartEpisode: z.coerce.number().int().min(1),
+}).strict().superRefine((value, context) => {
+  if (value.paidStartEpisode <= value.episodeCount) return;
+  context.addIssue({
+    code: z.ZodIssueCode.custom,
+    path: ["paidStartEpisode"],
+    message: "开始付费集不能超过总集数",
+  });
+});
+
+const iqiyiFreeShortDramaTaskPayloadSchema = z.object({
+  ...iqiyiShortDramaCommonShape,
+  paymentStatus: z.literal("免费"),
+}).strict();
+
+export const iqiyiDramaTaskPayloadSchema = z.union([
+  iqiyiComicDramaTaskPayloadSchema,
+  iqiyiPaidShortDramaTaskPayloadSchema,
+  iqiyiFreeShortDramaTaskPayloadSchema,
+]);
 
 export const claimedIqiyiDramaTaskSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
@@ -132,6 +224,7 @@ export type IqiyiDramaRuntimeOptions = {
     requiredOwnership?: { minimumImages?: number };
     requiredOwnershipFiles?: number;
     requiredPosterImages?: number;
+    requireAllDiscoveredAssets?: boolean;
     posterFallback?: { title?: string; summary: string };
   }) => Promise<unknown>;
 };

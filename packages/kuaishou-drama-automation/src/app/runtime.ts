@@ -217,6 +217,7 @@ export async function startKuaishouDramaRuntime(
     while (running && page && !page.isClosed()) {
       taskState.claimed = undefined;
       let taskPage: Page | null = null;
+      let publishedVariants: Array<"full-paid" | "ad-unlock"> = [];
       try {
         const resolvedTask = await resolveTask();
         if (!resolvedTask) {
@@ -229,7 +230,7 @@ export async function startKuaishouDramaRuntime(
               `accountTaskId=${resolvedTask.claimedTask?.accountTaskId ?? "configured"}`,
           );
           await prepareTask(resolvedTask);
-          await runPublishTask(context!, taskPage, options, resolvedTask);
+          publishedVariants = await runPublishTask(context!, taskPage, options, resolvedTask);
         }
         if (resolvedTask?.claimedTask) {
           const completedTask = resolvedTask.claimedTask;
@@ -238,7 +239,7 @@ export async function startKuaishouDramaRuntime(
             resultJson: {
               accountId: options.kuaishouAccountId,
               accountName: options.kuaishouAccountName,
-              variants: ["full-paid", "ad-unlock"],
+              variants: publishedVariants,
             },
           });
           lastTask = {

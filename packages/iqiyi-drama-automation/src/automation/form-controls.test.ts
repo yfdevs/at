@@ -29,7 +29,7 @@ const cachedChromiumExecutable = path.join(
 
 const fixtureDir = await mkdtemp(path.join(tmpdir(), "iqiyi-proof-upload-"));
 const proofFiles = await Promise.all(
-  ["制作合同-1.jpg", "制作合同-2.jpg", "版权证明-1.jpg", "版权证明-2.jpg"].map(
+  ["知识产权声明-1.jpg", "知识产权声明-2.jpg"].map(
     async (name) => {
       const file = path.join(fixtureDir, name);
       await writeFile(file, name);
@@ -72,7 +72,7 @@ test("clicks the exact 提交项目 button instead of a save action", async () =
   }
 });
 
-test("uploads every file from both copyright arrays", { timeout: 15000 }, async () => {
+test("uploads every production proof file to the intellectual-property declaration input", { timeout: 15000 }, async () => {
   const browser = await chromium.launch({
     headless: true,
     executablePath: cachedChromiumExecutable,
@@ -85,37 +85,17 @@ test("uploads every file from both copyright arrays", { timeout: 15000 }, async 
         <span>知识产权声明文件</span>
         <input id="production-proofs" type="file" multiple>
       </div>
-      <div class="upload-slot">
-        <span>版权证明文件</span>
-        <input id="license-proofs" type="file">
-      </div>
-      <script>
-        window.licenseUploads = [];
-        document.querySelector('#license-proofs').addEventListener('change', (event) => {
-          window.licenseUploads.push(...Array.from(event.currentTarget.files, (file) => file.name));
-        });
-      </script>
     `);
 
     await uploadIqiyiFiles(page, {}, {
       aliases: ["知识产权声明文件"],
-      files: proofFiles.slice(0, 2),
+      files: proofFiles,
       required: true,
     });
-    await uploadIqiyiFiles(page, {}, {
-      aliases: ["版权证明文件"],
-      files: proofFiles.slice(2),
-      required: true,
-    });
-
     const productionNames = await page.locator("#production-proofs").evaluate(
       (element) => Array.from((element as HTMLInputElement).files ?? [], (file) => file.name),
     );
-    const licenseNames = await page.evaluate(() => (window as unknown as {
-      licenseUploads: string[];
-    }).licenseUploads);
-    assert.deepEqual(productionNames, ["制作合同-1.jpg", "制作合同-2.jpg"]);
-    assert.deepEqual(licenseNames, ["版权证明-1.jpg", "版权证明-2.jpg"]);
+    assert.deepEqual(productionNames, ["知识产权声明-1.jpg", "知识产权声明-2.jpg"]);
   } finally {
     await browser.close();
   }

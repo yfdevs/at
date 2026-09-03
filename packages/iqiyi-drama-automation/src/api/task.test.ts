@@ -8,11 +8,15 @@ import {
   reportIqiyiDramaTaskSuccessApi,
 } from "./task.js";
 import type { IqiyiDramaHttpClient } from "./http-client.js";
-import { createIqiyiDramaTaskFixture } from "../testing/task-fixture.js";
+import { iqiyiDramaTaskPayloadSchema } from "../shared/types.js";
+import {
+  createIqiyiComicDramaTaskFixture,
+  createIqiyiDramaTaskFixture,
+} from "../testing/task-fixture.js";
 
 test("lists and claims an iQIYI task through the unified API prefix", async () => {
   const fixture = createIqiyiDramaTaskFixture();
-  const { copyright, ...iqiyiPlaylet } = fixture.playlet;
+  const { copyright: expectedCopyright, ...iqiyiPlaylet } = fixture.playlet;
   const calls: Array<{ path: string; payload: unknown }> = [];
   const client: IqiyiDramaHttpClient = {
     async post(path, payload) {
@@ -47,7 +51,7 @@ test("lists and claims an iQIYI task through the unified API prefix", async () =
               summary: fixture.playlet.summary,
               episodeCount: fixture.playlet.episodeCount,
               producerName: fixture.playlet.productionOrganization,
-              copyright,
+              copyright: expectedCopyright,
               iqiyiPlaylet,
             },
           },
@@ -69,7 +73,8 @@ test("lists and claims an iQIYI task through the unified API prefix", async () =
   assert.equal(task.accountTaskId, 88);
   assert.equal(task.dramaId, 1465);
   assert.equal(task.iqiyiAccountId, "iqiyi-account-1");
-  assert.equal(calls[0]?.path, "/api/dramaAiRpa/iqiyi/accountTask/page");
+  assert.deepEqual(task.playlet.copyright, expectedCopyright);
+  assert.equal(calls[0]?.path, "/dramaAiRpa/iqiyi/accountTask/page");
   assert.deepEqual(calls[0]?.payload, {
     page: 1,
     pageSize: 100,
@@ -80,8 +85,43 @@ test("lists and claims an iQIYI task through the unified API prefix", async () =
     status: "READY",
     auditStatus: null,
   });
-  assert.equal(calls[1]?.path, "/api/dramaAiRpa/iqiyi/rpa/claim");
+  assert.equal(calls[1]?.path, "/dramaAiRpa/iqiyi/rpa/claim");
   assert.deepEqual(calls[1]?.payload, { accountTaskId: 88 });
+});
+
+test("accepts only the knowledge-property proof group for both iQIYI project types", () => {
+  const shortDrama = createIqiyiDramaTaskFixture().playlet;
+  const comicDrama = createIqiyiComicDramaTaskFixture().playlet;
+
+  assert.doesNotThrow(() => iqiyiDramaTaskPayloadSchema.parse(shortDrama));
+  assert.doesNotThrow(() => iqiyiDramaTaskPayloadSchema.parse(comicDrama));
+  assert.throws(() => iqiyiDramaTaskPayloadSchema.parse({
+    ...shortDrama,
+    copyright: {
+      ...shortDrama.copyright,
+      licenseProofFiles: ["unused-license-proof.pdf"],
+    },
+  }));
+});
+
+test("keeps paid-only short-drama fields out of free tasks", () => {
+  const paidShortDrama = createIqiyiDramaTaskFixture().playlet;
+  assert.equal(paidShortDrama.dramaType, "short-drama");
+  assert.equal(paidShortDrama.paymentStatus, "付费");
+  const { convertibleToFree: _convertibleToFree, paidStartEpisode: _paidStartEpisode, ...common } =
+    paidShortDrama;
+  const freeShortDrama = { ...common, paymentStatus: "免费" as const };
+
+  assert.doesNotThrow(() => iqiyiDramaTaskPayloadSchema.parse(freeShortDrama));
+  assert.throws(() => iqiyiDramaTaskPayloadSchema.parse({
+    ...freeShortDrama,
+    convertibleToFree: "是",
+    paidStartEpisode: 10,
+  }));
+  assert.throws(() => iqiyiDramaTaskPayloadSchema.parse({
+    ...paidShortDrama,
+    paidStartEpisode: paidShortDrama.episodeCount + 1,
+  }));
 });
 
 for (const [field, invalidValue] of [
@@ -89,7 +129,9 @@ for (const [field, invalidValue] of [
   ["contentSource", "novel"],
 ] as const) {
   test(`rejects non-contract ${field} values instead of translating aliases`, async () => {
-    const fixture = createIqiyiDramaTaskFixture();
+    const fixture = field === "contentSource"
+      ? createIqiyiComicDramaTaskFixture()
+      : createIqiyiDramaTaskFixture();
     const { copyright, ...iqiyiPlaylet } = fixture.playlet;
     const calls: Array<{ path: string; payload: unknown }> = [];
     const task = await claimNextIqiyiDramaTaskApi({
@@ -158,7 +200,7 @@ test("treats the explicitly unavailable iQIYI task API as an empty queue", async
   });
 
   assert.equal(task, null);
-  assert.deepEqual(calls, ["/api/dramaAiRpa/iqiyi/accountTask/page"]);
+  assert.deepEqual(calls, ["/dramaAiRpa/iqiyi/accountTask/page"]);
 });
 
 test("reports iQIYI task success and failure through the unified API prefix", async () => {
@@ -183,8 +225,8 @@ test("reports iQIYI task success and failure through the unified API prefix", as
   });
 
   assert.deepEqual(calls.map((call) => call.path), [
-    "/api/dramaAiRpa/iqiyi/rpa/report",
-    "/api/dramaAiRpa/iqiyi/rpa/report",
+    "/dramaAiRpa/iqiyi/rpa/report",
+    "/dramaAiRpa/iqiyi/rpa/report",
   ]);
   assert.equal(calls[0]?.payload.taskId, 88);
   assert.equal(calls[0]?.payload.success, true);

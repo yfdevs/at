@@ -3,6 +3,7 @@ import { access, mkdir, readFile, stat } from "node:fs/promises";
 import path from "node:path";
 
 import {
+  findOwnershipProjectProofFiles,
   listLocalPosterImages,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
@@ -20,11 +21,17 @@ const landscapePromptVersion = "iqiyi-landscape-v3-ai-title-art";
 const iqiyiCoverMaximumBytes = 4_900_000;
 const iqiyiProofMaximumBytes = 20 * 1024 * 1024;
 
+export type PreparedIqiyiMaterials = {
+  verticalCover: string;
+  horizontalCover: string;
+  productionProofFiles: string[];
+  copyrightProofFiles: string[];
+};
+
 function iqiyiTitleArtDirection(playlet: IqiyiDramaTaskPayload) {
   const genreText = [
     playlet.title,
     playlet.summary,
-    playlet.primaryCategory,
     ...playlet.secondaryCategories,
   ].filter(Boolean).join(" ");
 
@@ -114,37 +121,35 @@ async function prepareProofFile(
   file: string,
   index: number,
   taskDir: string,
-  proofType: "production-proof" | "license-proof",
+  proof: { label: string; filePrefix: string },
 ) {
-  const label = proofType === "production-proof" ? "知识产权声明文件" : "版权证明文件";
-  await assertReadable(file, label);
+  await assertReadable(file, proof.label);
   const extension = path.extname(file).toLowerCase();
   if (extension === ".pdf" || extension === ".jpg" || extension === ".jpeg" || extension === ".png") {
     const info = await stat(file);
     if (info.size > iqiyiProofMaximumBytes) {
-      throw new Error(`[iqiyi-material-invalid] ${label}超过 20MB：${file}`);
+      throw new Error(`[iqiyi-material-invalid] ${proof.label}超过 20MB：${file}`);
     }
     return file;
   }
   if (extension === ".bmp" || extension === ".webp") {
     return writeJpegWithinLimit(
       file,
-      path.join(taskDir, `iqiyi-${proofType}-${index + 1}.jpg`),
+      path.join(taskDir, `iqiyi-${proof.filePrefix}-${index + 1}.jpg`),
       undefined,
       undefined,
       iqiyiProofMaximumBytes - 100_000,
     );
   }
-  throw new Error(`[iqiyi-material-invalid] ${label}仅支持 JPG、PNG 或 PDF：${file}`);
+  throw new Error(`[iqiyi-material-invalid] ${proof.label}仅支持 JPG、PNG 或 PDF：${file}`);
 }
 
 async function prepareProofReferences(
   references: string[],
   taskDir: string,
-  proofType: "production-proof" | "license-proof",
   options: IqiyiDramaRuntimeOptions,
 ) {
-  const label = proofType === "production-proof" ? "知识产权声明文件" : "版权证明文件";
+  const label = "知识产权声明文件";
   if (references.length === 0) {
     throw new Error(`[copyright-proof-invalid] ${label}至少需要上传 1 个文件。`);
   }
@@ -153,11 +158,33 @@ async function prepareProofReferences(
   }
   const resolved = await Promise.all(
     references.map((reference, index) =>
-      resolveIqiyiAsset(reference, options, `${proofType}-${index + 1}`)
+      resolveIqiyiAsset(reference, options, `production-proof-${index + 1}`)
     ),
   );
   return Promise.all(
-    resolved.map((file, index) => prepareProofFile(file, index, taskDir, proofType)),
+    resolved.map((file, index) => prepareProofFile(file, index, taskDir, {
+      label,
+      filePrefix: "production-proof",
+    })),
+  );
+}
+
+async function prepareCopyrightProofFiles(
+  root: string,
+  resourceName: string,
+  taskDir: string,
+  options: IqiyiDramaRuntimeOptions,
+) {
+  const selection = await findOwnershipProjectProofFiles({ root, resourceName });
+  log(options, "[iqiyi-drama] copyright proof screenshots selected", {
+    jianying: selection.jianying.map((material) => material.name),
+    juchuang: selection.juchuang.map((material) => material.name),
+  });
+  return Promise.all(
+    selection.files.map((file, index) => prepareProofFile(file, index, taskDir, {
+      label: "版权证明文件",
+      filePrefix: "copyright-proof",
+    })),
   );
 }
 
@@ -212,7 +239,7 @@ async function generateLandscapeCover(
 export async function prepareIqiyiMaterials(
   task: ClaimedIqiyiDramaTask,
   options: IqiyiDramaRuntimeOptions,
-) {
+): Promise<PreparedIqiyiMaterials> {
   const root = materialRoot(options);
   const resourceName = task.originalTitle.trim();
   if (!resourceName) throw new Error("IQIYI_DRAMA_ORIGINAL_TITLE_REQUIRED");
@@ -265,24 +292,17 @@ export async function prepareIqiyiMaterials(
     )
     : horizontalSource;
 
-  const [productionProofFiles, licenseProofFiles] = await Promise.all([
+  const [productionProofFiles, copyrightProofFiles] = await Promise.all([
     prepareProofReferences(
       task.playlet.copyright.productionProofFiles,
       taskDir,
-      "production-proof",
       options,
     ),
-    prepareProofReferences(
-      task.playlet.copyright.licenseProofFiles,
-      taskDir,
-      "license-proof",
-      options,
-    ),
+    prepareCopyrightProofFiles(root, resourceName, taskDir, options),
   ]);
 
   task.playlet.verticalCoverFile = verticalCover;
   task.playlet.horizontalCoverFile = horizontalCover;
   task.playlet.copyright.productionProofFiles = productionProofFiles;
-  task.playlet.copyright.licenseProofFiles = licenseProofFiles;
-  return { verticalCover, horizontalCover, productionProofFiles, licenseProofFiles };
+  return { verticalCover, horizontalCover, productionProofFiles, copyrightProofFiles };
 }

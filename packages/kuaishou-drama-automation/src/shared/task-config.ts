@@ -10,6 +10,7 @@ const taskKeys: Array<keyof KuaishouDramaTaskInput> = [
   "title",
   "episodeCount",
   "baiduPanResourceLink",
+  "publishType",
   "fullDramaPriceYuan",
   "localCoverFile",
   "summary",

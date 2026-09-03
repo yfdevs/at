@@ -108,9 +108,10 @@ async function ensureRemoteMaterials(
         episodeCount: task.playlet.episodeCount,
         downloadEpisodeVideos,
         forceAssetDownload: true,
-        requiredOwnership: { minimumImages: 0 },
-        requiredOwnershipFiles: 0,
+        requiredOwnership: { minimumImages: 4 },
+        requiredOwnershipFiles: 4,
         requiredPosterImages: 1,
+        requireAllDiscoveredAssets: true,
         posterFallback: {
           title: task.playlet.title,
           summary: task.playlet.summary,
@@ -150,8 +151,8 @@ async function executeTask(
       },
       async () => {
         await ensureRemoteMaterials(task, options);
-        await prepareIqiyiMaterials(task, options);
-        await runIqiyiPublishTask(page, context, task, options);
+        const materials = await prepareIqiyiMaterials(task, options);
+        await runIqiyiPublishTask(page, context, task, options, materials);
       },
     );
     published = true;

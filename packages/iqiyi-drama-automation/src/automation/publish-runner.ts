@@ -2,8 +2,13 @@ import type { BrowserContext, Page } from "playwright";
 
 import { iqiyiCreateUrl } from "../shared/constants.js";
 import { log } from "../shared/logger.js";
+import type { PreparedIqiyiMaterials } from "../shared/materials.js";
 import { resolveIqiyiRecommendation } from "../shared/recommendation.js";
-import type { ClaimedIqiyiDramaTask, IqiyiDramaRuntimeOptions } from "../shared/types.js";
+import type {
+  ClaimedIqiyiDramaTask,
+  IqiyiDramaRuntimeOptions,
+  IqiyiDramaType,
+} from "../shared/types.js";
 import {
   iqiyiDramaLoginStateFromUrl,
   saveCredentialState,
@@ -47,6 +52,33 @@ function releaseDateFor(now = new Date()) {
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
 }
 
+export async function fillIqiyiPaymentFields(
+  page: Page,
+  options: IqiyiDramaRuntimeOptions,
+  payload: ClaimedIqiyiDramaTask["playlet"],
+) {
+  const isShortDrama = payload.dramaType === "short-drama";
+  await fillIqiyiField(page, options, {
+    aliases: ["付费状态", "是否付费"],
+    value: isShortDrama ? payload.paymentStatus : "免费",
+    kind: "radio",
+    required: true,
+  });
+  if (!isShortDrama || payload.paymentStatus !== "付费") return;
+
+  await fillIqiyiField(page, options, {
+    aliases: ["是否可转免"],
+    value: payload.convertibleToFree,
+    kind: "choice",
+    required: true,
+  });
+  await fillIqiyiField(page, options, {
+    aliases: ["开始付费集"],
+    value: payload.paidStartEpisode,
+    required: true,
+  });
+}
+
 async function confirmIqiyiNoCompanySelection(page: Page) {
   const dialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")
     .filter({ hasText: /无制作方|无联合出品方|不可更改|确认/u, visible: true })
@@ -59,6 +91,30 @@ async function confirmIqiyiNoCompanySelection(page: Page) {
     .last();
   await confirm.waitFor({ state: "visible", timeout: 5_000 });
   await confirm.click({ force: true, timeout: 5_000 });
+}
+
+export async function fillIqiyiNoCompanyFields(
+  page: Page,
+  options: IqiyiDramaRuntimeOptions,
+  dramaType: IqiyiDramaType,
+) {
+  await fillIqiyiField(page, options, {
+    aliases: ["制作方"],
+    value: "无制作方",
+    kind: "choice",
+    required: true,
+  });
+  await confirmIqiyiNoCompanySelection(page);
+
+  if (dramaType !== "short-drama") return;
+
+  await fillIqiyiField(page, options, {
+    aliases: ["联合出品方"],
+    value: "无联合出品方",
+    kind: "choice",
+    required: true,
+  });
+  await confirmIqiyiNoCompanySelection(page);
 }
 
 export async function openIqiyiCreatePage(
@@ -90,6 +146,7 @@ export async function runIqiyiPublishTask(
   context: BrowserContext,
   task: ClaimedIqiyiDramaTask,
   options: IqiyiDramaRuntimeOptions,
+  materials: PreparedIqiyiMaterials,
 ) {
   const payload = task.playlet;
   const recommendation = await resolveIqiyiRecommendation(payload, options);
@@ -165,23 +222,10 @@ export async function runIqiyiPublishTask(
   });
   await uploadIqiyiFiles(page, options, {
     aliases: ["版权证明文件"],
-    files: payload.copyright.licenseProofFiles,
+    files: materials.copyrightProofFiles,
     required: true,
   });
-  await fillIqiyiField(page, options, {
-    aliases: ["制作方"],
-    value: "无制作方",
-    kind: "choice",
-    required: true,
-  });
-  await confirmIqiyiNoCompanySelection(page);
-  await fillIqiyiField(page, options, {
-    aliases: ["联合出品方"],
-    value: "无联合出品方",
-    kind: "choice",
-    required: true,
-  });
-  await confirmIqiyiNoCompanySelection(page);
+  await fillIqiyiNoCompanyFields(page, options, payload.dramaType);
   await openIqiyiSection(page, "作品内容");
   await fillIqiyiField(page, options, {
     aliases: ["标题", "剧名", "项目名称", "作品名称", "专辑名称"],
@@ -212,12 +256,7 @@ export async function runIqiyiPublishTask(
       required: true,
     });
   }
-  await fillIqiyiField(page, options, {
-    aliases: ["付费状态", "是否付费"],
-    value: "免费",
-    kind: "radio",
-    required: true,
-  });
+  await fillIqiyiPaymentFields(page, options, payload);
   await fillIqiyiField(page, options, {
     aliases: isShortDrama ? ["分类"] : ["受众类型", "目标受众", "受众"],
     value: payload.audienceType,
@@ -249,10 +288,7 @@ export async function runIqiyiPublishTask(
       });
     }
   } else {
-    const tags = [...new Set([
-      payload.primaryCategory,
-      ...payload.secondaryCategories,
-    ].filter((value): value is string => Boolean(value?.trim())))];
+    const tags = [...new Set(payload.secondaryCategories)];
     if (tags.length === 0) {
       throw new Error("IQIYI_DRAMA_REQUIRED_FIELD_VALUE_MISSING: 标签");
     }

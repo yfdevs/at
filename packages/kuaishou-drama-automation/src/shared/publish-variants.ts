@@ -9,7 +9,7 @@ function withoutBookTitleMarks(title: string) {
 
 export function createKuaishouDramaPublishVariants(
   task: KuaishouDramaTaskConfig,
-): [KuaishouDramaPublishVariant, KuaishouDramaPublishVariant] {
+): KuaishouDramaPublishVariant[] {
   const lastEpisode = task.episodeCount;
   const fullPaidFreeEnd = Math.min(7, lastEpisode);
   const fullPaidRanges: KuaishouDramaPublishVariant["episodePriceRanges"] = [
@@ -26,7 +26,7 @@ export function createKuaishouDramaPublishVariants(
     adUnlockRanges.push({ startEpisode: 2, endEpisode: lastEpisode, price: "付费" });
   }
 
-  return [
+  const variants: KuaishouDramaPublishVariant[] = [
     {
       kind: "full-paid",
       title: task.title,
@@ -41,4 +41,8 @@ export function createKuaishouDramaPublishVariants(
       episodePriceRanges: adUnlockRanges,
     },
   ];
+
+  if (task.publishType === "付费") return [variants[0]!];
+  if (task.publishType === "广告") return [variants[1]!];
+  return variants;
 }

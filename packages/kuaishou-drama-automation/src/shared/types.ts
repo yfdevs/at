@@ -95,6 +95,7 @@ export const kuaishouDramaAuthorDeclarationValues = [
   "内容无需添加声明",
   "含AI生成内容",
 ] as const;
+export const kuaishouDramaPublishTypeValues = ["付费", "广告"] as const;
 export const kuaishouDramaSaleModeValues = [
   "全剧付费",
   "单集+全剧付费",
@@ -105,6 +106,13 @@ export const kuaishouDramaEpisodePriceValues = ["免费", "付费"] as const;
 const requiredText = z.string().trim().min(1);
 const dateTextSchema = z.string().regex(/^\d{4}-\d{2}-\d{2}$/);
 const fixedPersonnelName = "米苏";
+const optionalPublishTypeSchema = z.preprocess(
+  (value) =>
+    value === null || (typeof value === "string" && value.trim() === "")
+      ? undefined
+      : value,
+  z.enum(kuaishouDramaPublishTypeValues).optional(),
+);
 
 function pad2(value: number) {
   return String(value).padStart(2, "0");
@@ -127,6 +135,8 @@ const kuaishouDramaTaskBaseSchema = z.object({
     .describe("任务返回的总集数，用于创建单集信息槽和批量设置集数范围"),
   baiduPanResourceLink: z.string().trim().optional()
     .describe("百度网盘分享文本，包含分享链接和提取码；存在时上剧前必须下载并校验全部剧集视频"),
+  publishType: optionalPublishTypeSchema
+    .describe("发布版本；付费或广告，字段缺失、null 或空字符串时两个版本都发布"),
   fullDramaPriceYuan: z.coerce.number().positive().max(9999).default(4.9)
     .describe("全剧付费版本的全剧价格，单位元"),
   localCoverFile: requiredText.optional()
@@ -237,6 +247,7 @@ export type KuaishouDramaBroadcastPath = z.infer<
   typeof kuaishouDramaTaskBaseSchema
 >["broadcastPaths"][number];
 export type KuaishouDramaPersonGender = (typeof kuaishouDramaPersonGenderValues)[number];
+export type KuaishouDramaPublishType = (typeof kuaishouDramaPublishTypeValues)[number];
 export type KuaishouDramaSaleMode = (typeof kuaishouDramaSaleModeValues)[number];
 export type KuaishouDramaEpisodePrice = (typeof kuaishouDramaEpisodePriceValues)[number];
 export type KuaishouDramaTaskInput = z.input<typeof kuaishouDramaTaskSchema>;
