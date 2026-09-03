@@ -1,7 +1,13 @@
 import assert from "node:assert/strict";
+import { mkdtemp, rm } from "node:fs/promises";
+import { tmpdir } from "node:os";
+import path from "node:path";
 import test from "node:test";
 
+import sharp from "sharp";
+
 import {
+  classifyOwnershipProjectProof,
   classifyOwnershipProjectProofName,
   classifyOwnershipProjectProofHash,
   selectOwnershipProjectProofFiles,
@@ -42,6 +48,43 @@ test("recognizes expanded and legacy 剪映 top-left logo fingerprints", () => {
   assert.equal(classifyOwnershipProjectProofHash(0x101c4c2d4f4f4f1cn), "juchuang");
 });
 
+test("classifies explicitly named parent directories without opening the image", async () => {
+  assert.equal(
+    await classifyOwnershipProjectProof("D:\\素材\\权属文件\\剪映\\工程1.png", "工程1.png"),
+    "jianying",
+  );
+  assert.equal(
+    await classifyOwnershipProjectProof("D:\\素材\\权属文件\\剧创\\工程1.png", "工程1.png"),
+    "juchuang",
+  );
+});
+
+test("classifies normalized dark and light application shells and rejects non-screenshots", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ownership-project-proof-"));
+  try {
+    const darkScreenshot = path.join(root, "工程1.png");
+    const lightScreenshot = path.join(root, "工程2.png");
+    const portraitLikeImage = path.join(root, "工程3.png");
+    await Promise.all([
+      sharp({ create: { width: 1920, height: 1080, channels: 3, background: "#303438" } })
+        .png()
+        .toFile(darkScreenshot),
+      sharp({ create: { width: 1920, height: 1080, channels: 3, background: "#f2f2f2" } })
+        .png()
+        .toFile(lightScreenshot),
+      sharp({ create: { width: 1200, height: 1000, channels: 3, background: "#303438" } })
+        .png()
+        .toFile(portraitLikeImage),
+    ]);
+
+    assert.equal(await classifyOwnershipProjectProof(darkScreenshot), "jianying");
+    assert.equal(await classifyOwnershipProjectProof(lightScreenshot), "juchuang");
+    assert.equal(await classifyOwnershipProjectProof(portraitLikeImage), "unknown");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("selects the first two numbered screenshots from each proof source", () => {
   const selection = selectOwnershipProjectProofFiles([
     proof(10, "jianying"),
@@ -70,5 +113,16 @@ test("fails before platform automation when either proof source has fewer than t
       proof(4, "juchuang"),
     ]),
     /剪映=1\/2，剧创=2\/2/u,
+  );
+});
+
+test("reports unrecognized images instead of treating them as 剧创", () => {
+  assert.throws(
+    () => selectOwnershipProjectProofFiles([
+      proof(1, "jianying"),
+      proof(2, "juchuang"),
+      proof(3, "unknown"),
+    ]),
+    /剪映=1\/2，剧创=1\/2，未识别=1.*权属工程文件3\.png/u,
   );
 });

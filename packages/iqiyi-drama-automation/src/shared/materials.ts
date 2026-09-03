@@ -179,6 +179,7 @@ async function prepareCopyrightProofFiles(
   log(options, "[iqiyi-drama] copyright proof screenshots selected", {
     jianying: selection.jianying.map((material) => material.name),
     juchuang: selection.juchuang.map((material) => material.name),
+    unknown: selection.unknown.map((material) => material.name),
   });
   return Promise.all(
     selection.files.map((file, index) => prepareProofFile(file, index, taskDir, {

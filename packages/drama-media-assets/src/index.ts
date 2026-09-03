@@ -27,7 +27,7 @@ export type OwnershipMaterialRequirements = { minimumImages?: number };
 
 export type LocalOwnershipMaterialSet = LocalOwnershipMaterialFile[];
 
-export type OwnershipProjectProofKind = "jianying" | "juchuang";
+export type OwnershipProjectProofKind = "jianying" | "juchuang" | "unknown";
 
 export type ClassifiedOwnershipProjectProof = {
   kind: OwnershipProjectProofKind;
@@ -38,6 +38,7 @@ export type OwnershipProjectProofSelection = {
   files: string[];
   jianying: LocalOwnershipMaterialFile[];
   juchuang: LocalOwnershipMaterialFile[];
+  unknown: LocalOwnershipMaterialFile[];
 };
 
 export type LocalPosterImageFile = {
@@ -346,6 +347,9 @@ const legacyOwnershipProjectLogoRegionHeight = 45;
 const ownershipProjectDifferenceHashWidth = 9;
 const ownershipProjectDifferenceHashHeight = 8;
 const jianyingMaximumHashDistance = 12;
+const ownershipProjectMinimumScreenshotAspectRatio = 1.5;
+const jianyingMaximumTopLeftLuminance = 110;
+const juchuangMinimumTopLeftLuminance = 180;
 
 // Difference hashes of the expanded top-left 剪映 logo region. The two fingerprints
 // cover the observed desktop layouts with different menu/logo offsets.
@@ -380,6 +384,36 @@ export function classifyOwnershipProjectProofHash(hash: bigint): OwnershipProjec
     ].map((reference) => bigintHashDistance(hash, reference)),
   );
   return distance <= jianyingMaximumHashDistance ? "jianying" : "juchuang";
+}
+
+async function classifyOwnershipProjectProofAppearance(
+  file: string,
+): Promise<OwnershipProjectProofKind> {
+  const metadata = await sharp(file).metadata();
+  if (!metadata.width || !metadata.height) return "unknown";
+
+  const swapsOrientation = [5, 6, 7, 8].includes(metadata.orientation ?? 1);
+  const width = swapsOrientation ? metadata.height : metadata.width;
+  const height = swapsOrientation ? metadata.width : metadata.height;
+  if (!width || !height || width / height < ownershipProjectMinimumScreenshotAspectRatio) {
+    return "unknown";
+  }
+
+  // Both products keep their identity/navigation area in the top-left. Sampling a
+  // percentage of the screenshot makes the signal independent of display size and
+  // Windows scaling: 剪映 uses a dark shell, while 剧创 uses a light web shell.
+  const regionWidth = Math.max(1, Math.round(metadata.width * 0.1));
+  const regionHeight = Math.max(1, Math.round(metadata.height * 0.08));
+  const stats = await sharp(file)
+    .extract({ left: 0, top: 0, width: regionWidth, height: regionHeight })
+    .stats();
+  const [red, green, blue] = stats.channels;
+  if (!red || !green || !blue) return "unknown";
+  const luminance = red.mean * 0.2126 + green.mean * 0.7152 + blue.mean * 0.0722;
+
+  if (luminance <= jianyingMaximumTopLeftLuminance) return "jianying";
+  if (luminance >= juchuangMinimumTopLeftLuminance) return "juchuang";
+  return "unknown";
 }
 
 export function classifyOwnershipProjectProofName(
@@ -433,7 +467,8 @@ export async function classifyOwnershipProjectProof(
   file: string,
   nameHint = path.basename(file),
 ): Promise<OwnershipProjectProofKind> {
-  const namedKind = classifyOwnershipProjectProofName(nameHint);
+  const parentDirectoryHint = path.basename(path.dirname(file));
+  const namedKind = classifyOwnershipProjectProofName(`${parentDirectoryHint}/${nameHint}`);
   if (namedKind) return namedKind;
 
   const fileStat = await stat(file);
@@ -441,22 +476,31 @@ export async function classifyOwnershipProjectProof(
   const cached = ownershipProjectProofClassificationCache.get(cacheKey);
   if (cached) return cached;
 
-  const expandedKind = classifyOwnershipProjectProofHash(
-    await ownershipProjectProofDifferenceHash(
+  const appearanceKind = await classifyOwnershipProjectProofAppearance(file);
+  let kind = appearanceKind;
+  if (appearanceKind === "unknown") {
+    const expandedHash = await ownershipProjectProofDifferenceHash(
       file,
       ownershipProjectLogoRegionWidth,
       ownershipProjectLogoRegionHeight,
-    ),
-  );
-  const kind = expandedKind === "jianying"
-    ? expandedKind
-    : classifyOwnershipProjectProofHash(
-      await ownershipProjectProofDifferenceHash(
+    ).catch(() => undefined);
+    const expandedKind = expandedHash === undefined
+      ? "unknown"
+      : classifyOwnershipProjectProofHash(expandedHash);
+    if (expandedKind === "jianying") {
+      kind = expandedKind;
+    } else {
+      const legacyHash = await ownershipProjectProofDifferenceHash(
         file,
         legacyOwnershipProjectLogoRegionWidth,
         legacyOwnershipProjectLogoRegionHeight,
-      ),
-    );
+      ).catch(() => undefined);
+      const legacyKind = legacyHash === undefined
+        ? "unknown"
+        : classifyOwnershipProjectProofHash(legacyHash);
+      kind = legacyKind === "jianying" ? legacyKind : "unknown";
+    }
+  }
   if (ownershipProjectProofClassificationCache.size >= 512) {
     const oldest = ownershipProjectProofClassificationCache.keys().next().value;
     if (oldest) ownershipProjectProofClassificationCache.delete(oldest);
@@ -489,13 +533,24 @@ export function selectOwnershipProjectProofFiles(
     .filter((item) => item.kind === "juchuang")
     .map((item) => item.material)
     .sort(ownershipProjectProofOrder);
+  const unknown = classified
+    .filter((item) => item.kind === "unknown")
+    .map((item) => item.material)
+    .sort(ownershipProjectProofOrder);
 
   if (jianying.length < filesPerKind || juchuang.length < filesPerKind) {
+    const unknownSummary = unknown.length > 0
+      ? ` 未识别文件：${unknown.slice(0, 8).map((item) => item.name).join("、")}${
+        unknown.length > 8 ? `等 ${unknown.length} 张` : ""
+      }。`
+      : "";
     throw new Error(
       "[ownership-project-proof-invalid] 权属工程截图不足："
-        + `剪映=${jianying.length}/${filesPerKind}，剧创=${juchuang.length}/${filesPerKind}。`
+        + `剪映=${jianying.length}/${filesPerKind}，剧创=${juchuang.length}/${filesPerKind}，`
+        + `未识别=${unknown.length}。`
         + `请确保权属文件夹包含至少 ${filesPerKind} 张左上角带“剪映”标志的工程截图，`
-        + `以及至少 ${filesPerKind} 张剧创工程截图。`,
+        + `以及至少 ${filesPerKind} 张剧创工程截图；也可以分别放入“剪映”和“剧创”子文件夹。`
+        + unknownSummary,
     );
   }
 
@@ -505,6 +560,7 @@ export function selectOwnershipProjectProofFiles(
     files: [...selectedJianying, ...selectedJuchuang].map((material) => material.file),
     jianying: selectedJianying,
     juchuang: selectedJuchuang,
+    unknown,
   };
 }
 
@@ -518,9 +574,11 @@ export async function findOwnershipProjectProofFiles(options: {
     resourceName: options.resourceName,
     deduplicateByContent: true,
   });
-  const candidates = materials.filter((material) =>
-    ownershipProjectScreenshotPattern.test(material.name)
-  );
+  const candidates = materials.filter((material) => {
+    const parentDirectoryName = path.basename(path.dirname(material.file));
+    return ownershipProjectScreenshotPattern.test(material.name)
+      || classifyOwnershipProjectProofName(parentDirectoryName) !== undefined;
+  });
   const classified = await Promise.all(
     candidates.map(async (material) => ({
       material,
