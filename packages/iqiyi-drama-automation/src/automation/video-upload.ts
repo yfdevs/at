@@ -5,13 +5,17 @@ import {
   prepareEpisodeUploadFiles,
   type PreparedEpisodeUploadFiles,
 } from "@drama/drama-media-assets";
-import type { Locator, Page } from "playwright";
+import type { FileChooser, Locator, Page } from "playwright";
 
 import { log } from "../shared/logger.js";
 import type { ClaimedIqiyiDramaTask, IqiyiDramaRuntimeOptions } from "../shared/types.js";
 import { throwIfIqiyiFormInvalid } from "./form-controls.js";
 
 const maximumFilesPerSelection = 50;
+const batchRegistrationInitialWaitMs = 5_000;
+const batchRegistrationQuietMs = 2_000;
+const episodeRegistrationPollIntervalMs = 250;
+const episodeRegistrationTimeoutMs = 30_000;
 const uploadPollIntervalMs = 2_000;
 const videoInputSelector = [
   "input[type='file'][multiple][accept*='.mp4']",
@@ -109,6 +113,145 @@ function expectedFileMatched(row: IqiyiVideoUploadRow, file: string) {
   return text.includes(basename) || text.includes(stem);
 }
 
+function matchedExpectedFiles(rows: IqiyiVideoUploadRow[], expectedFiles: string[]) {
+  const unmatchedRows = [...rows];
+  const matchedFiles: string[] = [];
+  for (const file of expectedFiles) {
+    const rowIndex = unmatchedRows.findIndex((row) => expectedFileMatched(row, file));
+    if (rowIndex < 0) continue;
+    unmatchedRows.splice(rowIndex, 1);
+    matchedFiles.push(file);
+  }
+  return matchedFiles;
+}
+
+function matchedExpectedFileCount(rows: IqiyiVideoUploadRow[], expectedFiles: string[]) {
+  return matchedExpectedFiles(rows, expectedFiles).length;
+}
+
+function throwForIqiyiVideoUploadErrors(snapshot: IqiyiVideoUploadSnapshot) {
+  const failedRows = snapshot.rows
+    .map((row, index) => ({ row, index }))
+    .filter(({ row }) => row.failed);
+  if (snapshot.globalErrors.length === 0 && failedRows.length === 0) return;
+
+  const rowErrors = failedRows.map(({ row, index }) =>
+    `第${index + 1}行${row.errorText ? `：${row.errorText}` : "上传失败"}`
+  );
+  throw new Error(
+    `IQIYI_DRAMA_VIDEO_UPLOAD_FAILED: ${[
+      ...snapshot.globalErrors,
+      ...rowErrors,
+    ].join("；")}`,
+  );
+}
+
+async function waitForIqiyiEpisodeRegistration(
+  page: Page,
+  root: Locator,
+  expectedFiles: string[],
+  deadline: number,
+) {
+  const registrationDeadline = Math.min(
+    deadline,
+    Date.now() + episodeRegistrationTimeoutMs,
+  );
+  let stableRegisteredPolls = 0;
+  let lastSnapshot: IqiyiVideoUploadSnapshot = { rows: [], globalErrors: [] };
+  let lastMatchedCount = 0;
+
+  while (Date.now() < registrationDeadline) {
+    lastSnapshot = await readIqiyiVideoUploadSnapshot(page, root);
+    throwForIqiyiVideoUploadErrors(lastSnapshot);
+    lastMatchedCount = matchedExpectedFileCount(lastSnapshot.rows, expectedFiles);
+    const registered = lastSnapshot.rows.length >= expectedFiles.length
+      && lastMatchedCount === expectedFiles.length;
+    stableRegisteredPolls = registered ? stableRegisteredPolls + 1 : 0;
+    if (stableRegisteredPolls >= 2) return;
+    await page.waitForTimeout(episodeRegistrationPollIntervalMs);
+  }
+
+  const file = expectedFiles[expectedFiles.length - 1];
+  throw new Error(
+    `IQIYI_DRAMA_VIDEO_REGISTRATION_TIMEOUT: file=${file ? path.basename(file) : "unknown"} `
+      + `expectedRows=${expectedFiles.length} rows=${lastSnapshot.rows.length} `
+      + `matched=${lastMatchedCount}`,
+  );
+}
+
+async function waitForIqiyiBatchRegistration(
+  page: Page,
+  root: Locator,
+  batchFiles: string[],
+  deadline: number,
+) {
+  const startedAt = Date.now();
+  const registrationDeadline = Math.min(
+    deadline,
+    startedAt + episodeRegistrationTimeoutMs,
+  );
+  let bestMatchedFiles: string[] = [];
+  let lastImprovementAt = startedAt;
+
+  while (Date.now() < registrationDeadline) {
+    const snapshot = await readIqiyiVideoUploadSnapshot(page, root);
+    throwForIqiyiVideoUploadErrors(snapshot);
+    const matchedFiles = matchedExpectedFiles(snapshot.rows, batchFiles);
+    if (matchedFiles.length > bestMatchedFiles.length) {
+      bestMatchedFiles = matchedFiles;
+      lastImprovementAt = Date.now();
+    }
+    if (bestMatchedFiles.length === batchFiles.length) return bestMatchedFiles;
+
+    const now = Date.now();
+    if (bestMatchedFiles.length > 0 && now - lastImprovementAt >= batchRegistrationQuietMs) {
+      return bestMatchedFiles;
+    }
+    if (bestMatchedFiles.length === 0 && now - startedAt >= batchRegistrationInitialWaitMs) {
+      return [];
+    }
+    await page.waitForTimeout(episodeRegistrationPollIntervalMs);
+  }
+
+  return bestMatchedFiles;
+}
+
+async function selectIqiyiEpisodeFiles(
+  page: Page,
+  root: Locator,
+  files: string[],
+  options: IqiyiDramaRuntimeOptions,
+) {
+  const uploadTrigger = root.locator(".catalog-upload-video-wrap")
+    .filter({ visible: true })
+    .first();
+  if (await uploadTrigger.count() > 0) {
+    let chooser: FileChooser | null = null;
+    try {
+      [chooser] = await Promise.all([
+        page.waitForEvent("filechooser", { timeout: 10_000 }),
+        uploadTrigger.click({ timeout: 10_000 }),
+      ]);
+    } catch (error) {
+      log(
+        options,
+        `[iqiyi-drama] upload trigger file chooser unavailable; using attached input: ${message(error)}`,
+      );
+    }
+    if (chooser) {
+      if (files.length > 1 && !chooser.isMultiple()) {
+        throw new Error("IQIYI_DRAMA_VIDEO_CHOOSER_NOT_MULTIPLE");
+      }
+      await chooser.setFiles(files, { timeout: 120_000 });
+      return;
+    }
+  }
+
+  const input = root.locator(videoInputSelector).last();
+  await input.waitFor({ state: "attached", timeout: 30_000 });
+  await input.setInputFiles(files, { timeout: 120_000 });
+}
+
 async function waitForIqiyiVideoUploadComplete(
   page: Page,
   root: Locator,
@@ -122,25 +265,8 @@ async function waitForIqiyiVideoUploadComplete(
 
   while (Date.now() < deadline) {
     lastSnapshot = await readIqiyiVideoUploadSnapshot(page, root);
-    const failedRows = lastSnapshot.rows
-      .map((row, index) => ({ row, index }))
-      .filter(({ row }) => row.failed);
-    if (lastSnapshot.globalErrors.length > 0 || failedRows.length > 0) {
-      const rowErrors = failedRows.map(({ row, index }) =>
-        `第${index + 1}行${row.errorText ? `：${row.errorText}` : "上传失败"}`
-      );
-      throw new Error(
-        `IQIYI_DRAMA_VIDEO_UPLOAD_FAILED: ${[
-          ...lastSnapshot.globalErrors,
-          ...rowErrors,
-        ].join("；")}`,
-      );
-    }
-
-    const matchedCount = expectedFiles.filter((file, index) => {
-      const row = lastSnapshot.rows[index];
-      return row ? expectedFileMatched(row, file) : false;
-    }).length;
+    throwForIqiyiVideoUploadErrors(lastSnapshot);
+    const matchedCount = matchedExpectedFileCount(lastSnapshot.rows, expectedFiles);
     const terminalCount = lastSnapshot.rows.filter((row) => row.terminal).length;
     const uploadingCount = lastSnapshot.rows.filter((row) => row.uploading).length;
     const progress = `${terminalCount}/${expectedFiles.length}（行=${lastSnapshot.rows.length}`
@@ -207,25 +333,54 @@ export async function uploadIqiyiEpisodeVideos(
     const batchCount = Math.ceil(prepared.files.length / maximumFilesPerSelection);
     log(
       options,
-      `[iqiyi-drama] uploading ${prepared.files.length} episode videos in ${batchCount} batch(es); `
+      `[iqiyi-drama] registering ${prepared.files.length} episode videos in ${batchCount} batch(es); `
         + `timeout=${timeoutMinutes} minutes`,
     );
 
     for (let offset = 0; offset < prepared.files.length; offset += maximumFilesPerSelection) {
       const batch = prepared.files.slice(offset, offset + maximumFilesPerSelection);
       const batchNumber = Math.floor(offset / maximumFilesPerSelection) + 1;
-      const currentInput = root.locator(videoInputSelector).last();
-      await currentInput.waitFor({ state: "attached", timeout: 30_000 });
       log(
         options,
-        `[iqiyi-drama] selecting episode upload batch ${batchNumber}/${batchCount}: `
+        `[iqiyi-drama] selecting episode batch ${batchNumber}/${batchCount}: `
           + `${path.basename(batch[0]!)} -> ${path.basename(batch[batch.length - 1]!)}`,
       );
-      await currentInput.setInputFiles(batch, { timeout: 20 * 60_000 });
-      selectedFiles.push(...batch);
-      await waitForIqiyiVideoUploadComplete(page, root, selectedFiles, deadline, options);
+      await selectIqiyiEpisodeFiles(page, root, batch, options);
+      const registeredBatchFiles = await waitForIqiyiBatchRegistration(page, root, batch, deadline);
+      selectedFiles.push(...registeredBatchFiles);
+      log(
+        options,
+        `[iqiyi-drama] batch registered: ${registeredBatchFiles.length}/${batch.length}; `
+          + `total=${selectedFiles.length}/${prepared.files.length}`,
+      );
+
+      const registeredBatchSet = new Set(registeredBatchFiles);
+      const missingFiles = batch.filter((file) => !registeredBatchSet.has(file));
+      if (missingFiles.length > 0) {
+        log(
+          options,
+          `[iqiyi-drama] batch registration incomplete; retrying ${missingFiles.length} missing episode(s)`,
+        );
+      }
+      for (const file of missingFiles) {
+        const currentSnapshot = await readIqiyiVideoUploadSnapshot(page, root);
+        throwForIqiyiVideoUploadErrors(currentSnapshot);
+        if (matchedExpectedFiles(currentSnapshot.rows, [file]).length > 0) {
+          selectedFiles.push(file);
+          continue;
+        }
+        await selectIqiyiEpisodeFiles(page, root, [file], options);
+        const expectedFiles = [...selectedFiles, file];
+        await waitForIqiyiEpisodeRegistration(page, root, expectedFiles, deadline);
+        selectedFiles.push(file);
+        log(
+          options,
+          `[iqiyi-drama] missing episode registered: ${selectedFiles.length}/${prepared.files.length}`,
+        );
+      }
     }
 
+    await waitForIqiyiVideoUploadComplete(page, root, selectedFiles, deadline, options);
     await throwIfIqiyiFormInvalid(page);
   } catch (error) {
     throw Object.assign(

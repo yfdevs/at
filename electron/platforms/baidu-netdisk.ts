@@ -18,6 +18,7 @@ import {
 } from "../global-app-config";
 import { resolveFromAppRoot } from "./shared";
 import { createElectronPlatformLogger } from "../platform-logger";
+import { runRuntimeAssetCleanup } from "../runtime-asset-cleanup";
 
 export type BaiduNetdiskConfig = {
   debugPort: string;
@@ -283,6 +284,14 @@ function runDiskCleanup(protectedExtraPaths: string[] = []) {
     ...protectedExtraPaths.map(normalizedPathKey),
   ]);
   diskCleanupOperation = (async () => {
+    const usageRatio = await driveDUsageRatio().catch(() => 0);
+    if (usageRatio >= diskCleanupUsageThreshold) {
+      await runRuntimeAssetCleanup({
+        reason: "disk-pressure",
+        diskPressure: true,
+      });
+    }
+
     for (const rootPath of monitoredEpisodeVideoRoots) {
       await cleanupStalePlayletDirectories(rootPath, protectedPaths).catch((error) => {
         baiduNetdiskLogger("storage").warn("剧目目录检查或清理失败", {

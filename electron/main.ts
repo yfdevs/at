@@ -97,6 +97,7 @@ import {
   registerBaiduNetdiskPlatformHandlers,
 } from "./platforms/baidu-netdisk";
 import { readDriveStatus, readMemoryStatus } from "./platforms/shared";
+import { startRuntimeAssetCleanupMonitor } from "./runtime-asset-cleanup";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
@@ -261,6 +262,7 @@ app.whenReady().then(() => {
     registerTiktokDramaCenterPlatformHandlers();
     registerPinduoduoDramaPlatformHandlers();
     registerBaiduNetdiskPlatformHandlers();
+    startRuntimeAssetCleanupMonitor();
     registerAppUpdaterHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
     });

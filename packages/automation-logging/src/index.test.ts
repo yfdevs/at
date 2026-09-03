@@ -15,11 +15,13 @@ test("平台日志独立写入并统一格式", async () => {
       platform: "qq-drama",
       scope: "task",
       logFilePath: qqFile,
+      console: false,
     });
     const kuaishouLogger = createAutomationLogger({
       platform: "kuaishou-drama",
       scope: "upload",
       logFilePath: kuaishouFile,
+      console: false,
     });
 
     qqLogger.info("[qq-drama] claimed task: 隔离测试", { taskId: 101, apiToken: "secret-value" });
@@ -33,12 +35,12 @@ test("平台日志独立写入并统一格式", async () => {
       "utf8",
     );
 
-    assert.match(qqText, /\[QQ短剧\/任务\] 已领取任务：隔离测试/);
-    assert.match(qqText, /apiToken=\[已隐藏\]/);
-    assert.doesNotMatch(qqText, /快手短剧|视频上传完成/);
-    assert.match(kuaishouText, /\[快手短剧\/上传\] 视频上传完成/);
-    assert.doesNotMatch(kuaishouText, /QQ短剧|隔离测试/);
-    assert.equal(JSON.parse(qqStructured).details.apiToken, "[已隐藏]");
+    assert.match(qqText, /\[Drama\] \d+ - .+\s+LOG \[QQ_DRAMA:TASK\] claimed task: 隔离测试/);
+    assert.match(qqText, /apiToken=\[REDACTED\]/);
+    assert.doesNotMatch(qqText, /KUAISHOU_DRAMA|video upload finished/);
+    assert.match(kuaishouText, /\s+LOG \[KUAISHOU_DRAMA:UPLOAD\] video upload finished/);
+    assert.doesNotMatch(kuaishouText, /QQ_DRAMA|隔离测试/);
+    assert.equal(JSON.parse(qqStructured).details.apiToken, "[REDACTED]");
   } finally {
     await rm(testDir, { recursive: true, force: true });
   }
@@ -52,6 +54,7 @@ test("日志回调异常不影响文件写入", async () => {
       platform: "wechat-drama",
       scope: "runtime",
       logFilePath: logFile,
+      console: false,
       onEntry: () => {
         throw new Error("sink unavailable");
       },
@@ -59,7 +62,7 @@ test("日志回调异常不影响文件写入", async () => {
 
     assert.doesNotThrow(() => logger.info("runtime stopped"));
     await logger.flush();
-    assert.match(await readFile(logFile, "utf8"), /\[视频号短剧\/服务\] 服务已停止/);
+    assert.match(await readFile(logFile, "utf8"), /\s+LOG \[WECHAT_DRAMA:RUNTIME\] runtime stopped/);
   } finally {
     await rm(testDir, { recursive: true, force: true });
   }

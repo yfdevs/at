@@ -2,15 +2,15 @@ import { z } from "zod";
 
 import {
   claimedIqiyiDramaTaskSchema,
+  iqiyiDramaTaskPayloadSchema,
   type ClaimedIqiyiDramaTask,
   type IqiyiDramaApiConfig,
   type IqiyiDramaRuntimeOptions,
   type IqiyiDramaTaskFailStage,
   type IqiyiDramaTaskStatus,
-  type IqiyiDramaType,
-  iqiyiContentSourceValues,
 } from "../shared/types.js";
-import { ensureIqiyiMockAssets, iqiyiMockAssetPaths } from "../shared/mock-assets.js";
+import { log } from "../shared/logger.js";
+import { createIqiyiDramaHttpClient, type IqiyiDramaHttpClient } from "./http-client.js";
 
 export type IqiyiDramaTaskApiEndpoints = {
   accountTaskPage: string;
@@ -18,23 +18,24 @@ export type IqiyiDramaTaskApiEndpoints = {
   reportTask: string;
 };
 
-type TaskApiOptions = {
+export type IqiyiDramaTaskApiOptions = {
   apiConfig?: IqiyiDramaApiConfig;
+  client?: IqiyiDramaHttpClient;
   endpoints?: Partial<IqiyiDramaTaskApiEndpoints>;
 };
 
-export type ClaimNextIqiyiDramaTaskOptions = TaskApiOptions & {
+export type ClaimNextIqiyiDramaTaskOptions = IqiyiDramaTaskApiOptions & {
   runtimeOptions?: IqiyiDramaRuntimeOptions;
   rpaStatus?: IqiyiDramaTaskStatus;
 };
 
-export type IqiyiDramaTaskSuccessReport = TaskApiOptions & {
+export type IqiyiDramaTaskSuccessReport = IqiyiDramaTaskApiOptions & {
   runtimeOptions?: IqiyiDramaRuntimeOptions;
   accountTaskId: number;
   resultJson?: Record<string, unknown>;
 };
 
-export type IqiyiDramaTaskErrorReport = TaskApiOptions & {
+export type IqiyiDramaTaskErrorReport = IqiyiDramaTaskApiOptions & {
   runtimeOptions?: IqiyiDramaRuntimeOptions;
   accountTaskId: number;
   failStage: IqiyiDramaTaskFailStage;
@@ -42,117 +43,74 @@ export type IqiyiDramaTaskErrorReport = TaskApiOptions & {
   resultJson?: Record<string, unknown>;
 };
 
-const readyTaskSchema = z.object({
-  id: z.coerce.number().int().positive(),
-  dramaId: z.coerce.number().int().positive().optional(),
-  accountId: z.string().trim().min(1),
-  accountName: z.string().nullish(),
-  status: z.string().nullish(),
-  originalTitle: z.string().nullish(),
-}).passthrough();
+const defaultEndpoints: IqiyiDramaTaskApiEndpoints = {
+  accountTaskPage: "/api/dramaAiRpa/iqiyi/accountTask/page",
+  claimTask: "/api/dramaAiRpa/iqiyi/rpa/claim",
+  reportTask: "/api/dramaAiRpa/iqiyi/rpa/report",
+};
+const readyTaskPageSize = 100;
+const apiResponseBaseSchema = z.object({
+  code: z.number(),
+  msg: z.string().nullish(),
+});
+
+const readyTaskSchema = z
+  .object({
+    id: z.coerce.number().int().positive(),
+    dramaId: z.coerce.number().int().positive().optional(),
+    accountId: z.string().trim().min(1),
+    accountName: z.string().nullish(),
+    status: z.string().nullish(),
+    originalTitle: z.string().nullish(),
+  })
+  .passthrough();
+const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
+  data: z.object({
+    total: z.coerce.number().int().nonnegative().optional(),
+    data: z.array(readyTaskSchema),
+  }).nullish(),
+});
 const claimDataSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
   originalTitle: z.string().nullish(),
   accountId: z.string().nullish(),
+  rpaProfileKey: z.string().nullish(),
+  accountConfigJson: z.record(z.unknown()).nullish(),
   payloadJson: z.unknown(),
+});
+const claimResponseSchema = apiResponseBaseSchema.extend({
+  data: claimDataSchema.nullish(),
+});
+const claimPayloadJsonSchema = z.object({
+  name: z.string().trim().min(1),
+  copyright: iqiyiDramaTaskPayloadSchema.shape.copyright,
+  iqiyiPlaylet: iqiyiDramaTaskPayloadSchema.omit({ copyright: true }),
+}).passthrough();
+const reportResponseSchema = apiResponseBaseSchema.extend({
+  data: z.boolean().nullish(),
 });
 
 type ReadyTask = z.infer<typeof readyTaskSchema>;
 type ClaimData = z.infer<typeof claimDataSchema>;
-let mockTaskClaimed = false;
 
-function record(value: unknown): Record<string, unknown> {
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? value as Record<string, unknown>
-    : {};
+function taskClient(options: IqiyiDramaTaskApiOptions) {
+  if (options.client) return options.client;
+  if (!options.apiConfig?.baseUrl.trim()) throw new Error("IQIYI_DRAMA_API_BASE_URL_REQUIRED");
+  return createIqiyiDramaHttpClient(options.apiConfig);
 }
 
-function parseJson(value: unknown) {
-  return record(typeof value === "string" ? JSON.parse(value) : value);
+function taskEndpoints(options: IqiyiDramaTaskApiOptions): IqiyiDramaTaskApiEndpoints {
+  return { ...defaultEndpoints, ...options.endpoints };
 }
 
-function text(value: unknown) {
-  return typeof value === "string" && value.trim() ? value.trim() : undefined;
+function taskApiUnavailable(payload: z.infer<typeof apiResponseBaseSchema>) {
+  return /爱奇艺账号发布任务暂未实现/u.test(payload.msg ?? "");
 }
 
-function numberValue(value: unknown) {
-  if (typeof value === "number" && Number.isFinite(value)) return value;
-  const parsed = typeof value === "string" && value.trim() ? Number(value) : Number.NaN;
-  return Number.isFinite(parsed) ? parsed : undefined;
-}
-
-function booleanValue(value: unknown) {
-  if (typeof value === "boolean") return value;
-  if (value === 1 || value === "1" || value === "true") return true;
-  if (value === 0 || value === "0" || value === "false") return false;
-  return undefined;
-}
-
-function aiGeneratedValue(value: unknown) {
-  if (value === true || value === 1 || value === "1") return "是" as const;
-  if (value === false || value === 0 || value === "0") return "否" as const;
-  const normalized = text(value)?.replace(/\s+/g, "");
-  if (normalized === "是" || normalized === "含AI生成内容" || normalized === "AI生成") {
-    return "是" as const;
+function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action: string) {
+  if (payload.code !== 0) {
+    throw new Error(`${action}: code=${payload.code} message=${payload.msg || "-"}`);
   }
-  if (normalized === "否" || normalized === "无需声明" || normalized === "非AI生成") {
-    return "否" as const;
-  }
-  return undefined;
-}
-
-function texts(value: unknown) {
-  if (Array.isArray(value)) return value.flatMap((item) => text(item) ? [text(item)!] : []);
-  const normalized = text(value);
-  return normalized ? normalized.split(/[,，、;；]/).map((item) => item.trim()).filter(Boolean) : [];
-}
-
-function unique(values: Array<string | undefined>) {
-  return [...new Set(values.filter((value): value is string => Boolean(value)))];
-}
-
-function dramaType(value: unknown, payload: Record<string, unknown>): IqiyiDramaType {
-  const normalized = text(value)?.toLowerCase().replace(/[\s_]/g, "-");
-  if (
-    normalized === "comic-drama"
-    || normalized === "comic"
-    || normalized === "comicplay"
-    || normalized === "漫剧"
-    || normalized === "动漫短剧"
-  ) return "comic-drama";
-  if (
-    normalized === "short-drama"
-    || normalized === "short"
-    || normalized === "miniplay"
-    || normalized === "短剧"
-    || normalized === "真人短剧"
-  ) return "short-drama";
-  return payload.comicPlay || payload.comicType || payload.animationType
-    ? "comic-drama"
-    : "short-drama";
-}
-
-function contentSource(value: unknown) {
-  const normalized = text(value)?.toLowerCase().replace(/[\s_-]/g, "");
-  if (!normalized) return "原创" as const;
-  const exactValue = iqiyiContentSourceValues.find(
-    (item) => item.toLowerCase().replace(/[\s_-]/g, "") === normalized,
-  );
-  if (exactValue) return exactValue;
-  if (normalized.includes("小说") || normalized === "novel") return "小说改编" as const;
-  if (normalized.includes("漫画") || normalized === "comic" || normalized === "manga") {
-    return "漫画改编" as const;
-  }
-  if (normalized.includes("游戏") || normalized === "game") return "游戏改编" as const;
-  if (
-    normalized.includes("影视")
-    || normalized.includes("电影")
-    || normalized.includes("电视剧")
-    || normalized === "film"
-    || normalized === "tv"
-  ) return "影视改编" as const;
-  if (normalized.includes("原创") || normalized === "original") return "原创" as const;
-  throw new Error(`IQIYI_DRAMA_CONTENT_SOURCE_INVALID: ${text(value) ?? String(value)}`);
 }
 
 function normalizeClaimedTask(
@@ -168,85 +126,18 @@ function normalizeClaimedTask(
     );
   }
 
-  const payload = parseJson(claimed.payloadJson);
-  const playlet = {
-    ...payload,
-    ...record(payload.playlet),
-    ...record(payload.iqiyiPlaylet),
-    ...record(payload.iqiyiExtraInfo),
-  };
-  const covers = record(payload.cover);
-  const copyright = record(playlet.copyright ?? payload.copyright);
-  const productionCost = record(playlet.productionCost ?? payload.productionCost);
-  const resolvedTitle = text(playlet.title) ?? text(playlet.name) ?? text(payload.name);
+  const payload = claimPayloadJsonSchema.parse(
+    typeof claimed.payloadJson === "string" ? JSON.parse(claimed.payloadJson) : claimed.payloadJson,
+  );
   const result = claimedIqiyiDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
     dramaId: listed?.dramaId,
-    originalTitle: claimed.originalTitle ?? listed?.originalTitle ?? payload.originalTitle,
+    originalTitle: claimed.originalTitle ?? listed?.originalTitle ?? payload.name,
     iqiyiAccountId: claimedAccountId ?? listed?.accountId ?? expectedAccountId,
     iqiyiAccountName: listed?.accountName ?? runtimeOptions?.iqiyiAccountName,
     playlet: {
-      ...playlet,
-      dramaType: dramaType(
-        playlet.dramaType ?? playlet.projectType ?? playlet.contentType ?? payload.dramaType,
-        playlet,
-      ),
-      title: resolvedTitle,
-      summary: text(playlet.summary)
-        ?? text(playlet.plotSynopsisText)
-        ?? text(payload.summary)
-        ?? text(payload.introduction),
-      episodeCount: numberValue(playlet.episodeCount)
-        ?? numberValue(playlet.totalEpisodes)
-        ?? numberValue(payload.episodeCount),
-      baiduPanResourceLink: text(playlet.baiduPanResourceLink)
-        ?? text(payload.baiduPanResourceLink),
-      verticalCoverFile: text(playlet.verticalCoverFile)
-        ?? text(playlet.portraitCoverFile)
-        ?? text(covers.vertical)
-        ?? text(covers.portrait),
-      horizontalCoverFile: text(playlet.horizontalCoverFile)
-        ?? text(playlet.landscapeCoverFile)
-        ?? text(covers.horizontal)
-        ?? text(covers.landscape),
-      copyright: {
-        productionProofFiles: unique(texts(copyright.productionProofFiles)),
-        licenseProofFiles: unique(texts(copyright.licenseProofFiles)),
-      },
-      secondaryCategories: texts(
-        playlet.secondaryCategories ?? playlet.tags ?? playlet.categoryTags,
-      ),
-      visualType: text(playlet.visualType)
-        ?? text(playlet.pictureType)
-        ?? text(playlet.renderType),
-      producers: texts(playlet.producers ?? playlet.producerNames),
-      directors: texts(playlet.directors ?? playlet.directorNames),
-      screenwriters: texts(playlet.screenwriters ?? playlet.screenwriterNames),
-      actors: texts(playlet.actors ?? playlet.actorNames),
-      productionOrganization: text(playlet.productionOrganization)
-        ?? text(playlet.productionCompanyText)
-        ?? text(playlet.publisherName)
-        ?? text(playlet.issuerName)
-        ?? text(payload.producerName),
-      productionCostYuan: numberValue(playlet.productionCostYuan)
-        ?? numberValue(playlet.costYuan)
-        ?? numberValue(productionCost.amountYuan)
-        ?? (() => {
-          const amountWan = numberValue(playlet.productionCostWan)
-            ?? numberValue(productionCost.amountWan);
-          return amountWan === undefined ? undefined : amountWan * 10_000;
-        })(),
-      productionYear: numberValue(playlet.productionYear ?? playlet.year),
-      contentSource: contentSource(
-        playlet.contentSource
-          ?? playlet.adaptationType
-          ?? playlet.sourceType
-          ?? payload.contentSource,
-      ),
-      isAiGenerated: aiGeneratedValue(
-        playlet.isAiGenerated ?? playlet.aiGenerated ?? playlet.uploadStatement,
-      ),
-      submit: booleanValue(playlet.submit) ?? true,
+      ...payload.iqiyiPlaylet,
+      copyright: payload.copyright,
     },
   });
   if (result.success) return result.data;
@@ -257,85 +148,134 @@ function normalizeClaimedTask(
   );
 }
 
-export function createMockIqiyiDramaTask(
-  runtimeOptions: IqiyiDramaRuntimeOptions = {},
-): ClaimedIqiyiDramaTask {
-  const accountId = runtimeOptions.iqiyiAccountId?.trim() || "iqiyi-drama-test-account";
-  const accountName = runtimeOptions.iqiyiAccountName?.trim() || "爱奇艺漫剧测试账号";
-  const originalTitle = "赶海救下美人鱼，她让整片大海来报恩";
-  const mockAssets = iqiyiMockAssetPaths(runtimeOptions);
+async function fetchReadyTasks(options: ClaimNextIqiyiDramaTaskOptions) {
+  const accountId = options.runtimeOptions?.iqiyiAccountId?.trim();
+  if (!accountId) throw new Error("IQIYI_DRAMA_ACCOUNT_ID_REQUIRED");
 
-  return normalizeClaimedTask(
-    {
-      accountTaskId: 1,
-      originalTitle,
+  const payload = accountTaskPageResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).accountTaskPage, {
+      page: 1,
+      pageSize: readyTaskPageSize,
+      dramaId: null,
+      originalTitle: null,
       accountId,
-      payloadJson: {
-        name: originalTitle,
-        summary:
-          "小伙林海被亲叔谋害后跌入大海，危难之际被鲛人少女宁汐救下。宁汐为了报答林海曾经的善意，召集海中生灵帮助他寻找珍贵海货，也让他重新夺回父亲留下的渔船。随着两人继续追查往事，他们意外发现瀚洋集团隐藏多年的海底秘密，并在亲情、利益与守护海洋之间作出最终选择。",
-        episodeCount: 10,
-        baiduPanResourceLink:
-          "通过网盘分享的文件：赶海救下美人鱼，她让整片大海来报恩\n"
-          + "链接: https://pan.baidu.com/s/1DqxBmsaWkLKKol5uHKxDNQ?pwd=hm6f 提取码: hm6f",
-        producerName: "明星说（北京）科技有限公司",
-        copyright: {
-          productionProofFiles: [mockAssets.productionContract],
-          licenseProofFiles: [mockAssets.copyrightProof],
-        },
-        iqiyiPlaylet: {
-          dramaType: "comic-drama",
-          title: originalTitle,
-          audienceType: "男频",
-          visualType: "AI剧",
-          contentSource: "小说改编",
-          adaptationSource: originalTitle,
-          primaryCategory: "奇幻",
-          secondaryCategories: ["大女主", "搞笑"],
-          productionOrganization: "明星说（北京）科技有限公司",
-          productionCostYuan: 10_000,
-          actors: [],
-          isAiGenerated: "是",
-          submit: false,
-        },
-      },
-    },
-    {
-      id: 1,
-      dramaId: 1,
-      accountId,
-      accountName,
-      status: "READY",
-      originalTitle,
-    },
-    runtimeOptions,
+      accountName: null,
+      status: options.rpaStatus ?? "READY",
+      auditStatus: null,
+    }),
+  );
+  if (taskApiUnavailable(payload)) {
+    log(options.runtimeOptions ?? {}, "[iqiyi-drama] task API not deployed; polling idle");
+    return [];
+  }
+  assertApiSuccess(payload, "IQIYI_DRAMA_ACCOUNT_TASK_PAGE_FAILED");
+  return (payload.data?.data ?? []).filter(
+    (task) => task.accountId === accountId && task.status === (options.rpaStatus ?? "READY"),
   );
 }
 
-export function resetMockIqiyiDramaTaskApiForTesting() {
-  mockTaskClaimed = false;
+async function claimTask(
+  options: ClaimNextIqiyiDramaTaskOptions,
+  accountTaskId: number,
+  listedTask?: ReadyTask,
+) {
+  const payload = claimResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).claimTask, { accountTaskId }),
+  );
+  if (taskApiUnavailable(payload)) return null;
+  assertApiSuccess(payload, "IQIYI_DRAMA_ACCOUNT_TASK_CLAIM_FAILED");
+  if (!payload.data) return null;
+  if (payload.data.accountTaskId !== accountTaskId) {
+    throw new Error(
+      `IQIYI_DRAMA_CLAIMED_TASK_ID_MISMATCH: expected=${accountTaskId} `
+        + `actual=${payload.data.accountTaskId}`,
+    );
+  }
+
+  try {
+    return normalizeClaimedTask(payload.data, listedTask, options.runtimeOptions);
+  } catch (error) {
+    const errorMessage = error instanceof Error ? error.message : String(error);
+    await reportIqiyiDramaTaskErrorApi({
+      ...options,
+      accountTaskId: payload.data.accountTaskId,
+      failStage: "OTHER",
+      errorMessage,
+    }).catch((reportError) => {
+      log(
+        options.runtimeOptions ?? {},
+        `[iqiyi-drama] invalid claimed task report failed: accountTaskId=${accountTaskId} `
+          + `error=${reportError instanceof Error ? reportError.message : String(reportError)}`,
+      );
+    });
+    throw error;
+  }
 }
 
-// 后端接口尚未提供。正式领取接口接入后，只替换此方法内部。
 export async function claimNextIqiyiDramaTaskApi(
   options: ClaimNextIqiyiDramaTaskOptions,
 ): Promise<ClaimedIqiyiDramaTask | null> {
-  if (mockTaskClaimed) return null;
-  ensureIqiyiMockAssets(options.runtimeOptions);
-  mockTaskClaimed = true;
-  return createMockIqiyiDramaTask(options.runtimeOptions);
+  const readyTasks = await fetchReadyTasks(options);
+  if (readyTasks.length === 0) return null;
+
+  log(options.runtimeOptions ?? {}, `[iqiyi-drama] fetched ${readyTasks.length} READY task(s)`);
+  for (const listedTask of readyTasks) {
+    try {
+      const claimed = await claimTask(options, listedTask.id, listedTask);
+      if (claimed) return claimed;
+    } catch (error) {
+      log(
+        options.runtimeOptions ?? {},
+        `[iqiyi-drama] task claim failed: accountTaskId=${listedTask.id} `
+          + `error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return null;
 }
 
-// 后端接口尚未提供。正式成功上报接口接入后，只替换此方法内部。
+async function reportIqiyiDramaTask(
+  options: IqiyiDramaTaskApiOptions & {
+    taskId: number;
+    success: boolean;
+    failStage?: IqiyiDramaTaskFailStage;
+    errorMessage?: string;
+    resultJson?: Record<string, unknown>;
+  },
+) {
+  const payload = reportResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).reportTask, {
+      taskId: options.taskId,
+      success: options.success,
+      failStage: options.failStage,
+      errorMessage: options.errorMessage,
+      resultJson: options.resultJson,
+    }),
+  );
+  assertApiSuccess(payload, "IQIYI_DRAMA_ACCOUNT_TASK_REPORT_FAILED");
+  if (payload.data === false) {
+    throw new Error("IQIYI_DRAMA_ACCOUNT_TASK_REPORT_FAILED: data=false");
+  }
+}
+
 export async function reportIqiyiDramaTaskSuccessApi(
   options: IqiyiDramaTaskSuccessReport,
 ): Promise<void> {
-  void options;
+  await reportIqiyiDramaTask({
+    ...options,
+    taskId: options.accountTaskId,
+    success: true,
+  });
 }
 
-// 后端接口尚未提供。正式失败上报接口接入后，只替换此方法内部。
 export async function reportIqiyiDramaTaskErrorApi(
   options: IqiyiDramaTaskErrorReport,
 ): Promise<void> {
-  void options;
+  await reportIqiyiDramaTask({
+    ...options,
+    taskId: options.accountTaskId,
+    success: false,
+    failStage: options.failStage,
+    errorMessage: options.errorMessage,
+  });
 }

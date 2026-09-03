@@ -220,14 +220,12 @@ export async function prepareIqiyiMaterials(
 
   const taskDir = path.join(options.assetDownloadDir, "prepared", String(task.accountTaskId));
   await mkdir(taskDir, { recursive: true });
-  if (task.playlet.dramaType === "comic-drama") {
-    await validateLocalEpisodeVideos({
-      localEpisodeVideoRoot: root,
-      resourceName,
-      episodeCount: task.playlet.episodeCount,
-    });
-    log(options, `[iqiyi-drama] validated ${task.playlet.episodeCount} local episode videos`);
-  }
+  await validateLocalEpisodeVideos({
+    localEpisodeVideoRoot: root,
+    resourceName,
+    episodeCount: task.playlet.episodeCount,
+  });
+  log(options, `[iqiyi-drama] validated ${task.playlet.episodeCount} local episode videos`);
   const posters = await listLocalPosterImages({
     root,
     resourceName,

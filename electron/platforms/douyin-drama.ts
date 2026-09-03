@@ -16,6 +16,7 @@ import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
+import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 
 type DouyinDramaRuntimeStatus = {
   platform: "douyin-drama";
@@ -167,6 +168,15 @@ function storagePaths(config = readConfig()): DouyinDramaStoragePaths {
   };
 }
 
+function registerDouyinRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: "douyin-drama",
+    rootPath: path.join(storagePaths(config).runDataDir, "assets"),
+    maxDepth: 2,
+    retentionMs: 3 * 60 * 60 * 1000,
+  });
+}
+
 function ensureStorageDirectories(paths = storagePaths()) {
   for (const target of [
     paths.runDataDir,
@@ -272,6 +282,7 @@ export function openDouyinDramaLogDir() {
 }
 
 export function registerDouyinDramaPlatformHandlers() {
+  registerDouyinRuntimeAssetCleanup();
   ipcMain.handle("douyin-drama:config:get", () => ({
     config: readConfig(),
     path: getStore().path,
@@ -281,6 +292,7 @@ export function registerDouyinDramaPlatformHandlers() {
   ipcMain.handle("douyin-drama:config:save", (_event, config: DouyinDramaConfig) => {
     const nextConfig = normalizeConfig(config);
     getStore().set("config", nextConfig);
+    registerDouyinRuntimeAssetCleanup(readConfig());
     return {
       config: nextConfig,
       path: getStore().path,

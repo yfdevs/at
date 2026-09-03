@@ -16,6 +16,9 @@
     "check": "tsc --noEmit",
     "test": "tsx --test src/**/*.test.ts"
   },
+  "dependencies": {
+    "winston": "^3.19.0"
+  },
   "devDependencies": {
     "@types/node": "latest",
     "tsx": "^4.23.12",

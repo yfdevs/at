@@ -28,6 +28,10 @@ const errorSelector = [
   "[role='alert']:visible",
 ].join(",");
 
+function normalizeText(value: string | null | undefined) {
+  return (value ?? "").replace(/\s+/g, " ").trim();
+}
+
 function exact(value: string) {
   // 爱奇艺表单的必填星号可能位于标签前方（*定时上线）或后方。
   return new RegExp(
@@ -230,6 +234,73 @@ export async function openIqiyiSection(page: Page, label: string) {
   if (await tab.count() === 0) throw new Error(`IQIYI_DRAMA_SECTION_NOT_FOUND: ${label}`);
   await tab.click({ timeout: 15_000 });
   await page.waitForTimeout(350);
+}
+
+export async function selectFirstIqiyiOption(
+  page: Page,
+  options: IqiyiDramaRuntimeOptions,
+  config: {
+    aliases: readonly string[];
+    placeholders?: readonly string[];
+    required?: boolean;
+  },
+) {
+  const root = await visibleField(page, config.aliases, config.placeholders);
+  if (!root) {
+    if (config.required) {
+      throw new Error(
+        `IQIYI_DRAMA_FIELD_NOT_FOUND: ${config.aliases.join("/")}; `
+          + `visibleLabels=${await visibleLabelSummary(page)}`,
+      );
+    }
+    return null;
+  }
+
+  const directControl = root.locator([
+    "[role='combobox']",
+    "input[readonly]",
+  ].join(",")).filter({ visible: true }).first();
+  const wrapperControl = root.locator([
+    ".mp-select",
+    ".ant-select-selector",
+    ".el-select",
+    ".semi-select",
+  ].join(",")).filter({ visible: true }).first();
+  const control = await directControl.count() > 0 ? directControl : wrapperControl;
+  if (await control.count() === 0) {
+    if (config.required) throw new Error(`IQIYI_DRAMA_SELECT_NOT_FOUND: ${config.aliases[0]}`);
+    return null;
+  }
+
+  log(options, `[iqiyi-drama] selecting first ${config.aliases[0]} option`);
+  await control.click({ timeout: 10_000 });
+  await page.waitForTimeout(250);
+  const optionSelectors = [
+    ".mp-select-pulldown__item:not(.is-disabled):not(.disabled)",
+    ".mp-select-dropdown__item:not(.is-disabled):not(.disabled)",
+    "[role='option']:not([aria-disabled='true'])",
+    ".ant-select-item-option:not(.ant-select-item-option-disabled)",
+    ".el-select-dropdown__item:not(.is-disabled)",
+    ".semi-select-option:not(.semi-select-option-disabled)",
+  ];
+  let option: Locator | null = null;
+  for (const selector of optionSelectors) {
+    const candidate = page.locator(selector).filter({ visible: true }).first();
+    if (await candidate.count() === 0) continue;
+    option = candidate;
+    break;
+  }
+  if (!option) {
+    throw new Error(`IQIYI_DRAMA_FIRST_OPTION_NOT_FOUND: ${config.aliases[0]}`);
+  }
+
+  const selectedText = normalizeText(await option.innerText().catch(() => ""));
+  await option.click({ timeout: 10_000 });
+  log(
+    options,
+    `[iqiyi-drama] selected first ${config.aliases[0]} option: ${selectedText || "unknown"}`,
+  );
+  return selectedText;
 }
 
 async function clickAddPersonButton(

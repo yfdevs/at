@@ -15,6 +15,7 @@ import {
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import { createElectronPlatformLogger } from "../platform-logger";
+import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
@@ -109,9 +110,7 @@ const defaultConfig: BaiduDramaConfig = {
 
 const runtimeController = new RuntimeController<BaiduDramaRuntime>();
 const baiduAiCoverTemporaryFilePattern = /^\.generated-(?:landscape|portrait)-\d+-\d+\.image$/;
-const baiduEpisodeUploadDirectoryPattern = /^episode-upload-\d+$/;
 const baiduAiCoverTemporaryFileRetentionMs = 24 * 60 * 60 * 1_000;
-const baiduEpisodeUploadRetentionBufferMinutes = 60;
 let store: Store<BaiduDramaStore> | null = null;
 let temporaryAssetCleanupTask: ScheduledTask | null = null;
 
@@ -188,6 +187,15 @@ function storagePaths(
   };
 }
 
+function registerBaiduRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: "baidu-drama",
+    rootPath: path.join(storagePaths(config).runDataDir, "assets"),
+    maxDepth: 2,
+    retentionMs: 3 * 60 * 60 * 1000,
+  });
+}
+
 function baiduDramaPlatformLogger(scope = "runtime") {
   const paths = storagePaths();
   return createElectronPlatformLogger({
@@ -200,19 +208,6 @@ function baiduDramaPlatformLogger(scope = "runtime") {
 
 function isMissingPathError(error: unknown) {
   return (error as NodeJS.ErrnoException)?.code === "ENOENT";
-}
-
-async function latestModifiedAtMs(target: string): Promise<number> {
-  const targetStat = await lstat(target);
-  let latest = targetStat.mtimeMs;
-  if (!targetStat.isDirectory() || targetStat.isSymbolicLink()) return latest;
-
-  const entries = await readdir(target, { withFileTypes: true });
-  for (const entry of entries) {
-    if (entry.isSymbolicLink()) continue;
-    latest = Math.max(latest, await latestModifiedAtMs(path.join(target, entry.name)));
-  }
-  return latest;
 }
 
 async function removeBaiduTemporaryAsset(target: string, recursive = false) {
@@ -247,22 +242,13 @@ function safeDirectChild(root: string, entryName: string) {
 async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
   const config = readConfig();
   const assetsRoot = path.resolve(resolveFromAppRoot(config.runDataDir), "assets");
-  const uploadTimeoutMinutes = Math.max(
-    1,
-    Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
-  );
-  const episodeUploadRetentionMinutes =
-    uploadTimeoutMinutes + baiduEpisodeUploadRetentionBufferMinutes;
-  const episodeUploadCutoffMs = now.getTime() - episodeUploadRetentionMinutes * 60_000;
   const aiCoverCutoffMs = now.getTime() - baiduAiCoverTemporaryFileRetentionMs;
   const rootEntries = await readdir(assetsRoot, { withFileTypes: true }).catch((error: unknown) => {
     if (isMissingPathError(error)) return [];
     throw error;
   });
   const accountAssetRoots: string[] = [];
-  const episodeUploadDirectories: string[] = [];
   let deletedFileCount = 0;
-  let deletedDirectoryCount = 0;
   let failedCount = 0;
 
   for (const rootEntry of rootEntries) {
@@ -270,60 +256,10 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
     const rootDirectory = safeDirectChild(assetsRoot, rootEntry.name);
     if (!rootDirectory) continue;
 
-    // Older versions wrote upload directories directly below assets. Current
-    // versions place them below an account directory; both layouts are supported.
-    if (baiduEpisodeUploadDirectoryPattern.test(rootEntry.name)) {
-      episodeUploadDirectories.push(rootDirectory);
-      continue;
-    }
+    // Upload staging directories are handled by the shared lease-aware cleanup.
+    if (/^episode-upload-\d+$/.test(rootEntry.name)) continue;
 
     accountAssetRoots.push(rootDirectory);
-    const accountAssetEntries = await readdir(rootDirectory, { withFileTypes: true })
-      .catch((error: unknown) => {
-        if (isMissingPathError(error)) return [];
-        failedCount += 1;
-        baiduDramaPlatformLogger("storage").warn("账号临时素材目录扫描失败，已忽略", {
-          path: rootDirectory,
-          error,
-        });
-        return [];
-      });
-    for (const entry of accountAssetEntries) {
-      if (
-        !entry.isDirectory()
-        || entry.isSymbolicLink()
-        || !baiduEpisodeUploadDirectoryPattern.test(entry.name)
-      ) {
-        continue;
-      }
-
-      const uploadDirectory = safeDirectChild(rootDirectory, entry.name);
-      if (uploadDirectory) episodeUploadDirectories.push(uploadDirectory);
-    }
-  }
-
-  for (const uploadDirectory of episodeUploadDirectories) {
-    const modifiedAtMs = await latestModifiedAtMs(uploadDirectory).catch((error: unknown) => {
-      if (isMissingPathError(error)) return now.getTime();
-      failedCount += 1;
-      baiduDramaPlatformLogger("storage").warn("剧集上传临时目录检查失败，已忽略", {
-        path: uploadDirectory,
-        error,
-      });
-      return now.getTime();
-    });
-    if (modifiedAtMs > episodeUploadCutoffMs) continue;
-
-    try {
-      await removeBaiduTemporaryAsset(uploadDirectory, true);
-      deletedDirectoryCount += 1;
-    } catch (error) {
-      failedCount += 1;
-      baiduDramaPlatformLogger("storage").warn("剧集上传临时目录清理失败，已忽略", {
-        path: uploadDirectory,
-        error,
-      });
-    }
   }
 
   for (const accountAssetRoot of accountAssetRoots) {
@@ -391,11 +327,8 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
   }
 
   baiduDramaPlatformLogger("storage").info("临时文件定时清理完成", {
-    scannedDirectoryCount: episodeUploadDirectories.length,
     deletedFileCount,
-    deletedDirectoryCount,
     failedCount,
-    episodeUploadRetentionMinutes,
     aiCoverRetentionHours: baiduAiCoverTemporaryFileRetentionMs / 3_600_000,
   });
 }
@@ -414,8 +347,7 @@ function scheduleBaiduTemporaryAssetCleanup() {
   });
   void runCleanup();
   baiduDramaPlatformLogger("storage").info("临时文件定时清理已启用", {
-    targets: "AI封面原图、剧集上传临时目录",
-    episodeUploadRetention: `上传超时+${baiduEpisodeUploadRetentionBufferMinutes}分钟`,
+    targets: "AI封面原图",
     aiCoverRetention: "24小时",
     schedule: "程序启动时、每小时整点",
   });
@@ -577,6 +509,7 @@ export function openBaiduDramaLogDir() {
 }
 
 export function registerBaiduDramaPlatformHandlers() {
+  registerBaiduRuntimeAssetCleanup();
   scheduleBaiduTemporaryAssetCleanup();
 
   ipcMain.handle("baidu-drama:config:get", () => ({
@@ -588,6 +521,7 @@ export function registerBaiduDramaPlatformHandlers() {
   ipcMain.handle("baidu-drama:config:save", (_event, config: BaiduDramaConfig) => {
     const nextConfig = normalizeConfig(config);
     getStore().set("config", nextConfig);
+    registerBaiduRuntimeAssetCleanup(readConfig());
     return {
       config: nextConfig,
       path: getStore().path,

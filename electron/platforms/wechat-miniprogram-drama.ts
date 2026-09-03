@@ -15,6 +15,7 @@ import {
 } from './shared'
 import { ensureBaiduNetdiskShareDownloaded } from './baidu-netdisk'
 import { createElectronPlatformLogger } from '../platform-logger'
+import { registerRuntimeAssetCleanupRoot } from '../runtime-asset-cleanup'
 import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
@@ -271,6 +272,15 @@ function logDirPath(config = readConfig()) {
   return path.join(resolveFromAppRoot(config.runDataDir), 'logs')
 }
 
+function registerWechatMiniProgramRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: 'wechat-miniprogram-drama',
+    rootPath: resolveFromAppRoot(config.runDataDir),
+    maxDepth: 1,
+    retentionMs: 3 * 60 * 60 * 1000,
+  })
+}
+
 function wechatPlatformLogger(scope = 'runtime') {
   const config = readConfig()
   return createElectronPlatformLogger({
@@ -426,6 +436,7 @@ async function startRuntime() {
 }
 
 export function registerWechatMiniProgramPlatformHandlers() {
+  registerWechatMiniProgramRuntimeAssetCleanup()
   scheduleWechatCopyrightProofCleanup()
   directUploadCoordinator.registerHandlers()
 
@@ -438,6 +449,7 @@ export function registerWechatMiniProgramPlatformHandlers() {
   ipcMain.handle('wechat-miniprogram-drama:config:save', async (_event, config: WechatMiniProgramConfig) => {
     const nextConfig = normalizeConfig(config)
     writeConfig(nextConfig)
+    registerWechatMiniProgramRuntimeAssetCleanup(readConfig())
     const result = {
       config: nextConfig,
       path: configPath(),

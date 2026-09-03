@@ -73,6 +73,16 @@ export {
   type AiPosterResult,
   type EnsureAiPosterOptions,
 } from "./ai-poster.js";
+export {
+  cleanupStaleRuntimeArtifacts,
+  createRuntimeArtifactLease,
+  episodeUploadDirectoryPattern,
+  runtimeArtifactLeaseFileName,
+  type RuntimeArtifactCleanupFailure,
+  type RuntimeArtifactCleanupOptions,
+  type RuntimeArtifactCleanupResult,
+} from "./runtime-artifacts.js";
+import { createRuntimeArtifactLease } from "./runtime-artifacts.js";
 
 export type EpisodeDirectorySummary = {
   dir: string;
@@ -888,19 +898,34 @@ export async function prepareEpisodeUploadFiles(options: {
   uploadBaseName?: string;
   episodes?: LocalEpisodeVideo[];
 }): Promise<PreparedEpisodeUploadFiles> {
-  const uploadDir = path.join(options.uploadRootDir, `episode-upload-${Date.now()}`);
-  await mkdir(uploadDir, { recursive: true });
-
-  const playletName = safeEpisodeFileBaseName(options.uploadBaseName ?? options.resourceName);
-  const files: string[] = [];
-  for (const episode of options.episodes ?? await findLocalEpisodeVideos(options)) {
-    const extension = path.extname(episode.file) || ".mp4";
-    const target = path.join(uploadDir, `${playletName}-第${episode.index}集${extension}`);
-    await createEpisodeUploadHardLink(episode.file, target);
-    files.push(target);
+  await mkdir(options.uploadRootDir, { recursive: true });
+  let uploadDir = path.join(options.uploadRootDir, `episode-upload-${Date.now()}`);
+  for (let suffix = 0; ; suffix += 1) {
+    try {
+      await mkdir(uploadDir);
+      break;
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== "EEXIST") throw error;
+      uploadDir = path.join(options.uploadRootDir, `episode-upload-${Date.now() + suffix + 1}`);
+    }
   }
 
-  return { uploadDir, files };
+  try {
+    await createRuntimeArtifactLease(uploadDir);
+    const playletName = safeEpisodeFileBaseName(options.uploadBaseName ?? options.resourceName);
+    const files: string[] = [];
+    for (const episode of options.episodes ?? await findLocalEpisodeVideos(options)) {
+      const extension = path.extname(episode.file) || ".mp4";
+      const target = path.join(uploadDir, `${playletName}-第${episode.index}集${extension}`);
+      await createEpisodeUploadHardLink(episode.file, target);
+      files.push(target);
+    }
+
+    return { uploadDir, files };
+  } catch (error) {
+    await rm(uploadDir, { recursive: true, force: true }).catch(() => undefined);
+    throw error;
+  }
 }
 
 export async function cleanupEpisodeUploadFiles(prepared: PreparedEpisodeUploadFiles) {

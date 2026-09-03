@@ -4,6 +4,7 @@ import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import { createElectronPlatformLogger } from "../platform-logger";
+import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
@@ -325,6 +326,15 @@ function storagePaths(
   };
 }
 
+function registerKuaishouRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: "kuaishou-drama",
+    rootPath: path.join(storagePaths(config).runDataDir, "assets"),
+    maxDepth: 2,
+    retentionMs: 3 * 60 * 60 * 1000,
+  });
+}
+
 function ensureStorageDirectories(paths = storagePaths()) {
   mkdirSync(paths.runDataDir, { recursive: true });
   mkdirSync(paths.accountDir, { recursive: true });
@@ -533,6 +543,7 @@ async function startRuntime() {
 }
 
 export function registerKuaishouDramaPlatformHandlers() {
+  registerKuaishouRuntimeAssetCleanup();
   ipcMain.handle("kuaishou-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),
@@ -545,6 +556,7 @@ export function registerKuaishouDramaPlatformHandlers() {
     (_event, config: KuaishouDramaConfig): KuaishouDramaConfigResult => {
       const nextConfig = normalizeConfig(config);
       writeConfig(nextConfig);
+      registerKuaishouRuntimeAssetCleanup(readConfig());
       return {
         config: nextConfig,
         path: configPath(),

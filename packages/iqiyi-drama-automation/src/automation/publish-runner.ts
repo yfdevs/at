@@ -12,10 +12,8 @@ import {
 import {
   clickIqiyiButton,
   fillIqiyiField,
-  fillIqiyiSearchPeople,
-  fillIqiyiSimplePeople,
-  fillIqiyiTags,
   openIqiyiSection,
+  selectFirstIqiyiOption,
   throwIfIqiyiFormInvalid,
   uploadIqiyiFiles,
 } from "./form-controls.js";
@@ -47,6 +45,20 @@ function scheduledOnlineTimeAfterOneDay(now = new Date()) {
 function releaseDateFor(now = new Date()) {
   const pad = (value: number) => String(value).padStart(2, "0");
   return `${now.getFullYear()}${pad(now.getMonth() + 1)}${pad(now.getDate())}`;
+}
+
+async function confirmIqiyiNoCompanySelection(page: Page) {
+  const dialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")
+    .filter({ hasText: /无制作方|无联合出品方|不可更改|确认/u, visible: true })
+    .last();
+  if (!(await dialog.waitFor({ state: "visible", timeout: 3_000 }).then(() => true, () => false))) {
+    return;
+  }
+  const confirm = dialog.getByRole("button", { name: /^(确定|确认)$/u })
+    .filter({ visible: true })
+    .last();
+  await confirm.waitFor({ state: "visible", timeout: 5_000 });
+  await confirm.click({ force: true, timeout: 5_000 });
 }
 
 export async function openIqiyiCreatePage(
@@ -92,13 +104,19 @@ export async function runIqiyiPublishTask(
   if (isShortDrama) {
     await fillIqiyiField(page, options, {
       aliases: ["成片状态"],
-      value: "未成片",
+      value: "成片",
+      kind: "radio",
+      required: true,
+    });
+    await fillIqiyiField(page, options, {
+      aliases: ["上线类型"],
+      value: "全集",
       kind: "radio",
       required: true,
     });
     await fillIqiyiField(page, options, {
       aliases: ["制作声明"],
-      value: payload.isAiGenerated === "是" ? "含AI生成内容" : "无需声明",
+      value: "含AI生成内容",
       kind: "radio",
       required: true,
     });
@@ -110,36 +128,6 @@ export async function runIqiyiPublishTask(
     });
   }
 
-  if (isShortDrama) {
-    await fillIqiyiSearchPeople(page, options, {
-      aliases: ["导演"],
-      values: payload.directors,
-      inputPlaceholder: "请输入名称搜索并选择对应人物",
-      addButtonNames: ["增加导演"],
-      required: true,
-    });
-  }
-  await fillIqiyiSearchPeople(page, options, {
-    aliases: ["主要演员", "主演", "演员"],
-    values: payload.actors,
-    inputPlaceholder: "请输入名称搜索并选择对应人物",
-    addButtonNames: ["增加主要演员", "增加演员"],
-    required: isShortDrama && payload.isAiGenerated !== "是",
-  });
-  if (isShortDrama) {
-    await fillIqiyiSimplePeople(page, options, {
-      aliases: ["制片人"],
-      values: payload.producers,
-      inputPlaceholder: "请输入制片人姓名",
-      addButtonNames: ["增加制片人"],
-      required: true,
-    });
-    await fillIqiyiTags(page, options, {
-      aliases: ["编剧"],
-      values: payload.screenwriters,
-      required: true,
-    });
-  }
   const filledProductionCostYuan = await fillIqiyiField(page, options, {
     aliases: ["制作成本", "制作成本（元）", "制作成本(元)", "项目制作成本", "项目制作成本（元）"],
     placeholders: ["请填写9位以内的数字（单位：元）"],
@@ -164,11 +152,6 @@ export async function runIqiyiPublishTask(
     kind: "date",
     required: true,
   });
-  await fillIqiyiField(page, options, {
-    aliases: ["备案号"],
-    value: payload.licenseNumber,
-  });
-
   await openIqiyiSection(page, "资质文件");
   await fillIqiyiField(page, options, {
     aliases: ["出品方"],
@@ -191,20 +174,14 @@ export async function runIqiyiPublishTask(
     kind: "choice",
     required: true,
   });
-  const companyDialog = page.locator("[role='dialog'],.mp-modal,.mp-dialog,.ant-modal,.el-dialog")
-    .filter({ hasText: /无制作方|不可更改|确认/, visible: true }).last();
-  if (await companyDialog.waitFor({ state: "visible", timeout: 3000 }).then(() => true, () => false)) {
-    const confirm = companyDialog.getByRole("button", { name: /^(确定|确认)$/ })
-      .filter({ visible: true }).last();
-    await confirm.waitFor({ state: "visible", timeout: 5000 });
-    await confirm.click({ force: true, timeout: 5000 });
-  }
+  await confirmIqiyiNoCompanySelection(page);
   await fillIqiyiField(page, options, {
     aliases: ["联合出品方"],
     value: "无联合出品方",
     kind: "choice",
+    required: true,
   });
-
+  await confirmIqiyiNoCompanySelection(page);
   await openIqiyiSection(page, "作品内容");
   await fillIqiyiField(page, options, {
     aliases: ["标题", "剧名", "项目名称", "作品名称", "专辑名称"],
@@ -225,22 +202,27 @@ export async function runIqiyiPublishTask(
   await fillIqiyiField(page, options, {
     aliases: ["总集数", "集数", "计划集数"],
     value: payload.episodeCount,
-    required: !isShortDrama,
+    required: true,
   });
-  await fillIqiyiField(page, options, {
-    aliases: ["上线类型"],
-    value: "全集",
-    kind: "radio",
-  });
+  if (!isShortDrama) {
+    await fillIqiyiField(page, options, {
+      aliases: ["上线类型"],
+      value: "全集",
+      kind: "radio",
+      required: true,
+    });
+  }
   await fillIqiyiField(page, options, {
     aliases: ["付费状态", "是否付费"],
     value: "免费",
     kind: "radio",
+    required: true,
   });
   await fillIqiyiField(page, options, {
-    aliases: ["受众类型", "目标受众", "受众"],
+    aliases: isShortDrama ? ["分类"] : ["受众类型", "目标受众", "受众"],
     value: payload.audienceType,
     kind: "choice",
+    required: true,
   });
   if (!isShortDrama) {
     await fillIqiyiField(page, options, {
@@ -267,16 +249,22 @@ export async function runIqiyiPublishTask(
       });
     }
   } else {
-    await fillIqiyiField(page, options, {
-      aliases: ["题材", "一级分类", "作品类型", "项目类型"],
-      value: payload.primaryCategory,
-      kind: "select",
-    });
+    const tags = [...new Set([
+      payload.primaryCategory,
+      ...payload.secondaryCategories,
+    ].filter((value): value is string => Boolean(value?.trim())))];
+    if (tags.length === 0) {
+      throw new Error("IQIYI_DRAMA_REQUIRED_FIELD_VALUE_MISSING: 标签");
+    }
+    for (const tag of tags) {
+      await fillIqiyiField(page, options, {
+        aliases: ["标签"],
+        value: tag,
+        kind: "choice",
+        required: true,
+      });
+    }
   }
-  await fillIqiyiField(page, options, {
-    aliases: ["改编来源", "IP 来源", "原著名称"],
-    value: payload.adaptationSource,
-  });
   await uploadIqiyiFiles(page, options, {
     aliases: ["封面编辑", "封面"],
     files: [payload.horizontalCoverFile!, payload.verticalCoverFile!],
@@ -284,22 +272,21 @@ export async function runIqiyiPublishTask(
     settleCoverEditor: true,
   });
 
-  if (!isShortDrama) {
-    await openIqiyiSection(page, "上传正片");
-    await uploadIqiyiEpisodeVideos(page, task, options);
-  }
+  await openIqiyiSection(page, "上传正片");
+  await uploadIqiyiEpisodeVideos(page, task, options);
+
+  await openIqiyiSection(page, "签约意向");
+  await selectFirstIqiyiOption(page, options, {
+    aliases: ["签约意向"],
+    placeholders: ["请选择签约意向"],
+    required: true,
+  });
 
   await throwIfIqiyiFormInvalid(page);
-  const clicked = payload.submit
-    ? await clickIqiyiButton(page, ["提交项目", "提交审核", "创建并提交"])
-    : await clickIqiyiButton(page, ["保存项目", "保存草稿", "暂存"]);
-  if (!clicked) throw new Error(
-    payload.submit ? "IQIYI_DRAMA_SUBMIT_BUTTON_NOT_FOUND" : "IQIYI_DRAMA_SAVE_BUTTON_NOT_FOUND",
-  );
-  if (clicked) {
-    await page.waitForTimeout(2_000);
-    await throwIfIqiyiFormInvalid(page);
-    log(options, `[iqiyi-drama] clicked project action: ${clicked}`);
-  }
+  const clicked = await clickIqiyiButton(page, ["提交项目"]);
+  if (!clicked) throw new Error("IQIYI_DRAMA_SUBMIT_BUTTON_NOT_FOUND");
+  await page.waitForTimeout(2_000);
+  await throwIfIqiyiFormInvalid(page);
+  log(options, `[iqiyi-drama] clicked project action: ${clicked}`);
   await saveCredentialState(context, options).catch(() => undefined);
 }

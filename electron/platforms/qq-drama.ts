@@ -15,6 +15,7 @@ import {
 } from "./shared";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import { createElectronPlatformLogger } from "../platform-logger";
+import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
@@ -425,6 +426,15 @@ function storagePaths(
   };
 }
 
+function registerQqRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: "qq-drama",
+    rootPath: path.join(storagePaths(config).runDataDir, "assets"),
+    maxDepth: 2,
+    retentionMs: 3 * 60 * 60 * 1000,
+  });
+}
+
 function ensureStorageDirectories(paths = storagePaths()) {
   mkdirSync(paths.runDataDir, { recursive: true });
   mkdirSync(paths.accountDir, { recursive: true });
@@ -597,6 +607,7 @@ async function startRuntime() {
 }
 
 export function registerQqDramaPlatformHandlers() {
+  registerQqRuntimeAssetCleanup();
   scheduleQqCopyrightProofCleanup();
 
   ipcMain.handle("qq-drama:config:get", () => ({
@@ -609,6 +620,7 @@ export function registerQqDramaPlatformHandlers() {
   ipcMain.handle("qq-drama:config:save", (_event, config: QqDramaConfig): QqDramaConfigResult => {
     const nextConfig = normalizeConfig(config);
     writeConfig(nextConfig);
+    registerQqRuntimeAssetCleanup(readConfig());
     return {
       config: nextConfig,
       path: configPath(),

@@ -15,9 +15,9 @@ const requiredText = z.string().trim().min(1);
 const optionalText = z.string().trim().optional();
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
 const iqiyiCopyrightSchema = z.object({
-  productionProofFiles: z.array(fileReference).max(20).default([]),
-  licenseProofFiles: z.array(fileReference).max(20).default([]),
-});
+  productionProofFiles: z.array(fileReference).max(20),
+  licenseProofFiles: z.array(fileReference).max(20),
+}).strict();
 
 export const iqiyiDramaTypeValues = ["short-drama", "comic-drama"] as const;
 export const iqiyiContentSourceValues = [
@@ -35,6 +35,7 @@ export const iqiyiVisualTypeValues = [
   "沙雕漫",
   "其他",
 ] as const;
+export const iqiyiAudienceTypeValues = ["男频", "女频", "平衡"] as const;
 
 export const iqiyiDramaTaskPayloadSchema = z.object({
   dramaType: z.enum(iqiyiDramaTypeValues),
@@ -44,27 +45,15 @@ export const iqiyiDramaTaskPayloadSchema = z.object({
   baiduPanResourceLink: optionalText,
   verticalCoverFile: fileReference.optional(),
   horizontalCoverFile: fileReference.optional(),
-  copyright: iqiyiCopyrightSchema.default({
-    productionProofFiles: [],
-    licenseProofFiles: [],
-  }),
-  audienceType: optionalText,
-  visualType: z.enum(iqiyiVisualTypeValues).default("AI剧"),
+  copyright: iqiyiCopyrightSchema,
+  audienceType: z.enum(iqiyiAudienceTypeValues),
+  visualType: z.enum(iqiyiVisualTypeValues),
   primaryCategory: optionalText,
-  secondaryCategories: z.array(requiredText).default([]),
+  secondaryCategories: z.array(requiredText),
   productionOrganization: requiredText,
   productionCostYuan: z.coerce.number().finite().nonnegative().max(999_999_999),
-  producers: z.array(requiredText).default([]),
-  directors: z.array(requiredText).default([]),
-  screenwriters: z.array(requiredText).default([]),
-  actors: z.array(requiredText).default([]),
-  productionYear: z.coerce.number().int().min(1900).max(2100).optional(),
-  licenseNumber: optionalText,
-  contentSource: z.enum(iqiyiContentSourceValues).default("原创"),
-  adaptationSource: optionalText,
-  isAiGenerated: z.enum(["是", "否"]).default("否"),
-  submit: z.boolean().default(true),
-}).passthrough();
+  contentSource: z.enum(iqiyiContentSourceValues),
+}).strict();
 
 export const claimedIqiyiDramaTaskSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
@@ -114,7 +103,6 @@ export type IqiyiDramaRuntimeOptions = {
   userDataDir?: string;
   credentialStatePath?: string;
   assetDownloadDir?: string;
-  mockAssetRoot?: string;
   logFilePath?: string;
   logRetentionDays?: number;
   iqiyiAccountId?: string;

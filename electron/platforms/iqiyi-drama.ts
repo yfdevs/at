@@ -9,6 +9,7 @@ import {
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
+import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
   directoryDefaultPath,
@@ -269,6 +270,15 @@ function storagePaths(
   };
 }
 
+function registerIqiyiRuntimeAssetCleanup(config = readConfig()) {
+  registerRuntimeAssetCleanupRoot({
+    platform: "iqiyi-drama",
+    rootPath: path.join(storagePaths(config).runDataDir, "assets"),
+    maxDepth: 2,
+    retentionMs: 3 * 60 * 60 * 1000,
+  });
+}
+
 function ensureStorageDirectories(paths = storagePaths()) {
   for (const dir of [
     paths.runDataDir,
@@ -352,9 +362,6 @@ async function startRuntime() {
         userDataDir: paths.userDataDir,
         credentialStatePath: paths.credentialStatePath,
         assetDownloadDir: paths.assetDownloadDir,
-        mockAssetRoot: app.isPackaged
-          ? path.join(app.getAppPath(), "dist", "iqiyi-drama", "mock-assets")
-          : resolveFromAppRoot("public/iqiyi-drama/mock-assets"),
         logFilePath: paths.logFilePath,
         logRetentionDays: Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3),
         localMaterialRoot: config.localMaterialRoot,
@@ -419,6 +426,7 @@ async function startRuntime() {
 }
 
 export function registerIqiyiDramaPlatformHandlers() {
+  registerIqiyiRuntimeAssetCleanup();
   ipcMain.handle("iqiyi-drama:config:get", () => ({
     config: readConfig(),
     path: getStore().path,
@@ -428,6 +436,7 @@ export function registerIqiyiDramaPlatformHandlers() {
   ipcMain.handle("iqiyi-drama:config:save", (_event, config: IqiyiDramaConfig) => {
     const next = normalizeConfig(config);
     getStore().set("config", next);
+    registerIqiyiRuntimeAssetCleanup(readConfig());
     return {
       config: next,
       path: getStore().path,
