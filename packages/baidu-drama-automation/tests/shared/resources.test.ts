@@ -16,9 +16,17 @@ import {
 function fakeAiClient() {
   const requests: ImageGenerationOptions[] = [];
   const client = {
-    analyzeImages: async () => {
-      throw new Error("not implemented");
-    },
+    analyzeImages: async () => ({
+      finishReason: "stop",
+      model: "test-analysis-model",
+      text: JSON.stringify({
+        titleTextExact: true,
+        titleOccursOnce: true,
+        unrelatedTextFree: true,
+        noWatermarkOrTechnicalOverlay: true,
+        issues: [],
+      }),
+    }),
     generateImage: async (options: ImageGenerationOptions) => {
       requests.push(options);
       const portrait = options.size === "1536x2048";
@@ -125,7 +133,9 @@ test("generates a missing 16:9 cover from the 3:4 cover and reuses the AI cache"
     assert.equal(fake.requests.length, 1);
     assert.equal(fake.requests[0]?.size, "2560x1440");
     assert.deepEqual(fake.requests[0]?.referenceImages, [{ type: "file", path: portraitFile }]);
-    assert.match(fake.requests[0]?.prompt ?? "", /16:9 横版/);
+    assert.match(fake.requests[0]?.prompt ?? "", /宽幅横向/);
+    assert.doesNotMatch(fake.requests[0]?.prompt ?? "", /16:9|2560x1440|1280x720/);
+    assert.match(fake.requests[0]?.prompt ?? "", /演员姓名、演员表、职员表/);
     assert.match(fake.requests[0]?.prompt ?? "", /不要简单拉伸/);
   } finally {
     await rm(root, { recursive: true, force: true });
@@ -152,7 +162,9 @@ test("generates a missing 3:4 cover from the 16:9 cover", async () => {
     assert.equal(fake.requests.length, 1);
     assert.equal(fake.requests[0]?.size, "1536x2048");
     assert.deepEqual(fake.requests[0]?.referenceImages, [{ type: "file", path: landscapeFile }]);
-    assert.match(fake.requests[0]?.prompt ?? "", /3:4 竖版/);
+    assert.match(fake.requests[0]?.prompt ?? "", /纵向/);
+    assert.doesNotMatch(fake.requests[0]?.prompt ?? "", /3:4|1536x2048|1200x1600/);
+    assert.match(fake.requests[0]?.prompt ?? "", /演员姓名、演员表、职员表/);
     assert.match(fake.requests[0]?.prompt ?? "", /不要简单拉伸/);
   } finally {
     await rm(root, { recursive: true, force: true });

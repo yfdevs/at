@@ -10,6 +10,7 @@ import {
   selectors,
   submissionIdentityValues,
   formGroup,
+  rootSelector,
 } from "../constants.js";
 import {
   findVisibleLabeledGroup,
@@ -193,6 +194,71 @@ async function clickExactText(page: Page, text: string, label: string): Promise<
   await locator.click({ timeout: 15000 });
   formLogger.info("选项已选择", { field: label, value: text });
   return true;
+}
+
+async function waitForCheckboxState(
+  checkbox: Locator,
+  expected: boolean,
+  timeoutMs = 2000,
+): Promise<boolean> {
+  const deadline = Date.now() + timeoutMs;
+  do {
+    if ((await checkbox.isChecked().catch(() => !expected)) === expected) return true;
+    await new Promise((resolve) => setTimeout(resolve, 50));
+  } while (Date.now() < deadline);
+  return (await checkbox.isChecked().catch(() => !expected)) === expected;
+}
+
+function createAiContentSwitchError(enabled: boolean): Error {
+  return Object.assign(
+    new Error(`[ai-content-switch-failed] 无法将AI内容声明切换为${enabled ? "开启" : "关闭"}状态`),
+    { errorType: ErrorType.Browser },
+  );
+}
+
+export async function setAiContentDeclaration(page: Page, enabled: boolean): Promise<void> {
+  const group = page
+    .locator(`${rootSelector}:visible .weui-desktop-form__control-group:visible`)
+    .filter({ hasText: /AI\s*内容声明/i })
+    .filter({ has: page.locator('input[type="checkbox"]') })
+    .first();
+  if (!await group.count()) {
+    throw new Error("[form-control-not-found] 未找到必填选项：AI内容声明");
+  }
+  const checkbox = group.locator('input[type="checkbox"]').first();
+  if ((await checkbox.isChecked().catch(() => !enabled)) !== enabled) {
+    const visibleSwitch = group.locator(".weui-desktop-switch__box:visible").first();
+    if (await visibleSwitch.count()) {
+      await visibleSwitch.scrollIntoViewIfNeeded().catch(() => undefined);
+      await visibleSwitch.click({ timeout: 15000 }).catch((error) => {
+        const message = error instanceof Error ? error.message.split("\n")[0] : String(error);
+        formLogger.warn("可见开关点击失败，准备使用兼容方式", {
+          field: "AI内容声明",
+          message,
+        });
+      });
+    }
+  }
+
+  if (!await waitForCheckboxState(checkbox, enabled)) {
+    await checkbox.evaluate((element, checked) => {
+      const input = element as HTMLInputElement;
+      if (input.checked !== checked) input.click();
+      if (input.checked === checked) return;
+      input.checked = checked;
+      input.dispatchEvent(new Event("input", { bubbles: true }));
+      input.dispatchEvent(new Event("change", { bubbles: true }));
+    }, enabled);
+  }
+
+  if (!await waitForCheckboxState(checkbox, enabled)) {
+    throw createAiContentSwitchError(enabled);
+  }
+  formLogger.info("选项状态已确认", {
+    field: "AI内容声明",
+    checked: enabled,
+    source: "payloadJson.aiContent",
+  });
 }
 
 async function checkRadioByLabel<Value extends string>(
@@ -460,11 +526,9 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     `变现类型: ${monetization}`,
   );
 
-  // oxlint-disable-next-line no-debugger
-  debugger;
-  if (playlet.aiContent ?? true) {
-    // AI内容声明
-    await page.locator(".weui-desktop-switch__box").first().click();
+  const aiContent = playlet.aiContent ?? true;
+  await setAiContentDeclaration(page, aiContent);
+  if (aiContent) {
     await page
       .getByText(/^\s*AI\s*制作证明\s*$/i)
       .first()

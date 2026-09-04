@@ -28,7 +28,7 @@ export const KUAISHOU_EPISODE_COVER_SIZE = {
 
 type KuaishouCoverKind = "drama" | "episode";
 
-const promptVersion = "kuaishou-cover-counterpart-v2";
+const promptVersion = "kuaishou-cover-counterpart-v3-text-safety";
 const normalizationVersion = "kuaishou-cover-contain-v1";
 const maximumFileBytes = 9_500_000;
 const activeGenerations = new Map<string, Promise<string>>();
@@ -107,7 +107,9 @@ export function buildKuaishouCounterpartCoverPrompt(options: {
     "不得简单拉伸、镜像、重复拼接、添加边框，不得裁断人脸、头部、主要人物或关键道具。",
     "所有主要人物和剧名放在画面中央区域，四周留出充足的纯场景背景，确保发布裁剪后仍能完整展示。",
     `剧名必须严格保持为“${options.title}”，不改字、不漏字、不重复；参考图中已有剧名时优先保留或准确重建。`,
-    "最终成图只能出现一处上述剧名，不出现副标题、宣传语、标志、水印或任何其他文字和符号。",
+    "最终成图只能出现一处上述剧名；除剧名外，严禁出现任何文字、字母、数字或类似文字的符号。",
+    "尤其不得出现演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间、画幅比例、分辨率、相机参数、标志、水印、角标、二维码、信息栏或伪界面。",
+    "参考图若含剧名以外的文字，必须删除，不得复制、改写或补全；不要预留演员名或字幕排版区域。",
     "直接输出干净的成品海报，不要输出设计稿、模板、制作说明或界面预览。",
   ].join("\n");
 }

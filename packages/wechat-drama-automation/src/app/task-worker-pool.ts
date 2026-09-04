@@ -30,13 +30,13 @@ import { integerSetting } from "../shared/settings-value.js";
 import type { EnsureBaiduNetdiskResource } from "./runtime.js";
 import {
   cleanupWechatProductionProofMaterials,
+  loadWechatOwnershipMaterials,
   prepareWechatProductionProofMaterials,
   wechatOwnershipRequirements,
 } from "../shared/production-proof-materials.js";
 import { prepareWechatPosterMaterials } from "../shared/poster-materials.js";
 import {
   prepareWechatAiProductionProofMaterials,
-  wechatAiProductionProofRequirements,
 } from "../shared/ai-production-proof-materials.js";
 
 const logger = createLogger("worker");
@@ -331,7 +331,6 @@ export class TaskWorkerPool {
           videoAccount.contractSubject,
         );
         playletConfigForCleanup = playletConfig;
-        await prepareWechatAiProductionProofMaterials(playletConfig, { allowMissing: true });
         await this.ensureBaiduNetdiskResourceReady(
           videoAccount,
           claimedAccountTask,
@@ -340,10 +339,15 @@ export class TaskWorkerPool {
         );
         await validateLocalEpisodeVideos(playletConfig);
         await prepareWechatPosterMaterials(playletConfig);
-        const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(playletConfig);
+        const ownershipMaterials = await loadWechatOwnershipMaterials(playletConfig);
+        const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(
+          playletConfig,
+          ownershipMaterials,
+        );
         const productionProofFiles = await prepareWechatProductionProofMaterials(
           playletConfig,
           videoAccount.contractSubject,
+          ownershipMaterials,
         );
         logger.info("all task materials ready", {
           accountTaskId: claimedAccountTask.accountTaskId,
@@ -551,11 +555,6 @@ export class TaskWorkerPool {
             title: playletConfig.playlet.name,
             summary: playletConfig.playlet.summary,
           },
-          requiredAiProductionProofFiles:
-            (playletConfig.playlet.aiContent ?? true)
-            && !(playletConfig.playlet.aiProductionProofFiles?.length)
-              ? wechatAiProductionProofRequirements.minimumFiles
-              : 0,
           mergeOwnershipMaterials: !isMingxingshuo && !["false", "0", "no", "off"].includes(
             String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
           ),

@@ -1,13 +1,15 @@
 import { createHash } from "node:crypto";
-import { access, mkdir, readFile, stat } from "node:fs/promises";
+import { access, mkdir, readFile, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 
+import { analyzeImagesAsJson } from "@drama/ai";
 import {
   findOwnershipProjectProofFiles,
   listLocalPosterImages,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
 import sharp from "sharp";
+import { z } from "zod";
 
 import { resolveIqiyiAsset } from "../automation/remote-assets.js";
 import { log } from "./logger.js";
@@ -17,9 +19,19 @@ import type {
   IqiyiDramaTaskPayload,
 } from "./types.js";
 
-const landscapePromptVersion = "iqiyi-landscape-v3-ai-title-art";
+const landscapePromptVersion = "iqiyi-landscape-v4-text-safety";
+const landscapeGenerationAttempts = 3;
 const iqiyiCoverMaximumBytes = 4_900_000;
 const iqiyiProofMaximumBytes = 20 * 1024 * 1024;
+
+const iqiyiLandscapeCoverValidationSchema = z.object({
+  titleTextExact: z.boolean(),
+  titleOccursOnce: z.boolean(),
+  unrelatedTextFree: z.boolean(),
+  noWatermarkOrTechnicalOverlay: z.boolean(),
+  detectedTexts: z.array(z.string().trim().max(100)).max(30).default([]),
+  issues: z.array(z.string().trim().max(300)).max(20).default([]),
+});
 
 export type PreparedIqiyiMaterials = {
   verticalCover: string;
@@ -59,10 +71,10 @@ function iqiyiTitleArtDirection(playlet: IqiyiDramaTaskPayload) {
 export function buildIqiyiLandscapeCoverPrompt(playlet: IqiyiDramaTaskPayload) {
   const contentType = playlet.dramaType === "comic-drama" ? "漫剧" : "短剧";
   return [
-    `根据参考竖版封面，为爱奇艺${contentType}生成一张 16:9 横版商业宣传海报。`,
+    `根据参考竖版封面，为爱奇艺${contentType}生成一张宽幅横向商业宣传海报。`,
     "保持原封面的核心人物、人物关系、服饰、时代背景、色彩气质和作品辨识度。",
     "将竖版画面自然扩展到左右两侧，补全真实一致的场景，不要简单拉伸、镜像、拼接或加边框。",
-    "主体位于安全区域，人物面部和关键道具完整清晰，适合 1920x1080 展示。",
+    "主体位于安全区域，人物面部和关键道具完整清晰，适合宽屏展示。",
     "【剧名文字是必须完成的主视觉元素】必须由图片生成模型直接在海报画面中绘制完整中文剧名，不留空白标题区，不交给后期添加。",
     `画面中唯一允许出现的主标题文字是：“${playlet.title}”。必须严格逐字使用该中文原文，不改字、不漏字、不增加字、不使用拼音或英文替代。`,
     "把剧名设计成专业影视海报的核心艺术字或标题标志，占据明确的视觉层级；禁止使用普通默认字体、办公字体、无描边纯色字或像界面文本一样平铺。",
@@ -70,10 +82,49 @@ export function buildIqiyiLandscapeCoverPrompt(playlet: IqiyiDramaTaskPayload) {
     "艺术字必须包含与题材协调的字形设计、渐变或材质、清晰描边、立体层次、投影或环境光效，并与场景光线和画面元素自然融合。",
     "长剧名可以合理分成 2 至 3 行并调整字号，但文字顺序必须保持不变，所有汉字必须完整、醒目、清晰可辨；不能遮挡人物面部和关键道具。",
     "参考图已有片名时，应以这里提供的准确剧名原文重新设计字效和排版；最终画面只保留一次完整剧名，删除错误、重复、残缺或普通样式的旧标题。",
-    "不要新增平台标志、品牌标志、水印、角标、二维码、副标题、宣传语或任何其他无关文字。",
+    "【文字硬性限制】整张图只能出现一处上述准确剧名；除剧名外，严禁出现任何文字、字母、数字或类似文字的符号。",
+    "尤其不得出现任何画幅比例、尺寸或分辨率标注，也不得出现演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间、相机参数、平台或品牌标志、水印、角标、二维码、信息栏和伪界面。",
+    "参考图若含剧名以外的文字，必须在新图中删除，不得复制、改写或补全；不要在底部或其他位置预留演员名、字幕或署名排版区域。",
     `剧名原文：${playlet.title}`,
     `剧情与题材参考：${playlet.summary}`,
   ].join("\n");
+}
+
+async function validateIqiyiLandscapeCover(
+  imageFile: string,
+  title: string,
+  options: IqiyiDramaRuntimeOptions,
+) {
+  const completion = await analyzeImagesAsJson(options.aiClient!, {
+    images: [{ type: "file", path: imageFile, detail: "high" }],
+    prompt: [
+      "你是短剧封面文字质检员。请检查待验收图片中的全部可见文字、字母、数字和类似文字的符号。",
+      `画面唯一允许出现的文字是准确剧名：“${title}”。该剧名必须完整、准确且只出现一次。`,
+      "演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间，以及任何画幅比例、尺寸、分辨率或相机参数都属于不允许的无关文字。",
+      "平台或品牌标志、水印、角标、二维码、信息栏、字幕条、取景框和其他伪界面元素也不允许出现。",
+      "列出实际识别到的文字，并逐项严格判断。装饰纹理不应误判为文字。",
+      "只返回 JSON 对象，不要 Markdown 或解释。格式：" + JSON.stringify({
+        titleTextExact: true,
+        titleOccursOnce: true,
+        unrelatedTextFree: true,
+        noWatermarkOrTechnicalOverlay: true,
+        detectedTexts: [title],
+        issues: [],
+      }),
+    ].join("\n"),
+    systemPrompt: "你只输出符合用户指定结构的 JSON 对象。",
+    maxTokens: 900,
+    temperature: 0,
+  });
+  const validation = iqiyiLandscapeCoverValidationSchema.parse(completion.data);
+  const failures = [
+    !validation.titleTextExact && "剧名不准确",
+    !validation.titleOccursOnce && "剧名不是只出现一次",
+    !validation.unrelatedTextFree && "检测到剧名以外的文字",
+    !validation.noWatermarkOrTechnicalOverlay && "检测到水印或技术标注",
+    ...validation.issues,
+  ].filter((issue): issue is string => Boolean(issue));
+  return { passed: failures.length === 0, failures };
 }
 
 function materialRoot(options: IqiyiDramaRuntimeOptions) {
@@ -216,25 +267,64 @@ async function generateLandscapeCover(
     return output;
   }
 
-  log(options, `[iqiyi-drama] generating landscape cover with AI model=${model}`);
-  const result = await options.aiClient.generateImage({
-    model,
-    prompt,
-    referenceImages: [{ type: "file", path: verticalCover }],
-    size: "2560x1440",
-    watermark: false,
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= landscapeGenerationAttempts; attempt += 1) {
+    const temporaryOutput = path.join(
+      outputDir,
+      `.iqiyi-landscape-${process.pid}-${Date.now()}-${attempt}.jpg`,
+    );
+    try {
+      log(
+        options,
+        `[iqiyi-drama] generating landscape cover with AI model=${model} ` +
+          `attempt=${attempt}/${landscapeGenerationAttempts}`,
+      );
+      const retryInstruction = attempt > 1
+        ? "\n\n上一张图片未通过文字验收。请重新生成，严格确保画面除唯一且准确的剧名外没有任何文字、字母、数字、署名、字幕或技术标注。"
+        : "";
+      const result = await options.aiClient.generateImage({
+        model,
+        prompt: prompt + retryInstruction,
+        referenceImages: [{ type: "file", path: verticalCover }],
+        size: "2560x1440",
+        watermark: false,
+      });
+      const generated = result.images[0];
+      if (!generated) throw new Error("DRAMA_AI_IMAGE_RESPONSE_MISSING");
+      await writeJpegWithinLimit(
+        Buffer.from(generated.data),
+        temporaryOutput,
+        1920,
+        1080,
+        iqiyiCoverMaximumBytes,
+      );
+      const validation = await validateIqiyiLandscapeCover(
+        temporaryOutput,
+        task.playlet.title,
+        options,
+      );
+      if (!validation.passed) {
+        throw new Error(
+          `IQIYI_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: ${validation.failures.join("；")}`,
+        );
+      }
+      await rename(temporaryOutput, output);
+      log(options, `[iqiyi-drama] AI landscape cover passed text validation: ${output}`);
+      return output;
+    } catch (error) {
+      lastError = error;
+      log(
+        options,
+        `[iqiyi-drama] AI landscape cover attempt failed: ` +
+          `${attempt}/${landscapeGenerationAttempts} ${error instanceof Error ? error.message : String(error)}`,
+      );
+    } finally {
+      await rm(temporaryOutput, { force: true }).catch(() => undefined);
+    }
+  }
+  throw Object.assign(new Error("IQIYI_DRAMA_AI_COVER_GENERATION_FAILED"), {
+    cause: lastError,
   });
-  const generated = result.images[0];
-  if (!generated) throw new Error("DRAMA_AI_IMAGE_RESPONSE_MISSING");
-  await writeJpegWithinLimit(
-    Buffer.from(generated.data),
-    output,
-    1920,
-    1080,
-    iqiyiCoverMaximumBytes,
-  );
-  log(options, `[iqiyi-drama] AI landscape cover ready: ${output}`);
-  return output;
 }
 
 export async function prepareIqiyiMaterials(

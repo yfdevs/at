@@ -78,6 +78,8 @@ test("preserves the generated source dimensions and format and reuses the matchi
     assert.equal(fake.requests[0]?.size, undefined);
     assert.match(fake.requests[0]?.prompt ?? "", /剧名：测试短剧/);
     assert.match(fake.requests[0]?.prompt ?? "", /主角在绝境中觉醒能力/);
+    assert.match(fake.requests[0]?.prompt ?? "", /演员姓名、演员表、职员表/);
+    assert.match(fake.requests[0]?.prompt ?? "", /画幅比例、分辨率/);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

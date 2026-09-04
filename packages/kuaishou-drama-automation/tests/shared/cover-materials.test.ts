@@ -74,6 +74,9 @@ void test("keeps technical dimensions out of model-visible generation prompts", 
   assert.match(dramaPrompt, /“测试短剧”/);
   assert.doesNotMatch(dramaPrompt, /414:258|2208x1376/);
   assert.doesNotMatch(episodePrompt, /224:300|1792x2400/);
+  assert.match(dramaPrompt, /演员姓名、演员表、职员表/);
+  assert.match(dramaPrompt, /画幅比例、分辨率/);
+  assert.match(dramaPrompt, /参考图若含剧名以外的文字，必须删除/);
 });
 
 void test("generates only the missing landscape cover and shares prepared files across variants", async () => {

@@ -5,6 +5,7 @@ import {
   composeOwnershipMaterialsIntoTwo,
   listLocalOwnershipMaterials,
   safeEpisodeFileBaseName,
+  type LocalOwnershipMaterialFile,
 } from "@drama/drama-media-assets";
 import { prepareUploadFiles } from "../automation/upload/upload-helpers.js";
 import {
@@ -79,23 +80,31 @@ export function selectRandomOwnershipFiles(
   return shuffled.slice(0, selectedCount);
 }
 
-export async function prepareWechatProductionProofMaterials(
+export async function loadWechatOwnershipMaterials(
   config: Config,
-  contractSubject?: string,
-) {
+): Promise<LocalOwnershipMaterialFile[]> {
   const localEpisodeVideoRoot = getWechatVideoRuntimeSettings().localEpisodeVideoRoot.trim();
   const ownership = await listLocalOwnershipMaterials({
     root: localEpisodeVideoRoot,
     resourceName: config.originalTitle,
   });
-  const missing: string[] = [];
-  if (ownership.length < 1) missing.push("未找到工程或权属目录下的图片");
-  if (missing.length > 0) {
+  if (ownership.length < wechatOwnershipRequirements.minimumImages) {
     throw new Error(
-      `[production-proof-invalid] 微信视频号权属材料不足：${missing.join("；")}；` +
+      `[production-proof-invalid] 微信视频号权属材料不足：未找到工程或权属目录下的图片；` +
         `扫描目录=${localEpisodeVideoRoot}`,
     );
   }
+  return ownership;
+}
+
+export async function prepareWechatProductionProofMaterials(
+  config: Config,
+  contractSubject?: string,
+  preparedOwnership?: readonly LocalOwnershipMaterialFile[],
+) {
+  const ownership = preparedOwnership?.length
+    ? [...preparedOwnership]
+    : await loadWechatOwnershipMaterials(config);
 
   if (isMingxingshuoContractSubject(contractSubject)) {
     config.playlet.copyright.productionProofFiles = selectRandomOwnershipFiles(

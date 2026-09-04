@@ -28,7 +28,7 @@
 | `playlet.previewEpisodeCount` | 试看集数 | `1` | 必填。 |
 | `playlet.dramaType` | 剧目类型 | `数字真人` | 可选 `真人`、`数字真人`、`漫剧`。 |
 | `playlet.aiContent` | AI内容声明 | `true` | `true` 表示打开声明开关。 |
-| `playlet.aiProductionProofFiles` | AI制作证明 | 无 | 开启 AI 内容声明后必填，字段类型固定为字符串数组。优先使用领取任务字段；未提供、数组为空或文件不可用时，递归匹配本地剧目录中名称包含“AI制作证明”的图片/PDF。任务带百度网盘分享链接且本地未找到时，会从分享资源中匹配、下载并整理该证明。 |
+| `playlet.aiProductionProofFiles` | AI制作证明 | 忽略 | 微信视频号不读取或校验接口中的该字段。开启 AI 内容声明时，程序从本地或百度网盘准备好的原始权属图片中随机选择一张上传。 |
 | `playlet.posters.main` | 剧目海报 | 无 | 必填文件路径，支持远程 URL 或非 `assets/` 的本地绝对路径。 |
 | `playlet.posters.promotion` | 推广海报 | 无 | 非必填文件路径，支持远程 URL 或非 `assets/` 的本地绝对路径。 |
 | `playlet.submissionIdentity` | 提审身份 | `版权方/授权播出方` | 可选 `剧目制作方`、`版权方/授权播出方`。 |

@@ -18,7 +18,10 @@ test("requires AI to render the exact short-drama title with matching poster typ
   assert.match(prompt, /金属金或亮白渐变/u);
   assert.match(prompt, /禁止使用普通默认字体/u);
   assert.match(prompt, /最终画面只保留一次完整剧名/u);
-  assert.match(prompt, /不要新增平台标志、品牌标志、水印/u);
+  assert.match(prompt, /平台或品牌标志、水印/u);
+  assert.match(prompt, /演员姓名、演员表、职员表/u);
+  assert.match(prompt, /参考图若含剧名以外的文字，必须在新图中删除/u);
+  assert.doesNotMatch(prompt, /16:9|1920x1080/u);
 });
 
 test("requires local episode videos for short-drama materials", async () => {

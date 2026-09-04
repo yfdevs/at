@@ -203,13 +203,13 @@ function parseDataJson(dataJson: unknown): Config {
 
 export function normalizeClaimedTaskConfig(task: ClaimedAccountTask, contractSubject?: string): Config {
   const taskPlaylet = task.playlet as Config["playlet"] & Partial<Config>;
-  const aiProductionProofFiles = Array.isArray(taskPlaylet.aiProductionProofFiles)
-    ? taskPlaylet.aiProductionProofFiles.filter((value) => typeof value === "string" && Boolean(value.trim()))
-    : undefined;
+  const aiContent = typeof taskPlaylet.aiContent === "boolean" ? taskPlaylet.aiContent : true;
   const playlet = {
     ...taskPlaylet,
     name: task.originalTitle,
-    aiProductionProofFiles,
+    aiContent,
+    // 接口返回的 AI 制作证明不参与微信视频号任务；运行时从原始权属图片中随机选择一张。
+    aiProductionProofFiles: [],
   };
   const videoAccountConfig = (task.videoAccountConfig ?? {}) as Partial<Config>;
   const accountTask = (task.accountTask ?? {}) as Partial<Config>;
