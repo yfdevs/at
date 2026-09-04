@@ -1,4 +1,18 @@
-import { Clock, Effect } from "effect";
+import { Cause, Clock, Effect } from "effect";
+
+/**
+ * Runs an Effect as a Promise without replacing a typed failure with Effect's
+ * FiberFailure wrapper. Promise-based consumers rely on the original error's
+ * discriminant fields (for example `_tag` and `material`).
+ */
+export async function runPromisePreservingFailure<A, E>(
+  effect: Effect.Effect<A, E>,
+): Promise<A> {
+  const exit = await Effect.runPromiseExit(effect);
+  if (exit._tag === "Success") return exit.value;
+  if (exit.cause._tag === "Fail") throw exit.cause.error;
+  throw Cause.squash(exit.cause);
+}
 
 export type RetryWithDelaysOptions<E> = {
   readonly delaysMs: readonly number[];

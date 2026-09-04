@@ -27,7 +27,10 @@ import {
   errorMessage,
   type BaiduNetdiskAutomationError,
 } from "../domain/errors.js";
-import { retryWithDelays } from "../runtime/effect-runtime.js";
+import {
+  retryWithDelays,
+  runPromisePreservingFailure,
+} from "../runtime/effect-runtime.js";
 import { parseBaiduNetdiskShareText, readShareInfo, sanitizeWindowsName } from "../domain/share-text.js";
 import type {
   BaiduNetdiskDownloadTaskStatus,
@@ -3020,5 +3023,5 @@ export function downloadBaiduNetdiskShareEffect(
 }
 
 export function downloadBaiduNetdiskShare(options: BaiduNetdiskShareDownloadOptions) {
-  return Effect.runPromise(downloadBaiduNetdiskShareEffect(options));
+  return runPromisePreservingFailure(downloadBaiduNetdiskShareEffect(options));
 }

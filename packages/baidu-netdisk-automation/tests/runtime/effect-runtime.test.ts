@@ -4,9 +4,38 @@ import test from "node:test";
 import { Effect } from "effect";
 
 import { openCdpPageEffect, withPageEffect } from "../../src/infrastructure/cdp.js";
-import { CdpConnectionError, CdpTimeoutError } from "../../src/domain/errors.js";
-import { pollUntil, retryWithDelays, scopedResource } from "../../src/runtime/effect-runtime.js";
+import {
+  CdpConnectionError,
+  CdpTimeoutError,
+  RemoteMaterialValidationError,
+} from "../../src/domain/errors.js";
+import {
+  pollUntil,
+  retryWithDelays,
+  runPromisePreservingFailure,
+  scopedResource,
+} from "../../src/runtime/effect-runtime.js";
 import type { CdpTarget } from "../../src/domain/types.js";
+
+void test("runPromisePreservingFailure exposes the original typed failure", async () => {
+  const original = new RemoteMaterialValidationError({
+    material: "poster",
+    expected: 1,
+    actual: 0,
+    message: "poster missing",
+  });
+
+  await assert.rejects(
+    runPromisePreservingFailure(Effect.fail(original)),
+    (error: unknown) => {
+      assert.equal(error, original);
+      assert.ok(error instanceof RemoteMaterialValidationError);
+      assert.equal(error._tag, "RemoteMaterialValidationError");
+      assert.equal(error.material, "poster");
+      return true;
+    },
+  );
+});
 
 void test("retryWithDelays retries recoverable failures and returns the successful value", async () => {
   let attempts = 0;

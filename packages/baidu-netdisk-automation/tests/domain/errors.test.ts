@@ -3,7 +3,10 @@ import test from "node:test";
 
 import { Effect } from "effect";
 
-import { downloadBaiduNetdiskShareEffect } from "../../src/workflows/download-baidu-folder.js";
+import {
+  downloadBaiduNetdiskShare,
+  downloadBaiduNetdiskShareEffect,
+} from "../../src/workflows/download-baidu-folder.js";
 import {
   CdpConnectionError,
   InvalidShareInputError,
@@ -56,4 +59,15 @@ void test("download effect exposes invalid input through the typed error channel
     const error = exit.cause._tag === "Fail" ? exit.cause.error : undefined;
     assert.ok(error instanceof InvalidShareInputError);
   }
+});
+
+void test("download Promise preserves typed failures for non-Effect consumers", async () => {
+  await assert.rejects(
+    downloadBaiduNetdiskShare({ shareText: "not a baidu share" }),
+    (error: unknown) => {
+      assert.ok(error instanceof InvalidShareInputError);
+      assert.equal(error._tag, "InvalidShareInputError");
+      return true;
+    },
+  );
 });
