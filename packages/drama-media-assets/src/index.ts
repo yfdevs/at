@@ -2,6 +2,7 @@ import { access, copyFile, link, mkdir, readFile, readdir, rename, rm, stat, wri
 import { createHash } from "node:crypto";
 import path from "node:path";
 import sharp from "sharp";
+import type { DramaAiClient } from "@drama/ai";
 
 export type LocalEpisodeVideo = {
   index: number;
@@ -39,6 +40,13 @@ export type OwnershipProjectProofSelection = {
   jianying: LocalOwnershipMaterialFile[];
   juchuang: LocalOwnershipMaterialFile[];
   unknown: LocalOwnershipMaterialFile[];
+};
+
+export type OwnershipProjectProofAiClientProvider = () => Promise<DramaAiClient>;
+
+export type OwnershipProjectProofClassificationOptions = {
+  getAiClient?: OwnershipProjectProofAiClientProvider;
+  onLog?: (message: string) => void;
 };
 
 export type LocalPosterImageFile = {
@@ -365,6 +373,10 @@ const legacyJianyingLogoDifferenceHashes = [
 ] as const;
 
 const ownershipProjectProofClassificationCache = new Map<string, OwnershipProjectProofKind>();
+const ownershipProjectProofAiClassificationCaches = new WeakMap<
+  DramaAiClient,
+  Map<string, OwnershipProjectProofKind>
+>();
 
 function bigintHashDistance(left: bigint, right: bigint) {
   let difference = left ^ right;
@@ -463,9 +475,64 @@ async function ownershipProjectProofDifferenceHash(
   return hash;
 }
 
+function classifyOwnershipProjectProofAiText(text: string): OwnershipProjectProofKind {
+  const normalized = text.replace(/\s+/gu, "");
+  if (/剪映/u.test(normalized)) return "jianying";
+  if (/开启创作|新对话|默认创作|灵感|资产|四角星|星形|风车/u.test(normalized)) {
+    return "juchuang";
+  }
+  return "unknown";
+}
+
+export async function classifyOwnershipProjectProofWithAi(
+  file: string,
+  client: DramaAiClient,
+): Promise<OwnershipProjectProofKind> {
+  const metadata = await sharp(file).metadata();
+  if (!metadata.width || !metadata.height) return "unknown";
+  const swapsOrientation = [5, 6, 7, 8].includes(metadata.orientation ?? 1);
+  const displayWidth = swapsOrientation ? metadata.height : metadata.width;
+  const displayHeight = swapsOrientation ? metadata.width : metadata.height;
+  if (displayWidth / displayHeight < ownershipProjectMinimumScreenshotAspectRatio) {
+    return "unknown";
+  }
+
+  const normalizedImage = swapsOrientation
+    ? await sharp(file).rotate().toBuffer({ resolveWithObject: true })
+    : undefined;
+  const sourceWidth = normalizedImage?.info.width ?? metadata.width;
+  const sourceHeight = normalizedImage?.info.height ?? metadata.height;
+  const topLeft = await sharp(normalizedImage?.data ?? file)
+    .extract({
+      height: Math.max(1, Math.round(sourceHeight * 0.18)),
+      left: 0,
+      top: 0,
+      width: Math.max(1, Math.round(sourceWidth * 0.16)),
+    })
+    .resize({ fit: "inside", width: 384, withoutEnlargement: false })
+    .png()
+    .toBuffer();
+  const result = await client.analyzeImages({
+    images: [{
+      dataUrl: `data:image/png;base64,${topLeft.toString("base64")}`,
+      detail: "low",
+      type: "data-url",
+    }],
+    maxTokens: 18,
+    prompt: [
+      "这是一张软件截图左上角区域的放大图。",
+      "只抄录最醒目的中文品牌名或页面标题，不要描述、解释或判断软件类别。",
+      "严格返回一个只含识别文字的 JSON 字符串；看不清则返回空字符串。",
+    ].join("\n"),
+    temperature: 0,
+  });
+  return classifyOwnershipProjectProofAiText(result.text);
+}
+
 export async function classifyOwnershipProjectProof(
   file: string,
   nameHint = path.basename(file),
+  options: OwnershipProjectProofClassificationOptions = {},
 ): Promise<OwnershipProjectProofKind> {
   const parentDirectoryHint = path.basename(path.dirname(file));
   const namedKind = classifyOwnershipProjectProofName(`${parentDirectoryHint}/${nameHint}`);
@@ -473,6 +540,40 @@ export async function classifyOwnershipProjectProof(
 
   const fileStat = await stat(file);
   const cacheKey = `${path.resolve(file).toLowerCase()}#${fileStat.size}#${fileStat.mtimeMs}`;
+  if (options.getAiClient) {
+    try {
+      const client = await options.getAiClient();
+      let cache = ownershipProjectProofAiClassificationCaches.get(client);
+      if (!cache) {
+        cache = new Map<string, OwnershipProjectProofKind>();
+        ownershipProjectProofAiClassificationCaches.set(client, cache);
+      }
+      let aiKind = cache.get(cacheKey);
+      if (aiKind === undefined) {
+        aiKind = await classifyOwnershipProjectProofWithAi(file, client);
+        if (cache.size >= 512) {
+          const oldest = cache.keys().next().value;
+          if (oldest) cache.delete(oldest);
+        }
+        cache.set(cacheKey, aiKind);
+      }
+      if (aiKind !== "unknown") {
+        options.onLog?.(
+          `[ownership-project-proof] 本地模型识别：${path.basename(file)} => ${aiKind}`,
+        );
+        return aiKind;
+      }
+      options.onLog?.(
+        `[ownership-project-proof] 本地模型未识别，回退原有分类：${path.basename(file)}`,
+      );
+    } catch (error) {
+      options.onLog?.(
+        `[ownership-project-proof] 本地模型识别失败，回退原有分类：${path.basename(file)}；`
+          + `${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+
   const cached = ownershipProjectProofClassificationCache.get(cacheKey);
   if (cached) return cached;
 
@@ -568,6 +669,8 @@ export async function findOwnershipProjectProofFiles(options: {
   root: string;
   resourceName: string;
   filesPerKind?: number;
+  getAiClient?: OwnershipProjectProofAiClientProvider;
+  onLog?: (message: string) => void;
 }): Promise<OwnershipProjectProofSelection> {
   const materials = await listLocalOwnershipMaterials({
     root: options.root,
@@ -575,17 +678,34 @@ export async function findOwnershipProjectProofFiles(options: {
     deduplicateByContent: true,
   });
   const candidates = materials.filter((material) => {
+    if (options.getAiClient) return true;
     const parentDirectoryName = path.basename(path.dirname(material.file));
     return ownershipProjectScreenshotPattern.test(material.name)
       || classifyOwnershipProjectProofName(parentDirectoryName) !== undefined;
   });
-  const classified = await Promise.all(
-    candidates.map(async (material) => ({
+  let aiClientPromise: Promise<DramaAiClient> | undefined;
+  const getAiClient = options.getAiClient
+    ? () => aiClientPromise ??= options.getAiClient!()
+    : undefined;
+  const classified: ClassifiedOwnershipProjectProof[] = [];
+  const filesPerKind = options.filesPerKind ?? 2;
+  for (const material of candidates) {
+    classified.push({
       material,
-      kind: await classifyOwnershipProjectProof(material.file, material.name),
-    })),
-  );
-  return selectOwnershipProjectProofFiles(classified, options.filesPerKind);
+      kind: await classifyOwnershipProjectProof(material.file, material.name, {
+        getAiClient,
+        onLog: options.onLog,
+      }),
+    });
+    if (
+      options.getAiClient
+      && classified.filter((item) => item.kind === "jianying").length >= filesPerKind
+      && classified.filter((item) => item.kind === "juchuang").length >= filesPerKind
+    ) {
+      break;
+    }
+  }
+  return selectOwnershipProjectProofFiles(classified, filesPerKind);
 }
 
 export async function listLocalPosterImages(options: {

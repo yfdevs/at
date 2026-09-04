@@ -1,0 +1,8 @@
+{
+  "version": "b10728",
+  "platform": "win32",
+  "arch": "x64",
+  "archive": "llama-b10728-bin-win-cpu-x64.zip",
+  "url": "https://github.com/ggml-org/llama.cpp/releases/download/b10728/llama-b10728-bin-win-cpu-x64.zip",
+  "sha256": "bc8f98877d23c680814517a46b2555625a12009b22f88d4f29ec2d73021f3449"
+}

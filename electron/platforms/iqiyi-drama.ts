@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  createConfiguredLocalAiClientProvider,
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -348,6 +349,7 @@ async function startRuntime() {
 
   const aiClient = createConfiguredAiClient();
   const aiImageModel = getConfiguredAiImageModel();
+  const ownershipProjectProofAiClientProvider = createConfiguredLocalAiClientProvider();
   const runtimes: Array<{ account: IqiyiDramaAccount; runtime: IqiyiDramaAccountRuntime }> = [];
   let running = true;
   try {
@@ -376,6 +378,7 @@ async function startRuntime() {
         closeFailedTaskPages: config.closeFailedTaskPages === "true",
         aiClient,
         aiImageModel,
+        ownershipProjectProofAiClientProvider,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
           requesterPlatform: "iqiyi-drama",

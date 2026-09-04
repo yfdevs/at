@@ -1,11 +1,12 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.94",
+  "version": "0.0.97",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
   "scripts": {
     "dev": "vp dev",
+    "electron:native:rebuild": "node scripts/rebuild-electron-native.mjs",
     "build:app": "node scripts/clean-build-output.mjs && vp run app:build",
     "build": "pnpm build:app && node scripts/package-electron-hoisted.mjs",
     "lint": "vp lint",
@@ -13,12 +14,10 @@
     "playwright:install-browsers": "node scripts/install-playwright-browsers.mjs",
     "release": "node scripts/create-release.mjs",
     "release:win": "node scripts/release-win.mjs",
+    "postinstall": "node scripts/rebuild-electron-native.mjs",
     "prepare": "vp config",
-    "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --if-present test",
-    "wechat-miniprogram-drama:check": "pnpm --filter @drama/wechat-miniprogram-drama-automation check",
-    "wechat-miniprogram-drama:build": "pnpm --filter @drama/wechat-miniprogram-drama-automation build",
-    "kuaishou-drama:preview-covers": "pnpm --filter @drama/drama-media-assets build && pnpm --filter @drama/kuaishou-drama-automation build && electron scripts/preview-kuaishou-covers.mjs",
-    "kuaishou-drama:test-covers-live": "pnpm --filter @drama/kuaishou-drama-automation build && node scripts/test-kuaishou-cover-crop-live.mjs"
+    "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --filter @drama/llama-server --if-present test",
+    "test:local-ownership-model": "tsx --conditions=development scripts/test-local-ownership-model.ts"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -27,6 +26,7 @@
     "@dnd-kit/sortable": "^10.0.0",
     "@dnd-kit/utilities": "^3.2.2",
     "@drama/ai": "workspace:*",
+    "@drama/llama-server": "workspace:*",
     "@drama/automation-logging": "workspace:*",
     "@drama/baidu-netdisk-automation": "workspace:*",
     "@drama/baidu-drama-automation": "workspace:*",

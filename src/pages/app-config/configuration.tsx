@@ -19,6 +19,11 @@ const emptyConfig: GlobalAppConfig = {
   aiModel: "doubao-seed-2-0-pro-260215",
   aiImageModel: "doubao-seedream-4-0-250828",
   aiPosterFallbackEnabled: true,
+  localAiEnabled: false,
+  localAiModelPath: "",
+  localAiMmprojPath: "",
+  localAiContextSize: "4096",
+  localAiThreads: "",
   baiduNetdiskDownloadTimeoutMinutes: "60",
   runDataRoot: "",
   localMaterialRoot: "",
@@ -66,8 +71,48 @@ const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
     ],
   },
   {
-    title: "AI 服务",
-    description: "各平台共享的 OpenAI SDK 兼容配置，可接入提供兼容接口的任意模型服务",
+    title: "本地 AI 推理",
+    description: "用于辅助识别文件名无法区分的剪映与剧创权属截图；其他 AI 任务继续使用云端模型",
+    fields: [
+      {
+        kind: "switch",
+        key: "localAiEnabled",
+        label: "启用本地权属截图识别",
+        description: "优先按文件名分类；无法从名称判断时才启动本地模型。关闭后完全沿用原有分类方式",
+        activeLabel: "本地权属识别已开启",
+        inactiveLabel: "未开启",
+      },
+      {
+        key: "localAiModelPath",
+        label: "GGUF 主模型",
+        description: "选择支持对话的 GGUF 模型；图片理解需使用视觉语言模型",
+        file: true,
+      },
+      {
+        key: "localAiMmprojPath",
+        label: "多模态投影模型",
+        description: "图片理解模型需要时选择对应的 mmproj GGUF 文件；纯文本任务可留空",
+        file: true,
+      },
+      {
+        key: "localAiContextSize",
+        label: "上下文长度",
+        description: "数值越大占用内存越多",
+        type: "number",
+        min: 1,
+      },
+      {
+        key: "localAiThreads",
+        label: "CPU 线程数",
+        description: "留空时由 llama.cpp 自动选择",
+        type: "number",
+        min: 1,
+      },
+    ],
+  },
+  {
+    title: "云端 AI 服务",
+    description: "现有平台的文本理解、图片理解和图片生成均继续使用此配置",
     fields: [
       {
         key: "aiApiKey",
@@ -105,12 +150,16 @@ export function GlobalConfigurationPage() {
     getConfig: globalAppConfigService.getConfig,
     saveConfig: globalAppConfigService.saveConfig,
   });
+  const localAiEnabled = String(configState.config.localAiEnabled) === "true";
 
-  const testConnection = async () => {
+  const testConnection = async (target: "cloud" | "local") => {
     setTesting(true);
     try {
-      const result = await globalAppConfigService.testConfig(configState.config);
-      toast.success("AI 服务连接成功", {
+      const result = await globalAppConfigService.testConfig({
+        ...configState.config,
+        localAiEnabled: target === "local",
+      });
+      toast.success(target === "local" ? "本地模型运行正常" : "云端 AI 服务连接成功", {
         description: `${result.model} · ${result.latencyMs} ms · ${result.responseText}`,
       });
     } catch (error) {
@@ -135,6 +184,22 @@ export function GlobalConfigurationPage() {
     }
   };
 
+  const selectLocalAiFile = async (key: keyof GlobalAppConfig) => {
+    if (key !== "localAiModelPath" && key !== "localAiMmprojPath") return;
+
+    try {
+      const selected = await globalAppConfigService.selectLocalAiFile(
+        key,
+        configState.config[key],
+      );
+      if (selected) configState.updateConfig(key, selected);
+    } catch (error) {
+      toast.error("模型文件选择失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   return (
     <ConfigurationPageFrame
       hasChanges={configState.hasChanges}
@@ -151,9 +216,13 @@ export function GlobalConfigurationPage() {
         <ConfigSection
           key={section.title}
           config={configState.config}
-          fields={section.fields}
+          fields={
+            section.title === "本地 AI 推理" && !localAiEnabled
+              ? section.fields.filter((field) => field.key === "localAiEnabled")
+              : section.fields
+          }
           footer={
-            section.title === "AI 服务" ? (
+            section.title === "云端 AI 服务" ? (
               <div className="flex flex-wrap justify-end gap-2">
                 <Button
                   className="w-fit"
@@ -170,19 +239,32 @@ export function GlobalConfigurationPage() {
                   className="w-fit"
                   disabled={configState.loading || testing}
                   onClick={() => {
-                    void testConnection();
+                    void testConnection("cloud");
                   }}
                   size="sm"
                   variant="outline"
                 >
-                  {testing ? "测试中…" : "测试图片与文本能力"}
+                  {testing ? "测试中…" : "测试云端图片与文本能力"}
                 </Button>
               </div>
+            ) : section.title === "本地 AI 推理" && localAiEnabled ? (
+              <Button
+                className="w-fit"
+                disabled={configState.loading || testing}
+                onClick={() => {
+                  void testConnection("local");
+                }}
+                size="sm"
+                variant="outline"
+              >
+                {testing ? "正在加载模型…" : "启动并测试本地模型"}
+              </Button>
             ) : undefined
           }
           section={section}
           onChange={configState.updateConfig}
           onSelectDirectory={selectDirectory}
+          onSelectFile={selectLocalAiFile}
         />
       ))}
     </ConfigurationPageFrame>

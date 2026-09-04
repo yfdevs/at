@@ -1,5 +1,6 @@
 import { spawnSync } from "node:child_process";
-import { mkdirSync } from "node:fs";
+import console from "node:console";
+import { existsSync, mkdirSync, readFileSync } from "node:fs";
 import path from "node:path";
 import process from "node:process";
 import { createRequire } from "node:module";
@@ -21,8 +22,25 @@ try {
 }
 
 const playwrightCli = path.join(path.dirname(playwrightPackageJson), "cli.js");
+const playwrightCorePackageJson = wechatDramaRequire.resolve("playwright-core/package.json");
+const playwrightCoreRoot = path.dirname(playwrightCorePackageJson);
+const browsers = JSON.parse(readFileSync(path.join(playwrightCoreRoot, "browsers.json"), "utf8"));
+const chromium = browsers.browsers?.find((browser) => browser.name === "chromium");
+if (!chromium?.revision) throw new Error("Cannot resolve the Playwright Chromium revision.");
+const installedBrowserDirectory = path.join(browserPath, `chromium-${chromium.revision}`);
+const installedBrowserExecutable = process.platform === "win32"
+  ? path.join(installedBrowserDirectory, "chrome-win64", "chrome.exe")
+  : path.join(installedBrowserDirectory, "chrome-linux", "chrome");
 
 mkdirSync(browserPath, { recursive: true });
+
+if (
+  existsSync(path.join(installedBrowserDirectory, "INSTALLATION_COMPLETE"))
+  && existsSync(installedBrowserExecutable)
+) {
+  console.log(`Playwright Chromium ${chromium.revision} is already installed.`);
+  process.exit(0);
+}
 
 const result = spawnSync(process.execPath, [playwrightCli, "install", "chromium"], {
   cwd: root,

@@ -4,6 +4,11 @@ export type GlobalAppConfig = {
   aiModel: string
   aiImageModel: string
   aiPosterFallbackEnabled: boolean
+  localAiEnabled: boolean
+  localAiModelPath: string
+  localAiMmprojPath: string
+  localAiContextSize: string
+  localAiThreads: string
   baiduNetdiskDownloadTimeoutMinutes: string
   runDataRoot: string
   localMaterialRoot: string
@@ -54,6 +59,22 @@ async function invokeGlobalAppConfig<T>(channel: string, ...args: unknown[]): Pr
       if (error instanceof Error) error.message = "请填写模型 ID 后再测试。"
       throw error
     }
+    if (message.includes("LOCAL_AI_MODEL_PATH_REQUIRED")) {
+      if (error instanceof Error) error.message = "请选择本地 GGUF 模型后再测试。"
+      throw error
+    }
+    if (message.includes("LOCAL_AI_CONTEXT_SIZE_INVALID")) {
+      if (error instanceof Error) error.message = "上下文长度必须是正整数。"
+      throw error
+    }
+    if (message.includes("LOCAL_AI_THREADS_INVALID")) {
+      if (error instanceof Error) error.message = "CPU 线程数必须是正整数或留空。"
+      throw error
+    }
+    if (message.includes("LLAMA_SERVER_BUNDLED_RUNTIME_MISSING")) {
+      if (error instanceof Error) error.message = "应用内置的本地 AI Runtime 缺失，请重新安装应用。"
+      throw error
+    }
     throw error
   }
 }
@@ -71,6 +92,14 @@ export const globalAppConfigService = {
     currentPath?: string,
   ) => invokeGlobalAppConfig<string | null>(
     "app:config:select-directory",
+    key,
+    currentPath,
+  ),
+  selectLocalAiFile: (
+    key: "localAiModelPath" | "localAiMmprojPath",
+    currentPath?: string,
+  ) => invokeGlobalAppConfig<string | null>(
+    "app:config:select-local-ai-file",
     key,
     currentPath,
   ),

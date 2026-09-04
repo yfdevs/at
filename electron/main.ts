@@ -6,6 +6,7 @@ import path from "node:path";
 
 import { registerAppUpdaterHandlers } from "./app-updater";
 import { registerGlobalAppConfigHandlers } from "./global-app-config";
+import { getLocalAiRuntimeStatus, stopLocalAiRuntime } from "./local-ai-runtime";
 import {
   getMainLogDir,
   logMain,
@@ -235,6 +236,7 @@ app.on("before-quit", () => {
   stopDouyinDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
   stopPinduoduoDramaPlatformRuntime();
+  void stopLocalAiRuntime();
 });
 
 app.on("activate", () => {
@@ -311,6 +313,7 @@ function ipcMainHandleAppRuntimeStatus() {
         dDrive: await readDriveStatus("D:"),
       },
       memory: await readMemoryStatus(),
+      localAi: getLocalAiRuntimeStatus(),
     };
   });
 

@@ -26,6 +26,12 @@ export const runConfig = {
       input: [{ auto: true }, "!packages/drama-ai/dist/**"],
       output: ["packages/drama-ai/dist/**"],
     },
+    "pkg:llama-server:build": {
+      command: "pnpm build",
+      cwd: "packages/llama-server",
+      input: [{ auto: true }, "!packages/llama-server/dist/**"],
+      output: ["packages/llama-server/dist/**"],
+    },
     "pkg:wechat:build": {
       command: "vp pack",
       cwd: "packages/wechat-drama-automation",
@@ -107,6 +113,7 @@ export const runConfig = {
       command: "node -e \"console.log('workspace packages built')\"",
       dependsOn: [
         "pkg:ai:build",
+        "pkg:llama-server:build",
         "pkg:logging:build",
         "pkg:wechat:build",
         "pkg:wechat-miniprogram:build",

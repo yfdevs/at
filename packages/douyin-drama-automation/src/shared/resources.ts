@@ -1,6 +1,7 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  findOwnershipProjectProofFiles,
   listLocalOwnershipMaterials,
   listLocalPosterImages,
   prepareStretchedImageVariant,
@@ -166,9 +167,33 @@ export async function prepareDouyinDramaResources(
     );
   }
   if (task.playlet.projectScreenshotFiles.length === 0) {
-    task.playlet.projectScreenshotFiles = ownershipMaterials
-      .slice(0, 5)
-      .map((file) => file.file);
+    if (options.ownershipProjectProofAiClientProvider) {
+      try {
+        const selection = await findOwnershipProjectProofFiles({
+          getAiClient: options.ownershipProjectProofAiClientProvider,
+          onLog: (message) => log(options, message, undefined, "resources"),
+          root: localEpisodeVideoRoot,
+          resourceName,
+        });
+        task.playlet.projectScreenshotFiles = selection.files;
+      } catch (error) {
+        log(
+          options,
+          `[douyin-drama] 权属工程截图智能分类失败，沿用原选择方式：${
+            error instanceof Error ? error.message : String(error)
+          }`,
+          undefined,
+          "resources",
+        );
+        task.playlet.projectScreenshotFiles = ownershipMaterials
+          .slice(0, 5)
+          .map((file) => file.file);
+      }
+    } else {
+      task.playlet.projectScreenshotFiles = ownershipMaterials
+        .slice(0, 5)
+        .map((file) => file.file);
+    }
   }
 
   const [

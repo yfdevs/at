@@ -23,6 +23,11 @@
       to: "playwright-browsers",
       filter: ["**/*", "!winldd-*", "!winldd-*/**"],
     },
+    {
+      from: "packages/llama-server/vendor/win-x64",
+      to: "llama-server/win-x64",
+      filter: ["llama-server.exe", "*.dll", "*.txt"],
+    },
   ],
   mac: {
     target: ["dmg"],

@@ -33,6 +33,10 @@ export function createElectronPlugin(rootDir: string) {
               replacement: path.join(rootDir, "packages/drama-ai/src/index.ts"),
             },
             {
+              find: /^@drama\/llama-server$/,
+              replacement: path.join(rootDir, "packages/llama-server/src/index.ts"),
+            },
+            {
               find: /^@drama\/baidu-netdisk-automation\/download-baidu-folder$/,
               replacement: path.join(
                 rootDir,

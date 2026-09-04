@@ -1,0 +1,29 @@
+{
+  "name": "@drama/llama-server",
+  "version": "0.1.0",
+  "private": true,
+  "type": "module",
+  "sideEffects": false,
+  "exports": {
+    ".": {
+      "types": "./src/index.ts",
+      "development": "./src/index.ts",
+      "default": "./dist/index.mjs"
+    },
+    "./package.json": "./package.json"
+  },
+  "scripts": {
+    "build": "pnpm runtime:check && vp pack",
+    "check": "tsc --noEmit",
+    "runtime:check": "node scripts/prepare-runtime.mjs --check",
+    "runtime:prepare": "node scripts/prepare-runtime.mjs",
+    "runtime:smoke": "pnpm --filter @drama/ai build && pnpm build && node scripts/smoke-runtime.mjs",
+    "test": "tsx --conditions=development --test tests/**/*.test.ts"
+  },
+  "devDependencies": {
+    "@types/node": "latest",
+    "tsx": "^4.23.12",
+    "typescript": "^6.0.3",
+    "vite": "catalog:"
+  }
+}

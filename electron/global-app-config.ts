@@ -16,6 +16,11 @@ import {
 import Store from "electron-store";
 import path from "node:path";
 import sharp from "sharp";
+import {
+  ensureLocalAiClient,
+  stopLocalAiRuntime,
+  type LocalAiRuntimeConfig,
+} from "./local-ai-runtime";
 
 const ARK_API_KEY_URL = "https://console.volcengine.com/ark/region:ark+cn-beijing/apikey";
 const LEGACY_DEFAULT_AI_BASE_URL = "https://api.openai.com/v1";
@@ -23,6 +28,7 @@ const RECOMMENDED_AI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
 const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
 const DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES = "60";
+const DEFAULT_LOCAL_AI_CONTEXT_SIZE = "4096";
 export const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
 
 export type GlobalAppConfig = {
@@ -31,6 +37,11 @@ export type GlobalAppConfig = {
   aiModel: string;
   aiImageModel: string;
   aiPosterFallbackEnabled: boolean;
+  localAiEnabled: boolean;
+  localAiModelPath: string;
+  localAiMmprojPath: string;
+  localAiContextSize: string;
+  localAiThreads: string;
   baiduNetdiskDownloadTimeoutMinutes: string;
   runDataRoot: string;
   localMaterialRoot: string;
@@ -42,6 +53,11 @@ type StoredGlobalAppConfig = {
   aiModel: string;
   aiImageModel: string;
   aiPosterFallbackEnabled?: boolean;
+  localAiEnabled?: boolean;
+  localAiModelPath?: string;
+  localAiMmprojPath?: string;
+  localAiContextSize?: string;
+  localAiThreads?: string;
   baiduNetdiskDownloadTimeoutMinutes?: string;
   runDataRoot?: string;
   localMaterialRoot?: string;
@@ -57,6 +73,11 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiModel: RECOMMENDED_AI_MODEL,
   aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
   aiPosterFallbackEnabled: true,
+  localAiEnabled: false,
+  localAiModelPath: "",
+  localAiMmprojPath: "",
+  localAiContextSize: DEFAULT_LOCAL_AI_CONTEXT_SIZE,
+  localAiThreads: "",
   baiduNetdiskDownloadTimeoutMinutes: DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
   runDataRoot: "",
   localMaterialRoot: "",
@@ -136,6 +157,14 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiModel: config.aiModel?.trim() ?? "",
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
     aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
+    localAiEnabled: normalizeBoolean(config.localAiEnabled, false),
+    localAiModelPath: config.localAiModelPath?.trim() ?? "",
+    localAiMmprojPath: config.localAiMmprojPath?.trim() ?? "",
+    localAiContextSize: normalizePositiveNumberText(
+      config.localAiContextSize,
+      DEFAULT_LOCAL_AI_CONTEXT_SIZE,
+    ),
+    localAiThreads: config.localAiThreads?.trim() ?? "",
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
@@ -162,6 +191,14 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiModel: config.aiModel.trim(),
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
     aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
+    localAiEnabled: normalizeBoolean(config.localAiEnabled, false),
+    localAiModelPath: config.localAiModelPath?.trim() ?? "",
+    localAiMmprojPath: config.localAiMmprojPath?.trim() ?? "",
+    localAiContextSize: normalizePositiveNumberText(
+      config.localAiContextSize,
+      DEFAULT_LOCAL_AI_CONTEXT_SIZE,
+    ),
+    localAiThreads: config.localAiThreads?.trim() ?? "",
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
@@ -192,6 +229,11 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiModel: normalized.aiModel,
     aiImageModel: normalized.aiImageModel,
     aiPosterFallbackEnabled: normalized.aiPosterFallbackEnabled,
+    localAiEnabled: normalized.localAiEnabled,
+    localAiModelPath: normalized.localAiModelPath,
+    localAiMmprojPath: normalized.localAiMmprojPath,
+    localAiContextSize: normalized.localAiContextSize,
+    localAiThreads: normalized.localAiThreads,
     baiduNetdiskDownloadTimeoutMinutes: normalized.baiduNetdiskDownloadTimeoutMinutes,
     runDataRoot: normalized.runDataRoot,
     localMaterialRoot: normalized.localMaterialRoot,
@@ -264,6 +306,28 @@ async function selectGlobalDirectory(
   return result.canceled ? null : result.filePaths[0] ?? null;
 }
 
+async function selectLocalAiFile(
+  event: IpcMainInvokeEvent,
+  key: "localAiModelPath" | "localAiMmprojPath",
+  currentPath?: string,
+) {
+  const parentWindow = BrowserWindow.fromWebContents(event.sender);
+  const configuredPath = currentPath?.trim();
+  const options: OpenDialogOptions = {
+    title: key === "localAiModelPath" ? "选择本地 GGUF 模型" : "选择多模态投影模型",
+    defaultPath: configuredPath || app.getPath("documents"),
+    properties: ["openFile"],
+    filters: [
+      { name: "GGUF 模型", extensions: ["gguf"] },
+      { name: "所有文件", extensions: ["*"] },
+    ],
+  };
+  const result = parentWindow
+    ? await dialog.showOpenDialog(parentWindow, options)
+    : await dialog.showOpenDialog(options);
+  return result.canceled ? null : result.filePaths[0] ?? null;
+}
+
 function aiClientOptions(config: GlobalAppConfig): OpenAiCompatibleClientOptions {
   if (!config.aiApiKey) throw new Error("DRAMA_AI_API_KEY_REQUIRED");
   if (!config.aiModel) throw new Error("DRAMA_AI_MODEL_REQUIRED");
@@ -279,8 +343,37 @@ export function getConfiguredAiClientOptions(): OpenAiCompatibleClientOptions {
   return aiClientOptions(readGlobalAppConfig());
 }
 
+function localAiRuntimeConfig(config: GlobalAppConfig): LocalAiRuntimeConfig {
+  if (!config.localAiModelPath) throw new Error("LOCAL_AI_MODEL_PATH_REQUIRED");
+  const contextSize = Number(config.localAiContextSize);
+  const threads = config.localAiThreads ? Number(config.localAiThreads) : undefined;
+  if (!Number.isInteger(contextSize) || contextSize <= 0) {
+    throw new Error("LOCAL_AI_CONTEXT_SIZE_INVALID");
+  }
+  if (threads !== undefined && (!Number.isInteger(threads) || threads <= 0)) {
+    throw new Error("LOCAL_AI_THREADS_INVALID");
+  }
+  return {
+    contextSize,
+    modelPath: config.localAiModelPath,
+    multimodalProjectorPath: config.localAiMmprojPath || undefined,
+    threads,
+  };
+}
+
 export function createConfiguredAiClient(): OpenAiCompatibleClient {
   return createOpenAiCompatibleClient(getConfiguredAiClientOptions());
+}
+
+export function createConfiguredLocalAiClientProvider():
+  (() => Promise<OpenAiCompatibleClient>) | undefined {
+  const config = readGlobalAppConfig();
+  if (!config.localAiEnabled) return undefined;
+  return () => {
+    const current = readGlobalAppConfig();
+    if (!current.localAiEnabled) throw new Error("LOCAL_AI_DISABLED");
+    return ensureLocalAiClient(localAiRuntimeConfig(current));
+  };
 }
 
 export function getConfiguredAiImageModel() {
@@ -290,7 +383,10 @@ export function getConfiguredAiImageModel() {
 }
 
 async function testAiConfig(config: Partial<GlobalAppConfig>) {
-  const client = createOpenAiCompatibleClient(aiClientOptions(normalizeGlobalAppConfig(config)));
+  const normalized = normalizeGlobalAppConfig(config);
+  const client = normalized.localAiEnabled
+    ? await ensureLocalAiClient(localAiRuntimeConfig(normalized))
+    : createOpenAiCompatibleClient(aiClientOptions(normalized));
   const testImage = await sharp({
     create: {
       background: { alpha: 1, b: 70, g: 35, r: 220 },
@@ -320,15 +416,23 @@ export function registerGlobalAppConfigHandlers(options: {
   registered = true;
 
   ipcMain.handle("app:config:get", () => configResult());
-  ipcMain.handle("app:config:save", (_event, config: Partial<GlobalAppConfig>) => {
+  ipcMain.handle("app:config:save", async (_event, config: Partial<GlobalAppConfig>) => {
     const previous = readGlobalAppConfig();
     const saved = saveGlobalAppConfig(config);
     const directoryChanged =
       previous.runDataRoot !== saved.runDataRoot ||
       previous.localMaterialRoot !== saved.localMaterialRoot;
+    const localAiChanged =
+      previous.localAiEnabled !== saved.localAiEnabled
+      || previous.localAiModelPath !== saved.localAiModelPath
+      || previous.localAiMmprojPath !== saved.localAiMmprojPath
+      || previous.localAiContextSize !== saved.localAiContextSize
+      || previous.localAiThreads !== saved.localAiThreads;
+    if (localAiChanged) await stopLocalAiRuntime();
     return configResult(
       saved,
-      directoryChanged && (options.getRunningPlatformCount?.() ?? 0) > 0,
+      (directoryChanged || localAiChanged)
+        && (options.getRunningPlatformCount?.() ?? 0) > 0,
     );
   });
   ipcMain.handle("app:config:test", (_event, config: Partial<GlobalAppConfig>) => {
@@ -342,6 +446,19 @@ export function registerGlobalAppConfigHandlers(options: {
         throw new Error("APP_CONFIG_DIRECTORY_KEY_INVALID");
       }
       return selectGlobalDirectory(event, key, currentPath);
+    },
+  );
+  ipcMain.handle(
+    "app:config:select-local-ai-file",
+    (
+      event,
+      key: "localAiModelPath" | "localAiMmprojPath",
+      currentPath?: string,
+    ) => {
+      if (key !== "localAiModelPath" && key !== "localAiMmprojPath") {
+        throw new Error("APP_CONFIG_LOCAL_AI_FILE_KEY_INVALID");
+      }
+      return selectLocalAiFile(event, key, currentPath);
     },
   );
 }

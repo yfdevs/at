@@ -191,6 +191,26 @@ async function validatePackagedFfmpeg(version) {
   await validateFfmpegExecutable(packagedFile, "packaged FFmpeg");
 }
 
+async function validatePackagedLlamaServer(version) {
+  if (process.platform !== "win32" && !process.argv.includes("--win")) return;
+  const packagedFile = path.join(
+    rootDir,
+    "release",
+    version,
+    "win-unpacked",
+    "resources",
+    "llama-server",
+    "win-x64",
+    "llama-server.exe",
+  );
+  const output = await runExecutable(packagedFile, ["--version"]);
+  if (!/build\s+\d+/i.test(output)) {
+    throw new Error(`Packaged llama-server did not return a valid version: ${packagedFile}`);
+  }
+  const { size } = await stat(packagedFile);
+  console.log(`Validated packaged llama-server: ${packagedFile} (${size} bytes).`);
+}
+
 function toJsonString(value) {
   return JSON.stringify(value);
 }
@@ -302,6 +322,10 @@ async function writeBuilderConfig() {
     .replace(
       /from:\s*"\.cache\/playwright-browsers"/,
       `from: ${toJsonString(path.join(rootDir, ".cache", "playwright-browsers"))}`,
+    )
+    .replace(
+      /from:\s*"packages\/llama-server\/vendor\/win-x64"/,
+      `from: ${toJsonString(path.join(rootDir, "packages", "llama-server", "vendor", "win-x64"))}`,
     );
   await writeFile(path.join(stagingDir, "electron-builder.json5"), config);
 }
@@ -369,6 +393,7 @@ async function main() {
   ]);
   const packageJson = await readJson(packageJsonPath);
   await validatePackagedFfmpeg(packageJson.version);
+  await validatePackagedLlamaServer(packageJson.version);
 }
 
 main().catch((error) => {

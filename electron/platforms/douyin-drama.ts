@@ -14,6 +14,7 @@ import {
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
   assertGlobalDirectoriesConfigured,
+  createConfiguredLocalAiClientProvider,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
@@ -241,6 +242,7 @@ async function startRuntime() {
     ),
     episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
     taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
+    ownershipProjectProofAiClientProvider: createConfiguredLocalAiClientProvider(),
     ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
       ...request,
       requesterPlatform: "douyin-drama",
