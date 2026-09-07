@@ -54,6 +54,14 @@ import {
   stopQqDramaPlatformRuntime,
 } from "./platforms/qq-drama";
 import {
+  getTencentHuolongDramaBrowserInstanceCount,
+  getTencentHuolongDramaPlatformRuntimeSummary,
+  getTencentHuolongDramaRunningPlatformCount,
+  openTencentHuolongDramaLogDir,
+  registerTencentHuolongDramaPlatformHandlers,
+  stopTencentHuolongDramaPlatformRuntime,
+} from "./platforms/tencent-huolong-drama";
+import {
   getIqiyiDramaBrowserInstanceCount,
   getIqiyiDramaPlatformRuntimeSummary,
   getIqiyiDramaRunningPlatformCount,
@@ -130,6 +138,7 @@ type PlatformId =
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
+  | "tencent-huolong-drama"
   | "iqiyi-drama"
   | "baidu-drama"
   | "douyin-drama"
@@ -231,6 +240,7 @@ app.on("before-quit", () => {
   stopMeituanCreationPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopQqDramaPlatformRuntime();
+  stopTencentHuolongDramaPlatformRuntime();
   stopIqiyiDramaPlatformRuntime();
   stopBaiduDramaPlatformRuntime();
   stopDouyinDramaPlatformRuntime();
@@ -258,6 +268,7 @@ app.whenReady().then(() => {
     registerMeituanCreationPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerQqDramaPlatformHandlers();
+    registerTencentHuolongDramaPlatformHandlers();
     registerIqiyiDramaPlatformHandlers();
     registerBaiduDramaPlatformHandlers();
     registerDouyinDramaPlatformHandlers();
@@ -341,6 +352,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getKuaishouDramaPlatformRuntimeSummary();
     case "qq-drama":
       return getQqDramaPlatformRuntimeSummary();
+    case "tencent-huolong-drama":
+      return getTencentHuolongDramaPlatformRuntimeSummary();
     case "iqiyi-drama":
       return getIqiyiDramaPlatformRuntimeSummary();
     case "baidu-drama":
@@ -368,6 +381,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openKuaishouDramaLogDir();
     case "qq-drama":
       return openQqDramaLogDir();
+    case "tencent-huolong-drama":
+      return openTencentHuolongDramaLogDir();
     case "iqiyi-drama":
       return openIqiyiDramaLogDir();
     case "baidu-drama":
@@ -390,6 +405,7 @@ function getGlobalBrowserInstanceCount() {
     getMeituanCreationBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getQqDramaBrowserInstanceCount,
+    getTencentHuolongDramaBrowserInstanceCount,
     getIqiyiDramaBrowserInstanceCount,
     getBaiduDramaBrowserInstanceCount,
     getDouyinDramaBrowserInstanceCount,
@@ -413,6 +429,7 @@ function getGlobalRunningPlatformStatus() {
     getMeituanCreationRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getQqDramaRunningPlatformCount,
+    getTencentHuolongDramaRunningPlatformCount,
     getIqiyiDramaRunningPlatformCount,
     getBaiduDramaRunningPlatformCount,
     getDouyinDramaRunningPlatformCount,

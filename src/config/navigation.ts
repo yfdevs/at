@@ -7,6 +7,7 @@ export type PlatformId =
   | "meituan-drama"
   | "kuaishou-drama"
   | "qq-drama"
+  | "tencent-huolong-drama"
   | "iqiyi-drama"
   | "baidu-drama"
   | "douyin-drama"
@@ -31,6 +32,8 @@ export type AppRoute =
   | "kuaishou-drama/settings"
   | "qq-drama/service"
   | "qq-drama/config"
+  | "tencent-huolong-drama/service"
+  | "tencent-huolong-drama/config"
   | "iqiyi-drama/service"
   | "iqiyi-drama/config"
   | "baidu-drama/service"
@@ -60,6 +63,8 @@ const appRoutes = [
   "kuaishou-drama/settings",
   "qq-drama/service",
   "qq-drama/config",
+  "tencent-huolong-drama/service",
+  "tencent-huolong-drama/config",
   "iqiyi-drama/service",
   "iqiyi-drama/config",
   "baidu-drama/service",
@@ -156,6 +161,14 @@ export const platformNavigation: PlatformNavigationItem[] = [
     serviceRoute: "qq-drama/service",
     configRoute: "qq-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}QQ.svg`,
+  },
+  {
+    id: "tencent-huolong-drama",
+    title: "腾讯火龙漫剧",
+    routePrefix: "tencent-huolong-drama",
+    serviceRoute: "tencent-huolong-drama/service",
+    configRoute: "tencent-huolong-drama/config",
+    logoSrc: `${import.meta.env.BASE_URL}tencent-video.svg`,
   },
   {
     id: "iqiyi-drama",
@@ -271,6 +284,21 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "配置管理",
         route: "qq-drama/config",
+        icon: FineTune,
+      },
+    ],
+  },
+  {
+    title: "腾讯火龙漫剧",
+    items: [
+      {
+        title: "服务控制",
+        route: "tencent-huolong-drama/service",
+        icon: Terminal,
+      },
+      {
+        title: "配置管理",
+        route: "tencent-huolong-drama/config",
         icon: FineTune,
       },
     ],

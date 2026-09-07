@@ -1,0 +1,211 @@
+import type { BrowserContext, Page } from "playwright";
+import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
+import {
+  TENCENT_HUOLONG_DRAMA_ADD_URL,
+  TENCENT_HUOLONG_DRAMA_LOGIN_URL,
+  TENCENT_HUOLONG_DRAMA_PLATFORM,
+} from "../shared/constants.js";
+import {
+  cleanupOldLogFiles,
+  configureTencentHuolongLogger,
+  errorLog,
+  log,
+  runWithLogContext,
+} from "../shared/logger.js";
+import { materialRoot } from "../shared/local-materials.js";
+import type {
+  ClaimedTencentHuolongDramaTask,
+  TencentHuolongRuntime,
+  TencentHuolongRuntimeOptions,
+  TencentHuolongRuntimeStatus,
+  TencentHuolongTaskFailStage,
+} from "../shared/types.js";
+import {
+  launchTencentHuolongBrowserContext,
+  saveCredentialState,
+  tencentHuolongLoginStateFromUrl,
+  waitForLoginIfNeeded,
+} from "../automation/browser-session.js";
+import { openTencentHuolongAddPage, runTencentHuolongPublishTask } from "../automation/publish-runner.js";
+import { claimNextTencentHuolongDramaTask, reportTencentHuolongDramaTask } from "../api/task.js";
+
+type LastTask = TencentHuolongRuntimeStatus["lastTask"];
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function failStage(error: unknown): TencentHuolongTaskFailStage {
+  const message = errorMessage(error);
+  if (/LOGIN/i.test(message)) return "LOGIN";
+  if (/UPLOAD|FILE|poster|cover|素材|封面|视频/i.test(message)) return "UPLOAD_FILE";
+  if (/SUBMIT/i.test(message)) return "SUBMIT";
+  if (/FORM|FIELD|RADIO|OPTION/i.test(message)) return "FILL_FORM";
+  return "OTHER";
+}
+
+async function ensureResource(task: ClaimedTencentHuolongDramaTask, options: TencentHuolongRuntimeOptions) {
+  const link = task.playlet.baiduPanResourceLink?.trim();
+  if (!link) return;
+  if (!options.ensureBaiduNetdiskResource) {
+    throw new Error("任务包含百度网盘链接，但腾讯火龙漫剧运行时未接入网盘下载能力。");
+  }
+  const retries = Math.max(0, options.baiduNetdiskDownloadRetryAttempts ?? 3);
+  let lastError: unknown;
+  for (let attempt = 0; attempt <= retries; attempt += 1) {
+    try {
+      await options.ensureBaiduNetdiskResource({
+        shareText: link,
+        resourceName: task.originalTitle,
+        localEpisodeVideoRoot: materialRoot(options),
+        episodeCount: task.playlet.episodeCount,
+        requiredPosterImages: 1,
+        posterFallback: { title: task.playlet.title, summary: task.playlet.summary },
+      });
+      return;
+    } catch (error) {
+      lastError = error;
+      if (isNonRetryableBaiduNetdiskResourceError(error) || attempt >= retries) break;
+      await new Promise((resolve) => setTimeout(resolve, 5_000));
+    }
+  }
+  throw lastError;
+}
+
+async function runTask(
+  page: Page,
+  context: BrowserContext,
+  task: ClaimedTencentHuolongDramaTask,
+  options: TencentHuolongRuntimeOptions,
+  setLastTask: (value: LastTask) => void,
+) {
+  setLastTask({
+    accountTaskId: task.accountTaskId,
+    originalTitle: task.originalTitle,
+    status: "running",
+    updatedAt: new Date().toISOString(),
+  });
+  try {
+    await runWithLogContext(
+      { accountId: task.accountId, accountName: task.accountName, accountTaskId: task.accountTaskId },
+      async () => {
+        await ensureResource(task, options);
+        await runTencentHuolongPublishTask(page, context, task, options);
+      },
+    );
+    await reportTencentHuolongDramaTask({
+      ...options,
+      accountTaskId: task.accountTaskId,
+      status: "SUCCESS",
+      resultJson: { activeUrl: page.url(), accountId: task.accountId },
+    });
+    setLastTask({
+      accountTaskId: task.accountTaskId,
+      originalTitle: task.originalTitle,
+      status: "succeeded",
+      updatedAt: new Date().toISOString(),
+    });
+  } catch (error) {
+    const message = errorMessage(error);
+    setLastTask({
+      accountTaskId: task.accountTaskId,
+      originalTitle: task.originalTitle,
+      status: "failed",
+      errorMessage: message,
+      updatedAt: new Date().toISOString(),
+    });
+    await reportTencentHuolongDramaTask({
+      ...options,
+      accountTaskId: task.accountTaskId,
+      status: "FAILED",
+      failStage: failStage(error),
+      errorMessage: message,
+      resultJson: { activeUrl: page.url(), accountId: task.accountId },
+    }).catch((reportError) => errorLog(options, `[tencent-huolong-drama] 失败回调异常：${errorMessage(reportError)}`));
+    throw error;
+  }
+}
+
+export async function startTencentHuolongDramaRuntime(
+  options: TencentHuolongRuntimeOptions = {},
+): Promise<TencentHuolongRuntime> {
+  if (!options.userDataDir) throw new Error("Tencent Huolong drama userDataDir is required.");
+  configureTencentHuolongLogger(options);
+  await cleanupOldLogFiles(options);
+
+  let running = true;
+  let page: Page | null = null;
+  let context: BrowserContext | null = null;
+  let lastTask: LastTask;
+  let timer: ReturnType<typeof setTimeout> | null = null;
+  let wake: (() => void) | null = null;
+
+  const waitPoll = () => new Promise<void>((resolve) => {
+    wake = resolve;
+    timer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
+  }).finally(() => {
+    if (timer) clearTimeout(timer);
+    timer = null;
+    wake = null;
+  });
+
+  context = await launchTencentHuolongBrowserContext(options.userDataDir, options);
+  context.on("close", () => { running = false; wake?.(); });
+  page = await context.newPage();
+  const activePage = page;
+  const activeContext = context;
+
+  const loop = (async () => {
+    await openTencentHuolongAddPage(activePage, activeContext, options).catch((error) => {
+      errorLog(options, `[tencent-huolong-drama] 打开上剧页失败：${errorMessage(error)}`);
+    });
+    while (running && !activePage.isClosed()) {
+      try {
+        await waitForLoginIfNeeded(activePage, activeContext, options);
+        const task = await claimNextTencentHuolongDramaTask(options);
+        if (task) {
+          const taskPage = await activeContext.newPage();
+          try {
+            await runTask(taskPage, activeContext, task, options, (value) => { lastTask = value; });
+          } finally {
+            await taskPage.close().catch(() => undefined);
+          }
+        } else {
+          log(options, "[tencent-huolong-drama] 暂无可领取任务");
+        }
+      } catch (error) {
+        errorLog(options, `[tencent-huolong-drama] 任务轮询失败：${errorMessage(error)}`);
+      }
+      if (running && !activePage.isClosed()) await waitPoll();
+    }
+  })();
+
+  return {
+    getStatus() {
+      const activeUrl = page?.url();
+      return {
+        platform: TENCENT_HUOLONG_DRAMA_PLATFORM,
+        running,
+        loginState: tencentHuolongLoginStateFromUrl(activeUrl),
+        activeUrl,
+        addUrl: TENCENT_HUOLONG_DRAMA_ADD_URL,
+        loginUrl: TENCENT_HUOLONG_DRAMA_LOGIN_URL,
+        userDataDir: options.userDataDir!,
+        accountProfileName: options.accountProfileName,
+        accountDir: options.accountDir,
+        credentialStatePath: options.credentialStatePath,
+        assetDownloadDir: options.assetDownloadDir,
+        logFilePath: options.logFilePath,
+        lastTask,
+      };
+    },
+    async stop() {
+      running = false;
+      wake?.();
+      if (context) await saveCredentialState(context, options).catch(() => undefined);
+      await context?.close();
+      await loop.catch(() => undefined);
+      log(options, "[tencent-huolong-drama] 运行时已停止");
+    },
+  };
+}
