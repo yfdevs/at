@@ -17,7 +17,9 @@
     "postinstall": "node scripts/rebuild-electron-native.mjs",
     "prepare": "vp config",
     "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --filter @drama/llama-server --if-present test",
-    "test:local-ownership-model": "tsx --conditions=development scripts/test-local-ownership-model.ts"
+    "test:local-ownership-model": "tsx --conditions=development scripts/test-local-ownership-model.ts",
+    "tencent-huolong-drama:check": "pnpm --filter @drama/tencent-huolong-drama-automation check",
+    "tencent-huolong-drama:build": "pnpm --filter @drama/tencent-huolong-drama-automation build"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",
@@ -37,6 +39,7 @@
     "@drama/meituan-drama-automation": "workspace:*",
     "@drama/pinduoduo-drama-automation": "workspace:*",
     "@drama/qq-drama-automation": "workspace:*",
+    "@drama/tencent-huolong-drama-automation": "workspace:*",
     "@drama/tiktok-drama-automation": "workspace:*",
     "@drama/wechat-drama-automation": "workspace:*",
     "@drama/wechat-miniprogram-drama-automation": "workspace:*",

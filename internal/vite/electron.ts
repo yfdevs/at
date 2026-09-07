@@ -99,6 +99,13 @@ export function createElectronPlugin(rootDir: string) {
               replacement: path.join(rootDir, "packages/qq-drama-automation/src/index.ts"),
             },
             {
+              find: /^@drama\/tencent-huolong-drama-automation$/,
+              replacement: path.join(
+                rootDir,
+                "packages/tencent-huolong-drama-automation/src/index.ts",
+              ),
+            },
+            {
               find: /^@drama\/tiktok-drama-automation$/,
               replacement: path.join(rootDir, "packages/tiktok-drama-automation/src/index.ts"),
             },

@@ -72,6 +72,9 @@ importers:
       '@drama/qq-drama-automation':
         specifier: workspace:*
         version: link:packages/qq-drama-automation
+      '@drama/tencent-huolong-drama-automation':
+        specifier: workspace:*
+        version: link:packages/tencent-huolong-drama-automation
       '@drama/tiktok-drama-automation':
         specifier: workspace:*
         version: link:packages/tiktok-drama-automation
@@ -612,6 +615,34 @@ importers:
 
   packages/qq-drama-automation:
     dependencies:
+      '@drama/automation-logging':
+        specifier: workspace:*
+        version: link:../automation-logging
+      '@drama/drama-media-assets':
+        specifier: workspace:*
+        version: link:../drama-media-assets
+      playwright:
+        specifier: 1.61.1
+        version: 1.61.1
+      zod:
+        specifier: 3.22.4
+        version: 3.22.4
+    devDependencies:
+      '@types/node':
+        specifier: latest
+        version: 26.4.1
+      typescript:
+        specifier: ^6.0.3
+        version: 6.0.3
+      vite:
+        specifier: npm:@voidzero-dev/vite-plus-core@0.2.6
+        version: '@voidzero-dev/vite-plus-core@0.2.6(@types/node@26.4.1)(esbuild@0.28.2)(jiti@2.7.0)(tsx@4.23.13)(typescript@6.0.3)'
+
+  packages/tencent-huolong-drama-automation:
+    dependencies:
+      '@drama/ai':
+        specifier: workspace:*
+        version: link:../drama-ai
       '@drama/automation-logging':
         specifier: workspace:*
         version: link:../automation-logging
