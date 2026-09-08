@@ -89,6 +89,11 @@ export type BaiduNetdiskDownloadRecord = {
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
+  remoteTransferPath?: string;
+  remoteTransferFsId?: string;
+  remoteTransferOwned?: boolean;
+  remoteCleanupPending?: boolean;
+  remoteCleanupError?: string;
 };
 
 export type BaiduNetdiskEnsureDownloadedRequest = {

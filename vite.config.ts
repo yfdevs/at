@@ -5,6 +5,7 @@ import tailwindcss from "@tailwindcss/vite";
 import { createElectronPlugin } from "./internal/vite/electron";
 import { fmtConfig, lintConfig, stagedConfig } from "./internal/vite/quality";
 import { runConfig } from "./internal/vite/run";
+import { developmentWatchIgnored } from "./internal/vite/watch";
 
 // https://vitejs.dev/config/
 export default defineConfig({
@@ -12,6 +13,11 @@ export default defineConfig({
   staged: stagedConfig,
   fmt: fmtConfig,
   lint: lintConfig,
+  server: {
+    watch: {
+      ignored: [...developmentWatchIgnored],
+    },
+  },
   resolve: {
     alias: {
       "@": path.resolve(__dirname, "./src"),

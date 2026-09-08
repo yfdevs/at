@@ -10,10 +10,10 @@ function fixedAssetReference(sourceUrl: URL, bundledUrl: URL) {
 
 export const kuaishouAuthorizationPromotionFile = fixedAssetReference(
   new URL("../assets/授权推广.jpg", import.meta.url),
-  new URL("./assets/授权推广.jpg", import.meta.url),
+  new URL(/* @vite-ignore */ "./assets/授权推广.jpg", import.meta.url),
 );
 
 export const kuaishouCopyrightDeclarationFile = fixedAssetReference(
   new URL("../assets/短剧制作协议.jpg", import.meta.url),
-  new URL("./assets/短剧制作协议.jpg", import.meta.url),
+  new URL(/* @vite-ignore */ "./assets/短剧制作协议.jpg", import.meta.url),
 );

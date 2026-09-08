@@ -26,7 +26,7 @@ export const lintConfig = {
   },
   ignorePatterns: ignoredOutputPatterns,
   rules: {
-    "no-floating-promises": "none",
+    "no-floating-promises": "off",
     "constructor-super": "error",
     "for-direction": "error",
     "getter-return": "error",

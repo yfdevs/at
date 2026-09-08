@@ -1,4 +1,4 @@
-import { app, BrowserWindow, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain, net, powerMonitor } from "electron";
 import { CancellationError, CancellationToken } from "builder-util-runtime";
 import Store from "electron-store";
 import { createRequire } from "node:module";
@@ -7,6 +7,16 @@ import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import { logMain } from "./main-logger";
 
 const require = createRequire(import.meta.url);
+
+const AUTOMATIC_UPDATE_START_DELAY_MS = 15_000;
+const AUTOMATIC_UPDATE_INTERVAL_MS = 10 * 60_000;
+const AUTOMATIC_UPDATE_RESUME_DELAY_MS = 5_000;
+const UPDATE_SOURCE_PROBE_TIMEOUT_MS = 6_000;
+const UPDATE_SOURCE_PROBE_CONCURRENCY = 3;
+const UPDATE_SOURCE_FAILURE_COOLDOWN_MS = 30 * 60_000;
+const UPDATE_DOWNLOAD_STALL_TIMEOUT_MS = 45_000;
+const UPDATE_DOWNLOAD_MAX_SOURCE_ATTEMPTS = 3;
+const AUTOMATIC_UPDATE_RETRY_DELAYS_MS = [2, 5, 15, 30].map((minutes) => minutes * 60_000);
 
 const appUpdateSources = [
   {
@@ -83,6 +93,8 @@ export type AppUpdateProgress = {
 };
 
 export type AppUpdateSourceId = (typeof appUpdateSources)[number]["id"];
+export type AppUpdateSourceMode = "auto" | "manual";
+export type AppUpdateSourceSelection = "auto" | AppUpdateSourceId;
 
 export type AppUpdateSource = {
   id: AppUpdateSourceId;
@@ -103,13 +115,27 @@ export type AppUpdateStatus = {
   progress?: AppUpdateProgress;
   error?: string;
   disabledReason?: string;
+  sourceMode: AppUpdateSourceMode;
   source: AppUpdateSource;
   sources: AppUpdateSource[];
+  lastCheckedAt?: string;
+  nextCheckAt?: string;
+  retryAttempt?: number;
   updatedAt: string;
+};
+
+type AppUpdateSourceHealth = {
+  averageLatencyMs?: number;
+  averageBytesPerSecond?: number;
+  successes: number;
+  failures: number;
+  cooldownUntil?: string;
 };
 
 type AppUpdateStore = {
   sourceId: AppUpdateSourceId;
+  sourceMode: AppUpdateSourceMode;
+  sourceHealth: Partial<Record<AppUpdateSourceId, AppUpdateSourceHealth>>;
 };
 
 type RegisterAppUpdaterHandlersOptions = {
@@ -128,6 +154,14 @@ let autoUpdaterInstance:
   | undefined;
 let store: Store<AppUpdateStore> | null = null;
 let downloadCancellationToken: CancellationToken | null = null;
+let downloadCancellationReason: "user" | "stall" | null = null;
+let downloadLastProgressAt = 0;
+let downloadPromise: Promise<AppUpdateStatus> | null = null;
+let updateCheckPromise: Promise<AppUpdateStatus> | null = null;
+let automaticUpdateTimer: NodeJS.Timeout | null = null;
+let consecutiveAutomaticFailures = 0;
+let autoDownloadSuppressedVersion: string | null = null;
+let shuttingDown = false;
 
 function getStore() {
   if (!store) {
@@ -135,6 +169,8 @@ function getStore() {
       name: "app-update-config",
       defaults: {
         sourceId: "accelerated",
+        sourceMode: "auto",
+        sourceHealth: {},
       },
     });
   }
@@ -145,6 +181,60 @@ function getStore() {
 function getSelectedUpdateSource(): AppUpdateSource {
   const sourceId = getStore().get("sourceId");
   return appUpdateSources.find((source) => source.id === sourceId) ?? appUpdateSources[0];
+}
+
+function getUpdateSourceMode(): AppUpdateSourceMode {
+  return getStore().get("sourceMode") === "manual" ? "manual" : "auto";
+}
+
+function sourceHealth(sourceId: AppUpdateSourceId): AppUpdateSourceHealth {
+  const saved = getStore().get("sourceHealth")[sourceId];
+  return {
+    averageLatencyMs: saved?.averageLatencyMs,
+    averageBytesPerSecond: saved?.averageBytesPerSecond,
+    successes: saved?.successes ?? 0,
+    failures: saved?.failures ?? 0,
+    cooldownUntil: saved?.cooldownUntil,
+  };
+}
+
+function updateSourceHealth(
+  sourceId: AppUpdateSourceId,
+  changes: Partial<AppUpdateSourceHealth>,
+) {
+  const health = getStore().get("sourceHealth");
+  getStore().set("sourceHealth", {
+    ...health,
+    [sourceId]: {
+      ...sourceHealth(sourceId),
+      ...changes,
+    },
+  });
+}
+
+function recordSourceSuccess(
+  sourceId: AppUpdateSourceId,
+  options: { latencyMs?: number; bytesPerSecond?: number } = {},
+) {
+  const current = sourceHealth(sourceId);
+  const blend = (previous: number | undefined, latest: number | undefined) => {
+    if (!latest || latest <= 0) return previous;
+    return previous ? Math.round(previous * 0.7 + latest * 0.3) : Math.round(latest);
+  };
+  updateSourceHealth(sourceId, {
+    averageLatencyMs: blend(current.averageLatencyMs, options.latencyMs),
+    averageBytesPerSecond: blend(current.averageBytesPerSecond, options.bytesPerSecond),
+    successes: current.successes + 1,
+    cooldownUntil: undefined,
+  });
+}
+
+function recordSourceFailure(sourceId: AppUpdateSourceId) {
+  const current = sourceHealth(sourceId);
+  updateSourceHealth(sourceId, {
+    failures: current.failures + 1,
+    cooldownUntil: new Date(Date.now() + UPDATE_SOURCE_FAILURE_COOLDOWN_MS).toISOString(),
+  });
 }
 
 function getAutoUpdater() {
@@ -165,6 +255,173 @@ function getAutoUpdater() {
   return autoUpdaterInstance;
 }
 
+type UpdateSourceProbeResult = {
+  source: AppUpdateSource;
+  latencyMs: number;
+  fingerprint: string;
+  version: string;
+};
+
+function parseUpdateMetadata(metadata: string) {
+  if (metadata.length > 1024 * 1024) {
+    throw new Error("更新元数据过大。");
+  }
+  const version = /^\s*version:\s*["']?([^\s"']+)/mu.exec(metadata)?.[1];
+  const hashes = [...metadata.matchAll(/^\s*sha512:\s*["']?([^\s"']+)/gmu)]
+    .map((match) => match[1])
+    .filter((hash): hash is string => Boolean(hash));
+  if (!version || hashes.length === 0) {
+    throw new Error("更新元数据缺少版本号或 SHA512。");
+  }
+  return {
+    version,
+    fingerprint: `${version}|${[...new Set(hashes)].sort().join("|")}`,
+  };
+}
+
+async function probeUpdateSource(source: AppUpdateSource): Promise<UpdateSourceProbeResult> {
+  const controller = new AbortController();
+  const timeout = setTimeout(() => controller.abort(), UPDATE_SOURCE_PROBE_TIMEOUT_MS);
+  const startedAt = Date.now();
+  try {
+    const response = await net.fetch(`${source.url}/latest.yml`, {
+      headers: { "cache-control": "no-cache" },
+      signal: controller.signal,
+    });
+    if (!response.ok) {
+      throw new Error(`HTTP ${response.status}`);
+    }
+    const metadata = parseUpdateMetadata(await response.text());
+    return {
+      source,
+      latencyMs: Date.now() - startedAt,
+      ...metadata,
+    };
+  } finally {
+    clearTimeout(timeout);
+  }
+}
+
+async function probeUpdateSources(sources: readonly AppUpdateSource[]) {
+  const results: UpdateSourceProbeResult[] = [];
+  let cursor = 0;
+  const worker = async () => {
+    while (cursor < sources.length) {
+      const source = sources[cursor++];
+      if (!source) continue;
+      try {
+        const result = await probeUpdateSource(source);
+        recordSourceSuccess(source.id, { latencyMs: result.latencyMs });
+        results.push(result);
+      } catch (error) {
+        recordSourceFailure(source.id);
+        logMain("warn", "应用更新源探测失败", {
+          sourceId: source.id,
+          error: readableError(error),
+        });
+      }
+    }
+  };
+  await Promise.all(
+    Array.from(
+      { length: Math.min(UPDATE_SOURCE_PROBE_CONCURRENCY, sources.length) },
+      () => worker(),
+    ),
+  );
+  return results;
+}
+
+function sourceProbeScore(result: UpdateSourceProbeResult) {
+  const health = sourceHealth(result.source.id);
+  const observedLatency = health.averageLatencyMs
+    ? result.latencyMs * 0.7 + health.averageLatencyMs * 0.3
+    : result.latencyMs;
+  const reliabilityPenalty = 1 + health.failures / Math.max(health.successes + 1, 1) * 0.25;
+  const throughputBonus = Math.min((health.averageBytesPerSecond ?? 0) / 1024 / 1024, 20) * 8;
+  return observedLatency * reliabilityPenalty - throughputBonus;
+}
+
+function chooseBestUpdateSource(results: UpdateSourceProbeResult[]) {
+  if (results.length === 0) return undefined;
+  const official = results.find((result) => result.source.id === "github");
+  const fingerprintCounts = new Map<string, number>();
+  for (const result of results) {
+    fingerprintCounts.set(
+      result.fingerprint,
+      (fingerprintCounts.get(result.fingerprint) ?? 0) + 1,
+    );
+  }
+  const preferredFingerprint = official?.fingerprint
+    ?? [...fingerprintCounts.entries()].sort((left, right) => right[1] - left[1])[0]?.[0];
+  const consistentResults = results.filter(
+    (result) => result.fingerprint === preferredFingerprint,
+  );
+  const ranked = consistentResults.sort((left, right) => sourceProbeScore(left) - sourceProbeScore(right));
+  const best = ranked[0];
+  const current = ranked.find((result) => result.source.id === getSelectedUpdateSource().id);
+  if (best && current && sourceProbeScore(current) <= sourceProbeScore(best) * 1.2) {
+    return current;
+  }
+  return best;
+}
+
+function isSourceCoolingDown(source: AppUpdateSource) {
+  const cooldownUntil = sourceHealth(source.id).cooldownUntil;
+  return cooldownUntil ? Date.parse(cooldownUntil) > Date.now() : false;
+}
+
+async function selectAutomaticUpdateSource(excluded = new Set<AppUpdateSourceId>()) {
+  const availableSources = appUpdateSources.filter(
+    (source) => !excluded.has(source.id) && !isSourceCoolingDown(source),
+  );
+  const candidates = availableSources.length > 0
+    ? availableSources
+    : appUpdateSources.filter((source) => !excluded.has(source.id));
+  const selected = chooseBestUpdateSource(await probeUpdateSources(candidates));
+  if (!selected) {
+    throw new Error("所有自动更新源当前均不可用。");
+  }
+  getStore().set("sourceId", selected.source.id);
+  logMain("info", "已自动选择应用更新源", {
+    sourceId: selected.source.id,
+    latencyMs: selected.latencyMs,
+    version: selected.version,
+  });
+  return selected.source;
+}
+
+function clearAutomaticUpdateTimer() {
+  if (automaticUpdateTimer) {
+    clearTimeout(automaticUpdateTimer);
+    automaticUpdateTimer = null;
+  }
+}
+
+function scheduleAutomaticUpdate(delayMs: number) {
+  clearAutomaticUpdateTimer();
+  if (shuttingDown || readDisabledReason() || status?.state === "downloaded") return;
+  const nextCheckAt = new Date(Date.now() + delayMs).toISOString();
+  setStatus({ nextCheckAt });
+  automaticUpdateTimer = setTimeout(() => {
+    automaticUpdateTimer = null;
+    void checkForAppUpdate(true).catch((error) => {
+      logMain("error", "自动检查应用更新失败", error);
+      scheduleAfterAutomaticFailure();
+    });
+  }, delayMs);
+  automaticUpdateTimer.unref();
+}
+
+function scheduleAfterAutomaticFailure() {
+  const index = Math.min(
+    consecutiveAutomaticFailures,
+    AUTOMATIC_UPDATE_RETRY_DELAYS_MS.length - 1,
+  );
+  const delay = AUTOMATIC_UPDATE_RETRY_DELAYS_MS[index] ?? AUTOMATIC_UPDATE_INTERVAL_MS;
+  consecutiveAutomaticFailures += 1;
+  scheduleAutomaticUpdate(delay);
+}
+
 export function registerAppUpdaterHandlers(options: RegisterAppUpdaterHandlersOptions = {}) {
   if (registered) {
     return;
@@ -179,9 +436,20 @@ export function registerAppUpdaterHandlers(options: RegisterAppUpdaterHandlersOp
   ipcMain.handle("app:update:download", () => downloadAppUpdate());
   ipcMain.handle("app:update:download:cancel", () => cancelAppUpdateDownload());
   ipcMain.handle("app:update:install", () => installAppUpdate());
-  ipcMain.handle("app:update:source:set", (_event, sourceId: AppUpdateSourceId) =>
-    setAppUpdateSource(sourceId),
+  ipcMain.handle("app:update:source:set", (_event, selection: AppUpdateSourceSelection) =>
+    setAppUpdateSource(selection),
   );
+
+  powerMonitor.on("resume", () => {
+    if (!["downloading", "downloaded", "installing"].includes(status?.state ?? "")) {
+      scheduleAutomaticUpdate(AUTOMATIC_UPDATE_RESUME_DELAY_MS);
+    }
+  });
+  app.once("before-quit", () => {
+    shuttingDown = true;
+    clearAutomaticUpdateTimer();
+  });
+  scheduleAutomaticUpdate(AUTOMATIC_UPDATE_START_DELAY_MS);
 }
 
 export function getAppUpdateStatus() {
@@ -189,7 +457,15 @@ export function getAppUpdateStatus() {
   return status;
 }
 
-async function checkForAppUpdate() {
+async function checkForAppUpdate(automatic = false) {
+  if (updateCheckPromise) return updateCheckPromise;
+  updateCheckPromise = performAppUpdateCheck(automatic).finally(() => {
+    updateCheckPromise = null;
+  });
+  return updateCheckPromise;
+}
+
+async function performAppUpdateCheck(automatic: boolean) {
   const disabledReason = readDisabledReason();
 
   if (disabledReason) {
@@ -198,7 +474,24 @@ async function checkForAppUpdate() {
       progress: undefined,
       error: undefined,
       disabledReason,
+      nextCheckAt: undefined,
     });
+  }
+
+  if (["downloading", "downloaded", "installing"].includes(status?.state ?? "")) {
+    return getAppUpdateStatus();
+  }
+
+  if (!net.isOnline()) {
+    setStatus({
+      state: "error",
+      progress: undefined,
+      error: "当前网络不可用，联网后将自动重试更新。",
+      lastCheckedAt: new Date().toISOString(),
+      nextCheckAt: undefined,
+    });
+    scheduleAfterAutomaticFailure();
+    return getAppUpdateStatus();
   }
 
   latestUpdateInfo = null;
@@ -210,8 +503,11 @@ async function checkForAppUpdate() {
     releaseNotes: undefined,
     progress: undefined,
     error: undefined,
+    nextCheckAt: undefined,
+    retryAttempt: undefined,
   });
 
+  const excludedSources = new Set<AppUpdateSourceId>();
   try {
     const autoUpdater = getAutoUpdater();
 
@@ -220,20 +516,68 @@ async function checkForAppUpdate() {
       return getAppUpdateStatus();
     }
 
-    applySelectedUpdateSource(autoUpdater);
-    await autoUpdater.checkForUpdates();
+    for (let attempt = 1; attempt <= UPDATE_DOWNLOAD_MAX_SOURCE_ATTEMPTS; attempt += 1) {
+      try {
+        if (getUpdateSourceMode() === "auto") {
+          await selectAutomaticUpdateSource(excludedSources);
+        }
+        applySelectedUpdateSource(autoUpdater);
+        await autoUpdater.checkForUpdates();
+        recordSourceSuccess(getSelectedUpdateSource().id);
+        break;
+      } catch (error) {
+        const failedSource = getSelectedUpdateSource();
+        recordSourceFailure(failedSource.id);
+        excludedSources.add(failedSource.id);
+        if (getUpdateSourceMode() === "manual" || attempt >= UPDATE_DOWNLOAD_MAX_SOURCE_ATTEMPTS) {
+          throw error;
+        }
+        setStatus({ retryAttempt: attempt, error: `更新源 ${failedSource.label} 不可用，正在切换。` });
+      }
+    }
+
+    consecutiveAutomaticFailures = 0;
+    const checkedAt = new Date().toISOString();
+    setStatus({ lastCheckedAt: checkedAt, retryAttempt: undefined });
+    const availableUpdateInfo = latestUpdateInfo as UpdateInfo | null;
+    if (
+      availableUpdateInfo
+      && status?.state === "available"
+      && autoDownloadSuppressedVersion !== availableUpdateInfo.version
+    ) {
+      void downloadAppUpdate(true).catch((error) => {
+        logMain("error", "自动下载应用更新失败", error);
+      });
+    } else if (status?.state !== "downloaded") {
+      scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
+    }
   } catch (error) {
     setStatus({
       state: "error",
       progress: undefined,
       error: readableError(error),
+      lastCheckedAt: new Date().toISOString(),
+      retryAttempt: undefined,
     });
+    if (automatic || getUpdateSourceMode() === "auto") {
+      scheduleAfterAutomaticFailure();
+    } else {
+      scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
+    }
   }
 
   return getAppUpdateStatus();
 }
 
-async function downloadAppUpdate() {
+async function downloadAppUpdate(automatic = false) {
+  if (downloadPromise) return downloadPromise;
+  downloadPromise = performAppUpdateDownload(automatic).finally(() => {
+    downloadPromise = null;
+  });
+  return downloadPromise;
+}
+
+async function performAppUpdateDownload(automatic: boolean) {
   const disabledReason = readDisabledReason();
 
   if (disabledReason) {
@@ -245,37 +589,116 @@ async function downloadAppUpdate() {
     setStatus({ state: "error", error: message });
     throw new Error(message);
   }
+  if (!automatic) autoDownloadSuppressedVersion = null;
 
-  setStatus({ state: "downloading", progress: undefined, error: undefined });
+  const excludedSources = new Set<AppUpdateSourceId>();
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= UPDATE_DOWNLOAD_MAX_SOURCE_ATTEMPTS; attempt += 1) {
+    if (!latestUpdateInfo) {
+      const autoUpdater = getAutoUpdater();
+      if (!autoUpdater) break;
+      try {
+        await selectAutomaticUpdateSource(excludedSources);
+        applySelectedUpdateSource(autoUpdater);
+        await autoUpdater.checkForUpdates();
+        if (!latestUpdateInfo || status?.state !== "available") {
+          throw new Error("备用更新源没有返回可下载的新版本。");
+        }
+      } catch (sourceError) {
+        lastError = sourceError;
+        const failedSource = getSelectedUpdateSource();
+        recordSourceFailure(failedSource.id);
+        excludedSources.add(failedSource.id);
+        continue;
+      }
+    }
+    const source = getSelectedUpdateSource();
+    setStatus({
+      state: "downloading",
+      progress: undefined,
+      error: undefined,
+      retryAttempt: attempt > 1 ? attempt - 1 : undefined,
+      nextCheckAt: undefined,
+    });
+    try {
+      const result = await performAppUpdateDownloadAttempt();
+      if (result === "cancelled") {
+        autoDownloadSuppressedVersion = latestUpdateInfo?.version ?? null;
+        scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
+        return getAppUpdateStatus();
+      }
+      recordSourceSuccess(source.id, {
+        bytesPerSecond: status?.progress?.bytesPerSecond,
+      });
+      consecutiveAutomaticFailures = 0;
+      return getAppUpdateStatus();
+    } catch (error) {
+      lastError = error;
+      recordSourceFailure(source.id);
+      excludedSources.add(source.id);
+      if (getUpdateSourceMode() === "manual" || attempt >= UPDATE_DOWNLOAD_MAX_SOURCE_ATTEMPTS) {
+        break;
+      }
+
+      setStatus({
+        state: "checking",
+        progress: undefined,
+        retryAttempt: attempt,
+        error: `从 ${source.label} 下载失败，正在切换备用更新源。`,
+      });
+      latestUpdateInfo = null;
+    }
+  }
+
+  setStatus({
+    state: "error",
+    progress: undefined,
+    error: `自动更新下载失败：${readableError(lastError)}`,
+    retryAttempt: undefined,
+  });
+  scheduleAfterAutomaticFailure();
+  if (!automatic) throw lastError;
+  return getAppUpdateStatus();
+}
+
+async function performAppUpdateDownloadAttempt(): Promise<"completed" | "cancelled"> {
+  const autoUpdater = getAutoUpdater();
+  if (!autoUpdater) {
+    throw new Error(readDisabledReason() ?? "更新模块不可用。");
+  }
+
   const cancellationToken = new CancellationToken();
   downloadCancellationToken = cancellationToken;
+  downloadCancellationReason = null;
+  downloadLastProgressAt = Date.now();
+  const watchdog = setInterval(() => {
+    if (Date.now() - downloadLastProgressAt >= UPDATE_DOWNLOAD_STALL_TIMEOUT_MS) {
+      downloadCancellationReason = "stall";
+      cancellationToken.cancel();
+    }
+  }, 5_000);
+  watchdog.unref();
 
   try {
-    const autoUpdater = getAutoUpdater();
-
-    if (!autoUpdater) {
-      throw new Error(readDisabledReason() ?? "更新模块不可用。");
-    }
-
     await autoUpdater.downloadUpdate(cancellationToken);
+    return "completed";
   } catch (error) {
     if (error instanceof CancellationError || cancellationToken.cancelled) {
-      return getAppUpdateStatus();
+      if (downloadCancellationReason === "user") return "cancelled";
+      if (downloadCancellationReason === "stall") {
+        if (error instanceof Error) error.message = "更新下载超过 45 秒没有进度。";
+        throw error;
+      }
     }
-
-    setStatus({
-      state: "error",
-      error: readableError(error),
-    });
     throw error;
   } finally {
+    clearInterval(watchdog);
     if (downloadCancellationToken === cancellationToken) {
       downloadCancellationToken = null;
+      downloadCancellationReason = null;
     }
     cancellationToken.dispose();
   }
-
-  return getAppUpdateStatus();
 }
 
 function cancelAppUpdateDownload() {
@@ -283,11 +706,14 @@ function cancelAppUpdateDownload() {
     throw new Error("当前没有正在下载的应用更新。");
   }
 
+  downloadCancellationReason = "user";
+  autoDownloadSuppressedVersion = latestUpdateInfo?.version ?? null;
   downloadCancellationToken.cancel();
   return setStatus({
     state: "available",
     progress: undefined,
     error: undefined,
+    retryAttempt: undefined,
   });
 }
 
@@ -311,7 +737,8 @@ function installAppUpdate() {
     throw new Error(message);
   }
 
-  setStatus({ state: "installing", error: undefined });
+  clearAutomaticUpdateTimer();
+  setStatus({ state: "installing", error: undefined, nextCheckAt: undefined });
   const autoUpdater = getAutoUpdater();
 
   if (!autoUpdater) {
@@ -352,26 +779,33 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-available", (info) => {
+    if (autoDownloadSuppressedVersion && autoDownloadSuppressedVersion !== info.version) {
+      autoDownloadSuppressedVersion = null;
+    }
     latestUpdateInfo = info;
     setStatus({
       ...statusFromUpdateInfo(info),
       state: "available",
       progress: undefined,
       error: undefined,
+      retryAttempt: undefined,
     });
   });
 
   autoUpdater.on("update-not-available", (info) => {
     latestUpdateInfo = null;
+    autoDownloadSuppressedVersion = null;
     setStatus({
       ...statusFromUpdateInfo(info),
       state: "not-available",
       progress: undefined,
       error: undefined,
+      retryAttempt: undefined,
     });
   });
 
   autoUpdater.on("download-progress", (progress) => {
+    downloadLastProgressAt = Date.now();
     setStatus({
       state: "downloading",
       progress: statusFromProgress(progress),
@@ -380,12 +814,15 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
+    clearAutomaticUpdateTimer();
     latestUpdateInfo = info;
     setStatus({
       ...statusFromUpdateInfo(info),
       state: "downloaded",
       progress: status?.progress,
       error: undefined,
+      nextCheckAt: undefined,
+      retryAttempt: undefined,
     });
   });
 
@@ -396,6 +833,7 @@ function configureAutoUpdater() {
       state: "available",
       progress: undefined,
       error: undefined,
+      retryAttempt: undefined,
     });
   });
 
@@ -407,20 +845,25 @@ function configureAutoUpdater() {
   });
 }
 
-function setAppUpdateSource(sourceId: AppUpdateSourceId) {
-  const source = appUpdateSources.find((candidate) => candidate.id === sourceId);
-
-  if (!source) {
-    throw new Error("未知的应用更新源。");
-  }
-
+function setAppUpdateSource(selection: AppUpdateSourceSelection) {
   if (
     ["checking", "downloading", "installing", "downloaded"].includes(status?.state ?? "")
   ) {
     throw new Error("当前更新任务进行中，暂时不能切换更新源。");
   }
 
-  getStore().set("sourceId", source.id);
+  if (selection === "auto") {
+    getStore().set("sourceMode", "auto");
+  } else {
+    const source = appUpdateSources.find((candidate) => candidate.id === selection);
+    if (!source) {
+      throw new Error("未知的应用更新源。");
+    }
+    getStore().set({
+      sourceId: source.id,
+      sourceMode: "manual",
+    });
+  }
 
   const autoUpdater = getAutoUpdater();
   if (autoUpdater) {
@@ -428,7 +871,8 @@ function setAppUpdateSource(sourceId: AppUpdateSourceId) {
   }
 
   latestUpdateInfo = null;
-  return setStatus({
+  autoDownloadSuppressedVersion = null;
+  setStatus({
     state: "idle",
     latestVersion: undefined,
     releaseName: undefined,
@@ -437,6 +881,8 @@ function setAppUpdateSource(sourceId: AppUpdateSourceId) {
     progress: undefined,
     error: undefined,
   });
+  scheduleAutomaticUpdate(AUTOMATIC_UPDATE_RESUME_DELAY_MS);
+  return getAppUpdateStatus();
 }
 
 function applySelectedUpdateSource(
@@ -475,6 +921,7 @@ function normalizeStatus(nextStatus: AppUpdateStatus) {
     enabled: !disabledReason,
     currentVersion: app.getVersion(),
     disabledReason,
+    sourceMode: getUpdateSourceMode(),
     source,
     sources: [...appUpdateSources],
     updatedAt: nextStatus.updatedAt || new Date().toISOString(),
@@ -488,6 +935,7 @@ function createStatus(state: AppUpdateState): AppUpdateStatus {
     enabled: !readDisabledReason(),
     currentVersion: app.getVersion(),
     disabledReason: readDisabledReason(),
+    sourceMode: getUpdateSourceMode(),
     source: getSelectedUpdateSource(),
     sources: [...appUpdateSources],
     updatedAt: new Date().toISOString(),

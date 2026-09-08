@@ -90,6 +90,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   timeoutMs?: number;
   pollIntervalMs?: number;
   stableCompletePolls?: number;
+  signal?: AbortSignal;
   downloadShare: (request: {
     shareText: string;
     resourceName: string;
@@ -106,10 +107,55 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   getDownloadTaskStatus?: (request: {
     targetName: string;
   }) => Promise<BaiduNetdiskDownloadTaskStatus | undefined>;
+  cancelDownloadTask?: (request: {
+    targetName: string;
+    downloadRoot?: string;
+  }) => Promise<void>;
   onStableEpisodeFiles?: (files: LocalEpisodeFile[]) => void;
   onProgress?: (progress: BaiduNetdiskEpisodeVideoProgress) => void | Promise<void>;
   onLog?: (message: string) => void;
 };
+
+function abortError(signal?: AbortSignal): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error("任务已终止。");
+  error.name = "AbortError";
+  return error;
+}
+
+function throwIfAborted(signal?: AbortSignal): void {
+  if (signal?.aborted) throw abortError(signal);
+}
+
+function abortable<T>(promise: Promise<T>, signal?: AbortSignal): Promise<T> {
+  if (!signal) return promise;
+  if (signal.aborted) return Promise.reject(abortError(signal));
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(abortError(signal));
+    signal.addEventListener("abort", onAbort, { once: true });
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort);
+    });
+  });
+}
+
+function waitWithSignal(ms: number, signal?: AbortSignal): Promise<void> {
+  if (!signal) return new Promise((resolve) => setTimeout(resolve, ms));
+  if (signal.aborted) return Promise.reject(abortError(signal));
+
+  return new Promise<void>((resolve, reject) => {
+    const timer = setTimeout(() => {
+      signal.removeEventListener("abort", onAbort);
+      resolve();
+    }, ms);
+    const onAbort = () => {
+      clearTimeout(timer);
+      reject(abortError(signal));
+    };
+    signal.addEventListener("abort", onAbort, { once: true });
+  });
+}
 
 export type EnsureBaiduNetdiskEpisodeVideosResult = {
   localPath: string;
@@ -595,6 +641,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   timeoutMs: number;
   pollIntervalMs: number;
   stableCompletePolls: number;
+  signal?: AbortSignal;
   getDownloadTaskStatus?: EnsureBaiduNetdiskEpisodeVideosOptions["getDownloadTaskStatus"];
   onStableEpisodeFiles?: EnsureBaiduNetdiskEpisodeVideosOptions["onStableEpisodeFiles"];
   onProgress?: EnsureBaiduNetdiskEpisodeVideosOptions["onProgress"];
@@ -621,6 +668,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   let lastProgressLogAt = 0;
 
   while (Date.now() - startedAt < options.timeoutMs) {
+    throwIfAborted(options.signal);
     let localPaths = currentDownloadLocalPaths(
       [options.sourceLocalPath],
       options.targetRoot,
@@ -838,7 +886,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       }
     }
 
-    await new Promise((resolve) => setTimeout(resolve, options.pollIntervalMs));
+    await waitWithSignal(options.pollIntervalMs, options.signal);
   }
 
   for (const root of [options.targetRoot, options.sourceLocalPath].filter(
@@ -862,6 +910,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
 export async function ensureBaiduNetdiskEpisodeVideos(
   options: EnsureBaiduNetdiskEpisodeVideosOptions,
 ): Promise<EnsureBaiduNetdiskEpisodeVideosResult> {
+  throwIfAborted(options.signal);
   const downloadDir = options.downloadDir || options.localEpisodeVideoRoot;
   const timeoutMs = options.timeoutMs ?? 60 * 60 * 1000;
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
@@ -940,7 +989,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   }
   await options.onProgress?.({ phase: "scan", localPath: targetLocalPath });
 
-  const result = await options.downloadShare({
+  const result = await abortable(options.downloadShare({
     shareText: options.shareText,
     resourceName: options.resourceName,
     expectedEpisodeCount: !downloadEpisodeVideos
@@ -967,7 +1016,8 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     downloadEpisodeVideos,
     downloadAssetMaterials: options.downloadAssetMaterials,
     downloadDir,
-  });
+  }), options.signal);
+  throwIfAborted(options.signal);
 
   const resolvedEpisodeCount = hasConfiguredEpisodeCount
     ? configuredEpisodeCount
@@ -986,35 +1036,47 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     skippedExisting: result.skippedExisting,
   });
 
-  const completedPath = await waitForCompleteLocalEpisodeVideos({
-    targetRoot: options.localEpisodeVideoRoot,
-    // The ownership directory is downloaded alongside the selected video directory;
-    // scan the download root as well so both materials are standardized together.
-    sourceLocalPath: result.localPath
-      ? path.dirname(result.localPath)
-      : result.downloadRoot ?? options.sourceLocalPath,
-    resourceName: options.resourceName,
-    downloadTaskName: result.share.name || options.downloadTaskName || options.resourceName,
-    expectedOwnershipImages: result.expectedOwnershipImages,
-    expectedOwnershipFiles: result.expectedOwnershipFiles,
-    expectedPosterImages: result.expectedPosterImages,
-    expectedAiProductionProofFiles: result.expectedAiProductionProofFiles,
-    requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
-    episodeCount: downloadEpisodeVideos ? resolvedEpisodeCount : 0,
-    requireEpisodeVideos: downloadEpisodeVideos,
-    ownershipRequirements,
-    requiredOwnershipFiles,
-    requiredPosterImages,
-    requiredAiProductionProofFiles,
-    mergeOwnershipMaterials: options.mergeOwnershipMaterials,
-    timeoutMs,
-    pollIntervalMs,
-    stableCompletePolls,
-    getDownloadTaskStatus: options.getDownloadTaskStatus,
-    onStableEpisodeFiles: options.onStableEpisodeFiles,
-    onProgress: options.onProgress,
-    onLog: options.onLog,
-  });
+  let completedPath: string;
+  try {
+    completedPath = await waitForCompleteLocalEpisodeVideos({
+      targetRoot: options.localEpisodeVideoRoot,
+      // The ownership directory is downloaded alongside the selected video directory;
+      // scan the download root as well so both materials are standardized together.
+      sourceLocalPath: result.localPath
+        ? path.dirname(result.localPath)
+        : result.downloadRoot ?? options.sourceLocalPath,
+      resourceName: options.resourceName,
+      downloadTaskName: result.share.name || options.downloadTaskName || options.resourceName,
+      expectedOwnershipImages: result.expectedOwnershipImages,
+      expectedOwnershipFiles: result.expectedOwnershipFiles,
+      expectedPosterImages: result.expectedPosterImages,
+      expectedAiProductionProofFiles: result.expectedAiProductionProofFiles,
+      requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
+      episodeCount: downloadEpisodeVideos ? resolvedEpisodeCount : 0,
+      requireEpisodeVideos: downloadEpisodeVideos,
+      ownershipRequirements,
+      requiredOwnershipFiles,
+      requiredPosterImages,
+      requiredAiProductionProofFiles,
+      mergeOwnershipMaterials: options.mergeOwnershipMaterials,
+      timeoutMs,
+      pollIntervalMs,
+      stableCompletePolls,
+      signal: options.signal,
+      getDownloadTaskStatus: options.getDownloadTaskStatus,
+      onStableEpisodeFiles: options.onStableEpisodeFiles,
+      onProgress: options.onProgress,
+      onLog: options.onLog,
+    });
+  } catch (error) {
+    if (options.signal?.aborted && options.cancelDownloadTask) {
+      await options.cancelDownloadTask({
+        targetName: result.share.name || options.downloadTaskName || options.resourceName,
+        downloadRoot: result.downloadRoot,
+      }).catch(() => undefined);
+    }
+    throw error;
+  }
 
   await options.onProgress?.({
     phase: "standardized",

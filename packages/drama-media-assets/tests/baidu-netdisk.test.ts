@@ -119,3 +119,40 @@ test("resource readiness returns when only unrequested remote ownership is incom
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("aborting a download wait stops promptly and cancels the native task", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-abort-"));
+  const resourceName = "终止测试短剧";
+  const controller = new AbortController();
+  const cancelledTasks: string[] = [];
+  try {
+    const pending = ensureBaiduNetdiskEpisodeVideos({
+      shareText: "https://pan.baidu.com/s/test?pwd=test",
+      resourceName,
+      localEpisodeVideoRoot: root,
+      episodeCount: 1,
+      timeoutMs: 60_000,
+      pollIntervalMs: 10_000,
+      signal: controller.signal,
+      downloadShare: async () => ({
+        share: { link: "https://pan.baidu.com/s/test", pwd: "test", name: resourceName },
+        localPath: path.join(root, "temporary-download", resourceName),
+        completed: false,
+        skippedExisting: false,
+      }),
+      cancelDownloadTask: async ({ targetName }) => {
+        cancelledTasks.push(targetName);
+      },
+      onProgress: ({ phase }) => {
+        if (phase === "download-submitted") {
+          queueMicrotask(() => controller.abort(new Error("用户已终止当前任务。")));
+        }
+      },
+    });
+
+    await assert.rejects(pending, /用户已终止当前任务/);
+    assert.deepEqual(cancelledTasks, [resourceName]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

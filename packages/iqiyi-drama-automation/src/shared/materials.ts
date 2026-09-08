@@ -226,11 +226,20 @@ async function prepareCopyrightProofFiles(
   taskDir: string,
   options: IqiyiDramaRuntimeOptions,
 ) {
+  log(options, "[iqiyi-drama] preparing copyright proof screenshots");
   const selection = await findOwnershipProjectProofFiles({
     root,
     resourceName,
-    getAiClient: options.ownershipProjectProofAiClientProvider,
-    onLog: (message) => log(options, message),
+    onClassificationProgress: (progress) => log(
+      options,
+      "[iqiyi-drama] classified copyright proof screenshot",
+      {
+        completed: progress.completed,
+        file: path.basename(progress.file),
+        kind: progress.kind,
+        total: progress.total,
+      },
+    ),
   });
   log(options, "[iqiyi-drama] copyright proof screenshots selected", {
     jianying: selection.jianying.map((material) => material.name),

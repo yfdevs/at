@@ -35,6 +35,12 @@ export type BaiduNetdiskShareInfo = {
 
 export type ShareInfo = BaiduNetdiskShareInfo;
 
+export type BaiduNetdiskTemporaryTransfer = {
+  path: string;
+  fsId: number | string;
+  createdByAutomation: true;
+};
+
 export type BaiduNetdiskShareDownloadOptions = {
   shareText?: string;
   shareFile?: string;
@@ -51,6 +57,10 @@ export type BaiduNetdiskShareDownloadOptions = {
   downloadAssetMaterials?: boolean;
   port?: number;
   downloadDir?: string;
+  signal?: AbortSignal;
+  onTemporaryTransferCreated?: (
+    transfer: BaiduNetdiskTemporaryTransfer,
+  ) => void | Promise<void>;
 };
 
 export type BaiduNetdiskRemoteOwnershipFile = {
@@ -134,6 +144,7 @@ export type BaiduNetdiskShareDownloadResult = {
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   inferredEpisodeCount?: number;
+  temporaryTransfer?: BaiduNetdiskTemporaryTransfer;
   completed: boolean;
   skippedExisting: boolean;
 };

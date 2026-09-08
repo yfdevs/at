@@ -8,7 +8,7 @@ import {
   StopCircle,
   Zap,
 } from "@mynaui/icons-react";
-import { useEffect, useState } from "react";
+import { useEffect, useRef, useState } from "react";
 import { toast } from "sonner";
 
 import { Button, buttonVariants } from "@/components/ui/button";
@@ -38,7 +38,7 @@ import {
   installAppUpdate,
   onAppUpdateChanged,
   setAppUpdateSource,
-  type AppUpdateSourceId,
+  type AppUpdateSourceSelection,
   type AppUpdateStatus,
 } from "@/platforms/app-runtime/service";
 
@@ -103,7 +103,7 @@ function updateDescription(status: AppUpdateStatus | null) {
   if (!status.enabled) return "当前环境暂不支持应用内更新。";
 
   if (status.state === "available") {
-    return "新版本不会自动下载。确认当前任务不受影响后，可以手动开始下载。";
+    return "自动下载已暂停或尚未开始，可以手动继续下载。";
   }
 
   if (status.state === "downloaded") {
@@ -182,6 +182,7 @@ function UpdateStateIcon({
 export function AppUpdateControl() {
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
   const [actionPending, setActionPending] = useState<UpdateAction | null>(null);
+  const notifiedDownloadedVersion = useRef<string | null>(null);
 
   useEffect(() => {
     let disposed = false;
@@ -204,6 +205,16 @@ export function AppUpdateControl() {
     const dispose = onAppUpdateChanged((nextStatus) => {
       if (!disposed) {
         setStatus(nextStatus);
+        if (
+          nextStatus.state === "downloaded"
+          && nextStatus.latestVersion
+          && notifiedDownloadedVersion.current !== nextStatus.latestVersion
+        ) {
+          notifiedDownloadedVersion.current = nextStatus.latestVersion;
+          toast.success(`v${nextStatus.latestVersion} 已在后台下载完成`, {
+            description: "请在平台任务结束后重启安装。",
+          });
+        }
       }
     });
 
@@ -227,8 +238,6 @@ export function AppUpdateControl() {
           toast.success("当前已是最新版本。");
         } else if (action === "check" && nextStatus.state === "error") {
           toast.error(nextStatus.error ?? "检查更新失败。");
-        } else if (action === "download" && nextStatus.state === "downloaded") {
-          toast.success("更新已下载，重启后安装。");
         } else if (action === "cancel") {
           toast.info("下载已取消，可以切换更新源后重新检查。");
         }
@@ -260,12 +269,16 @@ export function AppUpdateControl() {
   const sourceLocked =
     busy || status?.state === "installing" || status?.state === "downloaded";
 
-  const changeUpdateSource = (sourceId: AppUpdateSourceId) => {
-    if (!status || sourceId === status.source.id) {
+  const changeUpdateSource = (selection: AppUpdateSourceSelection) => {
+    if (
+      !status
+      || (selection === "auto" && status.sourceMode === "auto")
+      || (selection !== "auto" && status.sourceMode === "manual" && selection === status.source.id)
+    ) {
       return;
     }
 
-    runUpdateAction("source", () => setAppUpdateSource(sourceId));
+    runUpdateAction("source", () => setAppUpdateSource(selection));
   };
 
   return (
@@ -323,6 +336,28 @@ export function AppUpdateControl() {
             <span className="text-muted-foreground">版本</span>
             <span className="font-medium tabular-nums">{versionText}</span>
           </div>
+          <div className="flex items-center justify-between gap-3 leading-5">
+            <span className="text-muted-foreground">更新方式</span>
+            <span className="min-w-0 truncate font-medium">
+              {status?.sourceMode === "auto" ? `自动 · ${status.source.label}` : "手动固定"}
+            </span>
+          </div>
+          {status?.lastCheckedAt ? (
+            <div className="flex items-center justify-between gap-3 leading-5">
+              <span className="text-muted-foreground">上次检查</span>
+              <span className="font-medium tabular-nums">
+                {new Date(status.lastCheckedAt).toLocaleTimeString()}
+              </span>
+            </div>
+          ) : null}
+          {status?.nextCheckAt ? (
+            <div className="flex items-center justify-between gap-3 leading-5">
+              <span className="text-muted-foreground">下次检查</span>
+              <span className="font-medium tabular-nums">
+                {new Date(status.nextCheckAt).toLocaleTimeString()}
+              </span>
+            </div>
+          ) : null}
           {status?.releaseDate ? (
             <div className="flex items-center justify-between gap-3 leading-5">
               <span className="text-muted-foreground">发布时间</span>
@@ -340,10 +375,10 @@ export function AppUpdateControl() {
                 更新源
               </label>
               <Select
-                value={status.source.id}
+                value={status.sourceMode === "auto" ? "auto" : status.source.id}
                 disabled={sourceLocked}
                 onValueChange={(value) => {
-                  if (value) changeUpdateSource(value as AppUpdateSourceId);
+                  if (value) changeUpdateSource(value as AppUpdateSourceSelection);
                 }}
               >
                 <SelectTrigger id="app-update-source" size="sm" className="w-48 bg-background">
@@ -354,6 +389,7 @@ export function AppUpdateControl() {
                   positionerClassName="z-[100001]"
                   className="max-w-64"
                 >
+                  <SelectItem value="auto">自动选择（推荐）</SelectItem>
                   {status.sources.map((source) => (
                     <SelectItem key={source.id} value={source.id}>
                       {source.label}
@@ -362,9 +398,11 @@ export function AppUpdateControl() {
                 </SelectContent>
               </Select>
             </div>
-            <p className="text-xs leading-4 text-muted-foreground">
-              {status.source.description}
-            </p>
+            {status.retryAttempt ? (
+              <p className="text-xs leading-4 text-amber-600 dark:text-amber-400">
+                正在尝试第 {status.retryAttempt + 1} 个更新源
+              </p>
+            ) : null}
           </div>
         ) : null}
 

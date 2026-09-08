@@ -2,6 +2,8 @@ import path from "node:path";
 
 import electron from "vite-plugin-electron/simple";
 
+import { developmentWatchIgnored } from "./watch";
+
 const electronRequireBanner = [
   "import { createRequire as __electronCreateRequire } from 'node:module';",
   "globalThis.require = __electronCreateRequire(import.meta.url);",
@@ -14,27 +16,31 @@ const electronMainExternalPatterns = [
   /^playwright-core(?:\/.*)?$/,
   /^chromium-bidi(?:\/.*)?$/,
   /^sharp(?:\/.*)?$/,
+  /^tesseract\.js(?:\/.*)?$/,
+  /^tesseract\.js-core(?:\/.*)?$/,
+  /^@tesseract\.js-data\/chi_sim(?:\/.*)?$/,
   /^@img(?:\/.*)?$/,
 ];
 
 const electronMainExternals = (id: string) =>
   electronMainExternalPatterns.some((pattern) => pattern.test(id)) ||
-  /[\\/]node_modules[\\/](?:ffmpeg-static|sharp|@img)(?:[\\/]|$)/.test(id);
+  /[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:ffmpeg-static|sharp|tesseract\.js|tesseract\.js-core|@tesseract\.js-data[\\/]chi_sim|@img)(?:[\\/]|$)/.test(id);
 
 export function createElectronPlugin(rootDir: string) {
   return electron({
     main: {
       entry: "electron/main.ts",
       vite: {
+        server: {
+          watch: {
+            ignored: [...developmentWatchIgnored],
+          },
+        },
         resolve: {
           alias: [
             {
               find: /^@drama\/ai$/,
               replacement: path.join(rootDir, "packages/drama-ai/src/index.ts"),
-            },
-            {
-              find: /^@drama\/llama-server$/,
-              replacement: path.join(rootDir, "packages/llama-server/src/index.ts"),
             },
             {
               find: /^@drama\/baidu-netdisk-automation\/download-baidu-folder$/,
@@ -128,6 +134,11 @@ export function createElectronPlugin(rootDir: string) {
     preload: {
       input: path.join(rootDir, "electron/preload.ts"),
       vite: {
+        server: {
+          watch: {
+            ignored: [...developmentWatchIgnored],
+          },
+        },
         build: {
           rollupOptions: {
             output: {

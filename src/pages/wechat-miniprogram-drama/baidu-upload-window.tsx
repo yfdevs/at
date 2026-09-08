@@ -306,6 +306,24 @@ export function WechatMiniProgramBaiduUploadWindow() {
             >
               {workspace?.queue.running ? "暂停接续" : "开始队列"}
             </Button>
+            {workspace?.queue.activeTaskId ? (
+              <Button
+                type="button"
+                size="xs"
+                variant="destructive"
+                disabled={pendingAction !== null}
+                onClick={() =>
+                  void runAction(
+                    "cancel-active",
+                    () => wechatMiniProgramBaiduUploadService.cancelActiveTask(),
+                    "当前任务已终止",
+                  )
+                }
+              >
+                <DangerTriangle className="size-3.5" />
+                终止当前任务
+              </Button>
+            ) : null}
           </div>
         </div>
       </header>
@@ -349,7 +367,7 @@ export function WechatMiniProgramBaiduUploadWindow() {
                       </TableCell>
                       <TableCell>
                         <Badge variant={stateVariant(task.state)}>
-                          {active && !["failed", "completed"].includes(task.state) ? (
+                          {active && !["failed", "completed", "interrupted"].includes(task.state) ? (
                             <Spinner className="size-3" />
                           ) : task.state === "completed" ? (
                             <CheckCircle className="size-3" />

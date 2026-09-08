@@ -6,13 +6,7 @@ import path from "node:path";
 
 import { registerAppUpdaterHandlers } from "./app-updater";
 import { registerGlobalAppConfigHandlers } from "./global-app-config";
-import { getLocalAiRuntimeStatus, stopLocalAiRuntime } from "./local-ai-runtime";
-import {
-  getMainLogDir,
-  logMain,
-  openMainLogDir,
-  registerMainProcessLogging,
-} from "./main-logger";
+import { getMainLogDir, logMain, openMainLogDir, registerMainProcessLogging } from "./main-logger";
 import {
   getWechatVideoBrowserInstanceCount,
   getWechatVideoPlatformRuntimeSummary,
@@ -160,8 +154,8 @@ function createWindow() {
 
   const appIcon = nativeImage.createFromPath(getAppIconPath());
   const fixedWindowSize = {
-    width: 680,
-    height: 720,
+    width: 780,
+    height: 620,
   };
   const mainWindowState = windowStateKeeper({
     defaultWidth: fixedWindowSize.width,
@@ -246,7 +240,6 @@ app.on("before-quit", () => {
   stopDouyinDramaPlatformRuntime();
   stopTiktokDramaCenterPlatformRuntime();
   stopPinduoduoDramaPlatformRuntime();
-  void stopLocalAiRuntime();
 });
 
 app.on("activate", () => {
@@ -324,7 +317,6 @@ function ipcMainHandleAppRuntimeStatus() {
         dDrive: await readDriveStatus("D:"),
       },
       memory: await readMemoryStatus(),
-      localAi: getLocalAiRuntimeStatus(),
     };
   });
 

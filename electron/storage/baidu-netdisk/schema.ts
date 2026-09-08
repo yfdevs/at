@@ -20,7 +20,12 @@ export const selectBaiduNetdiskDownloadRecordColumns = `
   created_at AS createdAt,
   updated_at AS updatedAt,
   started_at AS startedAt,
-  completed_at AS completedAt
+  completed_at AS completedAt,
+  remote_transfer_path AS remoteTransferPath,
+  remote_transfer_fs_id AS remoteTransferFsId,
+  remote_transfer_owned AS remoteTransferOwned,
+  remote_cleanup_pending AS remoteCleanupPending,
+  remote_cleanup_error AS remoteCleanupError
 `;
 
 export function migrateBaiduNetdiskDownloadRecords(database: Database.Database): void {
@@ -45,7 +50,12 @@ export function migrateBaiduNetdiskDownloadRecords(database: Database.Database):
       created_at TEXT NOT NULL,
       updated_at TEXT NOT NULL,
       started_at TEXT,
-      completed_at TEXT
+      completed_at TEXT,
+      remote_transfer_path TEXT,
+      remote_transfer_fs_id TEXT,
+      remote_transfer_owned INTEGER NOT NULL DEFAULT 0,
+      remote_cleanup_pending INTEGER NOT NULL DEFAULT 0,
+      remote_cleanup_error TEXT
     );
 
     CREATE INDEX IF NOT EXISTS idx_baidu_download_records_updated_at
@@ -54,4 +64,21 @@ export function migrateBaiduNetdiskDownloadRecords(database: Database.Database):
     CREATE INDEX IF NOT EXISTS idx_baidu_download_records_state
       ON baidu_netdisk_download_records(state, updated_at);
   `);
+
+  const columns = new Set(
+    (database.prepare("PRAGMA table_info(baidu_netdisk_download_records)").all() as Array<{ name: string }>)
+      .map((column) => column.name),
+  );
+  const additions = [
+    ["remote_transfer_path", "TEXT"],
+    ["remote_transfer_fs_id", "TEXT"],
+    ["remote_transfer_owned", "INTEGER NOT NULL DEFAULT 0"],
+    ["remote_cleanup_pending", "INTEGER NOT NULL DEFAULT 0"],
+    ["remote_cleanup_error", "TEXT"],
+  ] as const;
+  for (const [name, definition] of additions) {
+    if (!columns.has(name)) {
+      database.exec(`ALTER TABLE baidu_netdisk_download_records ADD COLUMN ${name} ${definition}`);
+    }
+  }
 }

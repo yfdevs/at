@@ -1,5 +1,4 @@
 import type { DramaAiClient } from "@drama/ai";
-import type { OwnershipProjectProofAiClientProvider } from "@drama/drama-media-assets";
 import { z } from "zod";
 
 export type IqiyiDramaLoginState = "login-required" | "logged-in" | "unknown";
@@ -208,7 +207,6 @@ export type IqiyiDramaRuntimeOptions = {
   closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
-  ownershipProjectProofAiClientProvider?: OwnershipProjectProofAiClientProvider;
   config?: {
     browser?: {
       headless?: boolean;

@@ -6,6 +6,7 @@ allowBuilds:
   electron: true
   esbuild: true
   ffmpeg-static: true
+  tesseract.js: false
 
 catalog:
   axios: ^1.17.0

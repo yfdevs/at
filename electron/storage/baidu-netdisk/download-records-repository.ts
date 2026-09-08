@@ -86,7 +86,12 @@ export class BaiduNetdiskDownloadRecordsRepository {
           created_at,
           updated_at,
           started_at,
-          completed_at
+          completed_at,
+          remote_transfer_path,
+          remote_transfer_fs_id,
+          remote_transfer_owned,
+          remote_cleanup_pending,
+          remote_cleanup_error
         ) VALUES (
           @id,
           @shareKey,
@@ -107,7 +112,12 @@ export class BaiduNetdiskDownloadRecordsRepository {
           @createdAt,
           @updatedAt,
           @startedAt,
-          @completedAt
+          @completedAt,
+          @remoteTransferPath,
+          @remoteTransferFsId,
+          @remoteTransferOwned,
+          @remoteCleanupPending,
+          @remoteCleanupError
         )
         ON CONFLICT(id) DO UPDATE SET
           share_key=excluded.share_key,
@@ -128,7 +138,12 @@ export class BaiduNetdiskDownloadRecordsRepository {
           created_at=excluded.created_at,
           updated_at=excluded.updated_at,
           started_at=excluded.started_at,
-          completed_at=excluded.completed_at
+          completed_at=excluded.completed_at,
+          remote_transfer_path=excluded.remote_transfer_path,
+          remote_transfer_fs_id=excluded.remote_transfer_fs_id,
+          remote_transfer_owned=excluded.remote_transfer_owned,
+          remote_cleanup_pending=excluded.remote_cleanup_pending,
+          remote_cleanup_error=excluded.remote_cleanup_error
       `,
       )
       .run(writeBaiduNetdiskDownloadRecordParams(nextRecord));
@@ -137,6 +152,8 @@ export class BaiduNetdiskDownloadRecordsRepository {
   }
 
   clear(): void {
-    this.database.prepare("DELETE FROM baidu_netdisk_download_records").run();
+    this.database
+      .prepare("DELETE FROM baidu_netdisk_download_records WHERE remote_cleanup_pending=0")
+      .run();
   }
 }

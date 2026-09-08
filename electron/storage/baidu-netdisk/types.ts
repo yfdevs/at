@@ -21,6 +21,11 @@ export type BaiduNetdiskDownloadRecord = {
   updatedAt: string;
   startedAt?: string;
   completedAt?: string;
+  remoteTransferPath?: string;
+  remoteTransferFsId?: string;
+  remoteTransferOwned?: boolean;
+  remoteCleanupPending?: boolean;
+  remoteCleanupError?: string;
 };
 
 export type BaiduNetdiskDownloadRecordRow = Omit<
@@ -37,6 +42,11 @@ export type BaiduNetdiskDownloadRecordRow = Omit<
   | "error"
   | "startedAt"
   | "completedAt"
+  | "remoteTransferPath"
+  | "remoteTransferFsId"
+  | "remoteTransferOwned"
+  | "remoteCleanupPending"
+  | "remoteCleanupError"
 > & {
   completedAt: string | null;
   episodeCount: number | null;
@@ -50,4 +60,9 @@ export type BaiduNetdiskDownloadRecordRow = Omit<
   startedAt: string | null;
   totalBytes: number | null;
   transferredBytes: number | null;
+  remoteTransferPath: string | null;
+  remoteTransferFsId: string | null;
+  remoteTransferOwned: 0 | 1;
+  remoteCleanupPending: 0 | 1;
+  remoteCleanupError: string | null;
 };

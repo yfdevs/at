@@ -63,7 +63,59 @@ export type {
   BaiduNetdiskShareDownloadOptions,
   BaiduNetdiskShareDownloadResult,
   BaiduNetdiskShareInfo,
+  BaiduNetdiskTemporaryTransfer,
 } from "../domain/types.js";
+
+export type RemoteVideoDirectoryCandidateScore = {
+  validEpisodeSequence: boolean;
+  materialDirectory: boolean;
+  preferredEpisodeDirectory: boolean;
+  uniqueEpisodeCount: number;
+  recognizedVideoCount: number;
+  mp4Count: number;
+  depth: number;
+  path: string;
+};
+
+export function isSupportedEpisodeVideoFileName(fileName: string) {
+  return /\.(?:mp4|mov)$/i.test(fileName);
+}
+
+export function isAutomationTemporaryTransferPath(value: string, nowMs = Date.now()) {
+  const parts = String(value || "").split("/").filter(Boolean);
+  if (parts.length !== 1) return false;
+  const match = parts[0].match(/^.+__([a-zA-Z0-9]{1,10})__([a-z0-9]{8})$/);
+  if (!match) return false;
+  const createdAtMs = Number.parseInt(match[2], 36);
+  const earliestAllowedMs = Date.UTC(2020, 0, 1);
+  return Number.isFinite(createdAtMs)
+    && createdAtMs >= earliestAllowedMs
+    && createdAtMs <= nowMs + 24 * 60 * 60 * 1000;
+}
+
+export function compareRemoteVideoDirectoryCandidates(
+  left: RemoteVideoDirectoryCandidateScore,
+  right: RemoteVideoDirectoryCandidateScore,
+) {
+  if (left.validEpisodeSequence !== right.validEpisodeSequence) {
+    return Number(right.validEpisodeSequence) - Number(left.validEpisodeSequence);
+  }
+  if (left.materialDirectory !== right.materialDirectory) {
+    return Number(left.materialDirectory) - Number(right.materialDirectory);
+  }
+  if (left.preferredEpisodeDirectory !== right.preferredEpisodeDirectory) {
+    return Number(right.preferredEpisodeDirectory) - Number(left.preferredEpisodeDirectory);
+  }
+  if (left.uniqueEpisodeCount !== right.uniqueEpisodeCount) {
+    return right.uniqueEpisodeCount - left.uniqueEpisodeCount;
+  }
+  if (left.recognizedVideoCount !== right.recognizedVideoCount) {
+    return right.recognizedVideoCount - left.recognizedVideoCount;
+  }
+  if (left.mp4Count !== right.mp4Count) return right.mp4Count - left.mp4Count;
+  if (left.depth !== right.depth) return left.depth - right.depth;
+  return left.path.localeCompare(right.path);
+}
 
 async function copyToClipboardOnce(text: string) {
   return new Promise<void>((resolve, reject) => {
@@ -690,6 +742,7 @@ type SavedShareResult = {
   remoteOwnership: BaiduNetdiskRemoteOwnershipListing;
   remotePosters: BaiduNetdiskRemotePosterListing;
   remoteAiProductionProofs: BaiduNetdiskRemoteAiProductionProofListing;
+  temporaryTransfer?: import("../domain/types.js").BaiduNetdiskTemporaryTransfer;
 };
 
 type SaveShareOptions = {
@@ -697,10 +750,27 @@ type SaveShareOptions = {
   isolatedRootUnique?: boolean;
 };
 
-async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, options: SaveShareOptions = {}) {
+async function saveShareToOwnNetdisk(
+  target: CdpTarget,
+  share: ShareInfo,
+  options: SaveShareOptions = {},
+  onTemporaryTransferCreated?: BaiduNetdiskShareDownloadOptions["onTemporaryTransferCreated"],
+) {
   return withPage(target, async (page) => {
+    const temporaryTransferNotifications: Promise<void>[] = [];
     log(options.isolatedRoot ? "保存分享目录到干净的网盘中转目录" : "保存分享目录到我的网盘");
     const stopConsoleForwarding = page.onConsole((message) => {
+      if (message.startsWith("[baidu-temp-transfer] ")) {
+        try {
+          const transfer = JSON.parse(message.slice("[baidu-temp-transfer] ".length));
+          temporaryTransferNotifications.push(
+            Promise.resolve(onTemporaryTransferCreated?.(transfer)).then(() => undefined),
+          );
+        } catch (error) {
+          warn("记录网盘中转目录失败", { error });
+        }
+        return;
+      }
       const prefix = ["[baidu-transfer] ", "[baidu] "].find((candidate) => message.startsWith(candidate));
       if (!prefix) return;
       const forwardedMessage = message.slice(prefix.length);
@@ -960,11 +1030,20 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   const itemPath = (item) => String(item?.path || "");
   const itemFsId = (item) => String(item?.fs_id || item?.fsid || item?.id || "");
   const joinPath = (dir, name) => normalizeDir(normalizeDir(dir) + "/" + name);
+  const parentPathOf = (path) => {
+    const parts = normalizeDir(path).split("/").filter(Boolean);
+    parts.pop();
+    return "/" + parts.join("/");
+  };
   const itemIsDir = (item) => Number(item?.isdir ?? item?.is_dir ?? 0) === 1;
   const itemSize = (item) => Number(item?.size ?? 0);
+  const itemMd5 = (item) => String(item?.md5 || item?.server_md5 || "").toLowerCase();
   const compatibleItem = (source, target) => {
     if (itemIsDir(source) !== itemIsDir(target)) return false;
     if (itemIsDir(source)) return true;
+    const sourceMd5 = itemMd5(source);
+    const targetMd5 = itemMd5(target);
+    if (sourceMd5 && targetMd5 && sourceMd5 !== targetMd5) return false;
     const sourceSize = itemSize(source);
     const targetSize = itemSize(target);
     return sourceSize <= 0 || targetSize <= 0 || sourceSize === targetSize;
@@ -1259,10 +1338,17 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
       if (transferred.errno === 2) {
         const locatedDuplicate = await waitForOwnItem(source, destinationDir, 5000);
         if (locatedDuplicate) return { item: locatedDuplicate, transferred: false };
-        const existingElsewhere = (await searchOwnItems(name))
-          .filter((item) => compatibleItem(source, item))
-          .map(itemPath)
-          .filter(Boolean);
+        const compatibleDuplicates = (await searchOwnItems(name))
+          .filter((item) => compatibleItem(source, item));
+        const targetPath = joinPath(destinationDir, name);
+        const targetDuplicate = compatibleDuplicates.find(
+          (item) => normalizeDir(itemPath(item)) === targetPath,
+        );
+        if (targetDuplicate) {
+          console.log("[baidu-transfer] 已通过网盘搜索确认目标素材存在：" + targetPath);
+          return { item: targetDuplicate, transferred: false };
+        }
+        const existingElsewhere = compatibleDuplicates.map(itemPath).filter(Boolean);
         if (existingElsewhere.length > 0) {
           const duplicate = new Error(
             "素材已存在于网盘其他目录，当前剧目目录无法继续补传：" +
@@ -1309,17 +1395,18 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
     return false;
   };
   const inspectReusableDirectory = async (sources, destinationDir) => {
-    const existingByName = new Map(
-      (await listOwnDir(destinationDir)).map((item) => [itemName(item), item]),
-    );
+    const existingItems = await listOwnDir(destinationDir);
+    const existingByName = new Map(existingItems.map((item) => [itemName(item), item]));
+    const sourceNames = new Set(sources.map(fileNameOf));
     let matched = 0;
     let total = 0;
+    let extra = existingItems.filter((item) => !sourceNames.has(itemName(item))).length;
     for (const source of sources) {
       total += 1;
       const existing = existingByName.get(fileNameOf(source));
       if (!existing) continue;
       if (!compatibleItem(source, existing)) {
-        return { matched, total, conflict: true };
+        return { matched, total, extra, conflict: true };
       }
       matched += 1;
       if (itemIsDir(source)) {
@@ -1327,10 +1414,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
         const nested = await inspectReusableDirectory(sourceChildren, itemPath(existing));
         matched += nested.matched;
         total += nested.total;
-        if (nested.conflict) return { matched, total, conflict: true };
+        extra += nested.extra;
+        if (nested.conflict) return { matched, total, extra, conflict: true };
       }
     }
-    return { matched, total, conflict: false };
+    return { matched, total, extra, conflict: false };
   };
   const syncItems = async (sources, destinationDir) => {
     let transferredCount = 0;
@@ -1377,23 +1465,51 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   const searchedCandidates = isolateRoot ? [] : (await searchOwnItems(finalFileName))
     .filter((item) => itemIsDir(item) && itemName(item) === finalFileName);
   const candidateByPath = new Map();
+  const contentMatchedCandidatePaths = new Set();
   for (const candidate of [rootCandidate, ...searchedCandidates].filter(Boolean)) {
     if (!itemIsDir(candidate)) continue;
     candidateByPath.set(normalizeDir(itemPath(candidate)), candidate);
   }
+  const anchorSource = desiredItems.find(itemIsDir) || desiredItems[0];
+  if (anchorSource) {
+    const anchorMatches = (await searchOwnItems(fileNameOf(anchorSource)))
+      .filter((item) => compatibleItem(anchorSource, item));
+    for (const anchorMatch of anchorMatches) {
+      const candidatePath = parentPathOf(itemPath(anchorMatch));
+      if (candidatePath === "/") continue;
+      const candidateName = candidatePath.split("/").filter(Boolean).pop() || "";
+      const expectedCandidate =
+        candidateName === safeExpectedName ||
+        candidateName === finalFileName ||
+        candidateName.startsWith(safeExpectedName + "__") ||
+        Boolean(wrapperName && candidateName === wrapperName);
+      if (!expectedCandidate) continue;
+      const candidate = await findOwnItem(parentPathOf(candidatePath), candidateName, true);
+      if (!candidate || !itemIsDir(candidate)) continue;
+      candidateByPath.set(candidatePath, candidate);
+      contentMatchedCandidatePaths.add(candidatePath);
+    }
+  }
   const rankedCandidates = [];
   for (const candidate of candidateByPath.values()) {
     const inspected = await inspectReusableDirectory(desiredItems, itemPath(candidate));
-    if (!inspected.conflict) rankedCandidates.push({ item: candidate, ...inspected });
+    const candidatePath = normalizeDir(itemPath(candidate));
+    const requiresCompleteMatch = contentMatchedCandidatePaths.has(candidatePath);
+    if (!inspected.conflict && (!requiresCompleteMatch || inspected.matched === inspected.total)) {
+      rankedCandidates.push({ item: candidate, ...inspected });
+    }
   }
   rankedCandidates.sort((left, right) => {
     const leftComplete = left.matched === left.total && left.total > 0 ? 1 : 0;
     const rightComplete = right.matched === right.total && right.total > 0 ? 1 : 0;
     if (leftComplete !== rightComplete) return rightComplete - leftComplete;
     if (left.matched !== right.matched) return right.matched - left.matched;
-    const leftIsRoot = normalizeDir(itemPath(left.item)) === joinPath("/", finalFileName) ? 1 : 0;
-    const rightIsRoot = normalizeDir(itemPath(right.item)) === joinPath("/", finalFileName) ? 1 : 0;
-    return rightIsRoot - leftIsRoot;
+    if (left.extra !== right.extra) return left.extra - right.extra;
+    const canonicalPath = joinPath("/", safeExpectedName);
+    const leftIsCanonical = normalizeDir(itemPath(left.item)) === canonicalPath ? 1 : 0;
+    const rightIsCanonical = normalizeDir(itemPath(right.item)) === canonicalPath ? 1 : 0;
+    if (leftIsCanonical !== rightIsCanonical) return rightIsCanonical - leftIsCanonical;
+    return normalizeDir(itemPath(left.item)).localeCompare(normalizeDir(itemPath(right.item)));
   });
   const bestReusableCandidate = rankedCandidates[0];
   let ownRoot =
@@ -1401,9 +1517,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
       ? bestReusableCandidate.item
       : rootCandidate;
   let locateSource = ownRoot
-    ? normalizeDir(itemPath(ownRoot)) === joinPath("/", finalFileName)
-      ? "existing-root"
-      : "existing-search"
+    ? contentMatchedCandidatePaths.has(normalizeDir(itemPath(ownRoot)))
+      ? "existing-content-match"
+      : normalizeDir(itemPath(ownRoot)) === joinPath("/", finalFileName)
+        ? "existing-root"
+        : "existing-search"
     : "";
   let transferredCount = 0;
   let createdTarget = false;
@@ -1413,6 +1531,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
     ownRoot = await createOwnDirectory(finalFileName);
     createdTarget = true;
     locateSource = "created-isolated-root";
+    console.log("[baidu-temp-transfer] " + JSON.stringify({
+      path: normalizeDir(itemPath(ownRoot) || joinPath("/", finalFileName)),
+      fsId: itemFsId(ownRoot),
+      createdByAutomation: true,
+    }));
   }
 
   if (ownRoot && !itemIsDir(ownRoot)) {
@@ -1471,18 +1594,19 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
   }
   const alreadySaved = !createdTarget && transferredCount === 0;
   const escapeRegExp = (value) => String(value).replace(/[\\\\^$.*+?()[\\]{}|]/g, "\\\\$&");
+  const isSupportedEpisodeVideoFileName = ${isSupportedEpisodeVideoFileName.toString()};
   const episodeBaseNames = [...new Set([expectedName, sourceName, ...sourceNames, finalFileName].filter(Boolean))];
   const episodePatterns = episodeBaseNames.flatMap((baseName) => {
     const escaped = escapeRegExp(baseName);
     return [
-      new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集.*\\\\.mp4$", "i"),
-      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\s*集?.*\\\\.mp4$", "i"),
+      new RegExp("^" + escaped + "\\\\s*[-_—–]?\\\\s*第(\\\\d+)集.*\\\\.(?:mp4|mov)$", "i"),
+      new RegExp("^" + escaped + "\\\\s*(\\\\d+)\\\\s*集?.*\\\\.(?:mp4|mov)$", "i"),
     ];
   });
   episodePatterns.push(
-    /^第(\\d+)集.*\\.mp4$/i,
-    /^(?:ep|episode|e)[\\s._-]*(\\d+)\\.mp4$/i,
-    /^(\\d+)\\.mp4$/i,
+    /^第(\\d+)集.*\\.(?:mp4|mov)$/i,
+    /^(?:ep|episode|e)[\\s._-]*(\\d+)\\.(?:mp4|mov)$/i,
+    /^(\\d+)\\.(?:mp4|mov)$/i,
   );
   const matchEpisodeIndex = (fileName) => {
     const strongMatch = episodePatterns
@@ -1532,7 +1656,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
       const size = Number(entry?.size);
       return total + (Number.isFinite(size) && size > 0 ? size : 0);
     }, 0);
-    const directMp4Files = directFiles.filter((entry) => itemName(entry).toLowerCase().endsWith(".mp4"));
+    const directMp4Files = directFiles.filter((entry) => isSupportedEpisodeVideoFileName(itemName(entry)));
     debug.mp4Count = directMp4Files.length;
     debug.mp4SizeBytes = directMp4Files.reduce((total, entry) => {
       const size = Number(entry?.size);
@@ -1665,7 +1789,7 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
           });
         }
       }
-      if (!lowerName.endsWith(".mp4")) continue;
+      if (!isSupportedEpisodeVideoFileName(lowerName)) continue;
       const videoFile = {
         name,
         path: entryPath,
@@ -1686,13 +1810,35 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
     });
   }
   const allVideoFiles = [...allEntriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
-  const selectedVideoDir = candidateDirs
-    .sort((left, right) =>
-      right.mp4Count - left.mp4Count ||
-      right.mp4SizeBytes - left.mp4SizeBytes ||
-      left.depth - right.depth ||
-      left.path.localeCompare(right.path),
-    )[0] || {
+  const compareVideoDirectoryCandidates = ${compareRemoteVideoDirectoryCandidates.toString()};
+  const scoredCandidateDirs = candidateDirs.map((candidate) => {
+    const recognizedIndexes = candidate.videoFiles
+      .map((file) => matchEpisodeIndex(file.name))
+      .filter((index) => Number.isInteger(index) && index > 0);
+    const uniqueIndexes = [...new Set(recognizedIndexes)].sort((left, right) => left - right);
+    const duplicateIndexes = [...new Set(recognizedIndexes.filter(
+      (index, position) => recognizedIndexes.indexOf(index) !== position,
+    ))];
+    const highestIndex = uniqueIndexes[uniqueIndexes.length - 1] || 0;
+    const validEpisodeSequence =
+      highestIndex > 0 &&
+      duplicateIndexes.length === 0 &&
+      uniqueIndexes.length === highestIndex &&
+      uniqueIndexes.every((index, position) => index === position + 1);
+    const normalizedName = String(candidate.name || "").replace(/\s+/g, "");
+    const materialDirectory = /素材|工程|花絮|片段|预告|拍摄|源文件/i.test(normalizedName);
+    const preferredEpisodeDirectory =
+      !materialDirectory && /成片|成品|正片|剧集|视频/i.test(normalizedName);
+    return {
+      ...candidate,
+      validEpisodeSequence,
+      materialDirectory,
+      preferredEpisodeDirectory,
+      uniqueEpisodeCount: uniqueIndexes.length,
+      recognizedVideoCount: recognizedIndexes.length,
+    };
+  });
+  const selectedVideoDir = scoredCandidateDirs.sort(compareVideoDirectoryCandidates)[0] || {
       path: normalizeDir(savedPath),
       name: finalFileName,
       fsId: itemFsId(ownRoot),
@@ -1749,6 +1895,13 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
     locateSource,
     shareStructure: shareHasDramaWrapper ? "wrapped" : "flat",
     transferredItemCount: transferredCount,
+    temporaryTransfer: isolateRoot && createdTarget
+      ? {
+          path: normalizeDir(savedPath),
+          fsId: itemFsId(ownRoot),
+          createdByAutomation: true,
+        }
+      : undefined,
     remoteVideos: {
       rootPath: selectedVideoDir.path || savedPath,
       files,
@@ -1788,9 +1941,11 @@ async function saveShareToOwnNetdisk(target: CdpTarget, share: ShareInfo, option
       10 * 60_000,
     );
 
+      await Promise.all(temporaryTransferNotifications);
       if (!result.savedPath) throw new Error("没有拿到保存后的网盘路径。");
       return result;
     } finally {
+      await Promise.allSettled(temporaryTransferNotifications);
       stopConsoleForwarding();
     }
   });
@@ -2546,16 +2701,30 @@ async function submitSavedDownload(
   inferEpisodeCount = false,
   downloadAssetMaterials = true,
   saveOptions: SaveShareOptions = {},
+  onTemporaryTransferCreated?: BaiduNetdiskShareDownloadOptions["onTemporaryTransferCreated"],
+  signal?: AbortSignal,
 ) {
-  const saved = await saveShareToOwnNetdisk(shareTarget, share, saveOptions);
+  signal?.throwIfAborted();
+  const saved = await saveShareToOwnNetdisk(
+    shareTarget,
+    share,
+    saveOptions,
+    onTemporaryTransferCreated,
+  );
+  if (saved.temporaryTransfer) {
+    await onTemporaryTransferCreated?.(saved.temporaryTransfer);
+  }
+  signal?.throwIfAborted();
   log(
     saved.shareStructure === "wrapped"
       ? "分享结构：最外层为剧名目录，直接转存或复用该目录"
       : "分享结构：最外层为素材目录，使用剧名目录归档并增量转存",
   );
   log(
-    saved.alreadySaved
-      ? `网盘中已存在目录：${saved.resourceRootPath} (${saved.locateSource})`
+    saved.alreadySaved && saved.locateSource === "existing-content-match"
+      ? `已校验并复用网盘现有目录：${saved.resourceRootPath}，无需补传`
+      : saved.alreadySaved
+        ? `网盘中已存在目录：${saved.resourceRootPath} (${saved.locateSource})`
       : saved.locateSource.startsWith("existing")
         ? `已复用并补齐网盘目录：${saved.resourceRootPath}，新增=${saved.transferredItemCount} (${saved.locateSource})`
         : `已保存到网盘：${saved.resourceRootPath}，新增=${saved.transferredItemCount} (${saved.locateSource})`,
@@ -2604,7 +2773,7 @@ async function submitSavedDownload(
   };
   log(
     `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=${formatNumberRanges(remoteIndexes)}，` +
-      `全部mp4=${remoteVideos.allVideoFiles.length}个`,
+      `全部视频=${remoteVideos.allVideoFiles.length}个`,
   );
   logRemoteVideoScanDetails(remoteVideos);
   if (remoteVideos.unmatchedVideoFiles?.length) {
@@ -2638,7 +2807,7 @@ async function submitSavedDownload(
         actual: 0,
         message:
           `百度网盘没有识别到可上传的剧集视频：${targetName}。` +
-          `请使用“第1集.mp4”“剧名-第1集.mp4”或“1.mp4”等包含集数的文件名。`,
+          `请使用“第1集.mp4”“剧名-第1集.mov”或“1.mov”等包含集数的文件名。`,
       });
     }
     inferredEpisodeCount = inspection.episodeCount;
@@ -2664,6 +2833,8 @@ async function submitSavedDownload(
           inferEpisodeCount,
           downloadAssetMaterials,
           { isolatedRoot: true, isolatedRootUnique: true },
+          onTemporaryTransferCreated,
+          signal,
         );
       }
       const problemParts = [
@@ -2717,6 +2888,8 @@ async function submitSavedDownload(
           inferEpisodeCount,
           downloadAssetMaterials,
           { isolatedRoot: true, isolatedRootUnique: true },
+          onTemporaryTransferCreated,
+          signal,
         );
       }
       const problemParts = [
@@ -2794,6 +2967,7 @@ async function submitSavedDownload(
     fsId: saved.fsId,
     downloadRoot: downloadDir,
   };
+  signal?.throwIfAborted();
   let downloadRoot = downloadDir;
   const nativeSubmitted = downloadEpisodeVideos
     ? await submitNativeDownloadTask(port, task)
@@ -2915,12 +3089,14 @@ async function submitSavedDownload(
     remotePosters,
     remoteAiProductionProofs,
     inferredEpisodeCount,
+    temporaryTransfer: saved.temporaryTransfer,
   };
 }
 
 async function downloadBaiduNetdiskSharePromise(
   options: BaiduNetdiskShareDownloadOptions,
 ): Promise<BaiduNetdiskShareDownloadResult> {
+  options.signal?.throwIfAborted();
   if (process.platform !== "win32") {
     throw new Error("当前脚本实现的是 Windows 百度网盘 CDP 下载流程。");
   }
@@ -2961,11 +3137,15 @@ async function downloadBaiduNetdiskSharePromise(
   }
 
   await ensureBaiduCdpPort(port);
+  options.signal?.throwIfAborted();
   log(`使用百度网盘 CDP 端口：${port}`);
 
   const shareTarget = await openSharePage(port, share);
+  options.signal?.throwIfAborted();
   await enterShareCode(shareTarget, share);
+  options.signal?.throwIfAborted();
   const listTarget = await waitForShareList(port, share, [shareTarget]);
+  options.signal?.throwIfAborted();
   const {
     downloadRoot,
     targetName,
@@ -2974,6 +3154,7 @@ async function downloadBaiduNetdiskSharePromise(
     remotePosters,
     remoteAiProductionProofs,
     inferredEpisodeCount,
+    temporaryTransfer,
   } = await submitSavedDownload(
     port,
     listTarget,
@@ -2987,6 +3168,9 @@ async function downloadBaiduNetdiskSharePromise(
     options.downloadEpisodeVideos !== false,
     options.inferEpisodeCount === true,
     options.downloadAssetMaterials !== false,
+    {},
+    options.onTemporaryTransferCreated,
+    options.signal,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;
   const predictedLocalPath = path.join(resolvedDownloadRoot, targetName);
@@ -3008,9 +3192,116 @@ async function downloadBaiduNetdiskSharePromise(
     expectedPosterImages: remotePosters.files.length,
     expectedAiProductionProofFiles: remoteAiProductionProofs.files.length,
     inferredEpisodeCount,
+    temporaryTransfer,
     completed: false,
     skippedExisting: false,
   };
+}
+
+export async function deleteBaiduNetdiskTemporaryTransfer(options: {
+  port?: number;
+  shareText: string;
+  path: string;
+  fsId: number | string;
+}) {
+  const transferPath = `/${String(options.path || "").split("/").filter(Boolean).join("/")}`;
+  if (!isAutomationTemporaryTransferPath(transferPath)) {
+    throw new Error(`拒绝删除非软件唯一中转目录：${transferPath}`);
+  }
+  const expectedFsId = String(options.fsId || "");
+  if (!expectedFsId) throw new Error(`拒绝删除缺少 fsId 的中转目录：${transferPath}`);
+
+  const port = options.port ?? 9337;
+  const share = parseBaiduNetdiskShareText(options.shareText);
+  await ensureBaiduCdpPort(port);
+  const target = await openSharePage(port, share);
+  await withPage(target, async (page) => {
+    await waitForDocumentBody(page);
+    const result = await page.evaluate<{
+      deleted: boolean;
+      alreadyMissing: boolean;
+      errno?: number;
+    }>(
+      `
+(async () => {
+  const transferPath = ${JSON.stringify(transferPath)};
+  const expectedFsId = ${JSON.stringify(expectedFsId)};
+  const sleep = (ms) => new Promise((resolve) => setTimeout(resolve, ms));
+  const getLocal = (key) => {
+    try { return globalThis.locals?.get?.(key) ?? ""; } catch { return ""; }
+  };
+  const token = String(
+    getLocal("bdstoken") || globalThis.yunData?.bdstoken || globalThis.yunData?.bdstoken_value || "",
+  );
+  const requestParams = () => new URLSearchParams({
+    channel: "chunlei",
+    web: "1",
+    app_id: "250528",
+    bdstoken: token,
+    clienttype: "0",
+    t: String(Date.now()),
+  });
+  const readRootItem = async () => {
+    for (let page = 1; page <= ${OWN_NETDISK_DIR_LIST_MAX_PAGES}; page += 1) {
+      const params = requestParams();
+      params.set("dir", "/");
+      params.set("order", "name");
+      params.set("desc", "0");
+      params.set("showempty", "0");
+      params.set("num", String(${OWN_NETDISK_DIR_LIST_PAGE_SIZE}));
+      params.set("page", String(page));
+      const response = await fetch("/api/list?" + params.toString(), { credentials: "include" });
+      const data = await response.json();
+      if (data.errno !== 0) throw new Error("读取网盘根目录失败：errno=" + String(data.errno));
+      const list = Array.isArray(data.list) ? data.list : [];
+      const item = list.find((entry) => String(entry?.path || "") === transferPath);
+      if (item) return item;
+      if (list.length < ${OWN_NETDISK_DIR_LIST_PAGE_SIZE} && !data.has_more) break;
+    }
+    return undefined;
+  };
+
+  const item = await readRootItem();
+  if (!item) return { deleted: false, alreadyMissing: true };
+  const actualFsId = String(item?.fs_id || item?.fsid || item?.id || "");
+  if (actualFsId !== expectedFsId) {
+    throw new Error("中转目录 fsId 已变化，拒绝删除：expected=" + expectedFsId + " actual=" + actualFsId);
+  }
+  if (!(Number(item?.isdir ?? item?.is_dir ?? 0) === 1)) {
+    throw new Error("中转路径不再是目录，拒绝删除：" + transferPath);
+  }
+
+  const params = requestParams();
+  params.set("opera", "delete");
+  params.set("async", "2");
+  params.set("onnest", "fail");
+  const body = new URLSearchParams({ filelist: JSON.stringify([transferPath]) });
+  const response = await fetch("/api/filemanager?" + params.toString(), {
+    method: "POST",
+    credentials: "include",
+    headers: { "Content-Type": "application/x-www-form-urlencoded; charset=UTF-8" },
+    body,
+  });
+  const data = await response.json();
+  if (data.errno !== 0) {
+    throw new Error("删除网盘中转目录失败：errno=" + String(data.errno) + " message=" + String(data.errmsg || data.show_msg || ""));
+  }
+
+  for (let attempt = 0; attempt < 20; attempt += 1) {
+    await sleep(500);
+    if (!await readRootItem()) return { deleted: true, alreadyMissing: false, errno: 0 };
+  }
+  throw new Error("删除请求已提交，但中转目录仍然存在：" + transferPath);
+})()
+`,
+      30_000,
+    );
+    log(
+      result.alreadyMissing
+        ? `网盘中转目录已不存在：${transferPath}`
+        : `网盘中转目录已自动清理：${transferPath}`,
+    );
+  });
 }
 
 export function downloadBaiduNetdiskShareEffect(

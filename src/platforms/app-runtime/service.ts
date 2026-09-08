@@ -48,6 +48,8 @@ export type AppUpdateSourceId =
   | "gh-dpik-top"
   | "geekertao"
   | "ghproxy-net";
+export type AppUpdateSourceMode = "auto" | "manual";
+export type AppUpdateSourceSelection = "auto" | AppUpdateSourceId;
 
 export type AppUpdateSource = {
   id: AppUpdateSourceId;
@@ -68,8 +70,12 @@ export type AppUpdateStatus = {
   progress?: AppUpdateProgress;
   error?: string;
   disabledReason?: string;
+  sourceMode: AppUpdateSourceMode;
   source: AppUpdateSource;
   sources: AppUpdateSource[];
+  lastCheckedAt?: string;
+  nextCheckAt?: string;
+  retryAttempt?: number;
   updatedAt: string;
 };
 
@@ -125,10 +131,10 @@ export function installAppUpdate() {
   ) as Promise<AppUpdateStatus>;
 }
 
-export function setAppUpdateSource(sourceId: AppUpdateSourceId) {
+export function setAppUpdateSource(selection: AppUpdateSourceSelection) {
   return requireIpcRenderer("切换应用更新源").invoke(
     "app:update:source:set",
-    sourceId,
+    selection,
   ) as Promise<AppUpdateStatus>;
 }
 

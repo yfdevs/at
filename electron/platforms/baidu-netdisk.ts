@@ -102,6 +102,11 @@ type BaiduNetdiskShareDownloadResult = {
   expectedAiProductionProofFiles?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
   inferredEpisodeCount?: number;
+  temporaryTransfer?: {
+    path: string;
+    fsId: number | string;
+    createdByAutomation: true;
+  };
   completed: boolean;
   skippedExisting: boolean;
   downloadDir: string;
@@ -141,6 +146,7 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
     concurrency: number;
     threadsPerJob: number;
   };
+  signal?: AbortSignal;
   onStableEpisodeFiles?: (files: Array<{
     index: number;
     file: string;
@@ -503,6 +509,9 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
   const downloadTaskNames = [
     options.targetName,
     "视频",
+    "成片",
+    "成品",
+    "正片",
     "权属",
     "工程",
     "封面",
@@ -559,6 +568,98 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
   }
 }
 
+async function cleanupRecordedRemoteTransfer(
+  record: BaiduNetdiskDownloadRecord,
+  port: number,
+  reason: string,
+) {
+  if (
+    !record.remoteCleanupPending
+    || !record.remoteTransferOwned
+    || !record.remoteTransferPath
+    || !record.remoteTransferFsId
+  ) {
+    return record;
+  }
+
+  const cleanupLogger = baiduNetdiskLogger("storage", {
+    resourceName: record.resourceName,
+    remoteTransferPath: record.remoteTransferPath,
+  });
+  try {
+    const runtime = await importBaiduNetdiskDownloadRuntimePackage();
+    await runBaiduCdpOperationExclusive(`清理网盘中转目录：${record.resourceName}`, () =>
+      runtime.deleteBaiduNetdiskTemporaryTransfer({
+        port,
+        shareText: record.shareText,
+        path: record.remoteTransferPath!,
+        fsId: record.remoteTransferFsId!,
+      }),
+    );
+    cleanupLogger.info("网盘中转目录清理完成", { reason });
+    return upsertDownloadRecord({
+      ...record,
+      remoteCleanupPending: false,
+      remoteCleanupError: undefined,
+    });
+  } catch (error) {
+    const cleanupError = readableError(error);
+    cleanupLogger.warn("网盘中转目录清理失败，已保留为待清理任务", {
+      reason,
+      error: cleanupError,
+    });
+    return upsertDownloadRecord({
+      ...record,
+      remoteCleanupPending: true,
+      remoteCleanupError: cleanupError,
+    });
+  }
+}
+
+let remoteCleanupRecovery: Promise<void> | null = null;
+
+function recoverPendingRemoteTransferCleanups() {
+  if (remoteCleanupRecovery) return remoteCleanupRecovery;
+  const pendingRecords = getDownloadRecordsRepository()
+    .list(1000)
+    .filter((record) => record.remoteCleanupPending && record.remoteTransferOwned);
+  if (pendingRecords.length === 0) return Promise.resolve();
+
+  remoteCleanupRecovery = (async () => {
+    const port = cdpPort(readConfig());
+    await startCdp(false);
+    for (const pendingRecord of pendingRecords) {
+      if (activeDownloadOperations.has(pendingRecord.id)) continue;
+      await cleanupBaiduNetdiskDownloadArtifacts({
+        downloadDir: pendingRecord.downloadDir,
+        targetName: pendingRecord.resourceName,
+        port,
+      });
+      const recovered = await cleanupRecordedRemoteTransfer(
+        pendingRecord,
+        port,
+        "应用启动恢复",
+      );
+      if (pendingRecord.state === "downloading") {
+        upsertDownloadRecord({
+          ...recovered,
+          state: "failed",
+          error: recovered.remoteCleanupPending
+            ? "上次运行异常中断；网盘中转目录仍待清理。"
+            : "上次运行异常中断；网盘中转目录已清理。",
+        });
+      }
+    }
+  })()
+    .catch((error) => {
+      baiduNetdiskLogger("storage").warn("启动时恢复网盘中转目录清理失败", { error });
+    })
+    .finally(() => {
+      remoteCleanupRecovery = null;
+    });
+  return remoteCleanupRecovery;
+}
+
 function normalizeEnsureDownloadRequest(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): BaiduNetdiskEnsureDownloadedRequest {
@@ -610,6 +711,7 @@ function normalizeEnsureDownloadRequest(
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
     requesterPlatform: request.requesterPlatform,
     videoTranscode: request.videoTranscode,
+    signal: request.signal,
     onStableEpisodeFiles: request.onStableEpisodeFiles,
   };
 }
@@ -727,6 +829,12 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       downloadAssetMaterials?: boolean;
       port: number;
       downloadDir: string;
+      signal?: AbortSignal;
+      onTemporaryTransferCreated?: (transfer: {
+        path: string;
+        fsId: number | string;
+        createdByAutomation: true;
+      }) => void | Promise<void>;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
     getBaiduNetdiskDownloadTaskStatus: (options: { port: number; targetName: string }) => Promise<{
       found: boolean;
@@ -745,6 +853,12 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       action: "pause" | "resume" | "delete";
       expectedDownloadRoot?: string;
     }) => Promise<boolean>;
+    deleteBaiduNetdiskTemporaryTransfer: (options: {
+      port?: number;
+      shareText: string;
+      path: string;
+      fsId: number | string;
+    }) => Promise<void>;
   };
   runtime.configureBaiduNetdiskAutomationLogging({
     logFilePath: baiduNetdiskLogFilePath(),
@@ -880,6 +994,7 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
 export async function ensureBaiduNetdiskShareDownloaded(
   request: BaiduNetdiskEnsureDownloadedRequest,
 ): Promise<BaiduNetdiskDownloadRecord> {
+  await recoverPendingRemoteTransferCleanups();
   const normalizedRequest = normalizeEnsureDownloadRequest(request);
   const requestLogger = baiduNetdiskLogger("netdisk", {
     requesterPlatform: normalizedRequest.requesterPlatform,
@@ -954,6 +1069,12 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
   const timeoutMs = getConfiguredBaiduNetdiskDownloadTimeoutMs();
   const port = cdpPort(config);
   const existingRecord = readDownloadRecords().find((record) => record.id === id);
+  if (existingRecord?.remoteCleanupPending) {
+    throw new Error(
+      `上一次任务的网盘中转目录仍待清理：${existingRecord.remoteTransferPath || "未知路径"}。` +
+        "系统已停止创建新的中转目录，请确认百度网盘在线后重试。",
+    );
+  }
   const localPath = playletDir(request.localEpisodeVideoRoot, request.resourceName);
   const now = new Date().toISOString();
   let record = upsertDownloadRecord({
@@ -972,6 +1093,11 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     updatedAt: now,
     startedAt: existingRecord?.startedAt,
     completedAt: existingRecord?.completedAt,
+    remoteTransferPath: existingRecord?.remoteTransferPath,
+    remoteTransferFsId: existingRecord?.remoteTransferFsId,
+    remoteTransferOwned: existingRecord?.remoteTransferOwned,
+    remoteCleanupPending: existingRecord?.remoteCleanupPending,
+    remoteCleanupError: existingRecord?.remoteCleanupError,
   });
 
   record = upsertDownloadRecord({
@@ -982,11 +1108,13 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     startedAt: record.startedAt ?? new Date().toISOString(),
     completedAt: undefined,
   });
+  let downloadArtifactsCleaned = false;
 
   try {
     const {
       downloadBaiduNetdiskShare,
       getBaiduNetdiskDownloadTaskStatus,
+      controlBaiduNetdiskDownloadTask,
     } = await importBaiduNetdiskDownloadRuntimePackage();
     const runDownload = () => ensureBaiduNetdiskEpisodeVideos({
       shareText: request.shareText,
@@ -1021,6 +1149,23 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             downloadAssetMaterials: downloadRequest.downloadAssetMaterials,
             port,
             downloadDir: downloadRequest.downloadDir,
+            signal: request.signal,
+            onTemporaryTransferCreated: (transfer) => {
+              record = upsertDownloadRecord({
+                ...record,
+                remoteTransferPath: transfer.path,
+                remoteTransferFsId: String(transfer.fsId),
+                remoteTransferOwned: transfer.createdByAutomation,
+                remoteCleanupPending: transfer.createdByAutomation,
+                remoteCleanupError: undefined,
+              });
+              baiduNetdiskLogger("storage", {
+                requesterPlatform: request.requesterPlatform,
+                resourceName: request.resourceName,
+              }).info("已记录本次软件创建的网盘中转目录", {
+                path: transfer.path,
+              });
+            },
           }),
         ),
       getDownloadTaskStatus: (statusRequest) =>
@@ -1028,6 +1173,14 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           port,
           targetName: statusRequest.targetName,
         }),
+      cancelDownloadTask: (cancelRequest) =>
+        controlBaiduNetdiskDownloadTask({
+          port,
+          targetName: cancelRequest.targetName,
+          action: "delete",
+          expectedDownloadRoot: cancelRequest.downloadRoot,
+        }).then(() => undefined),
+      signal: request.signal,
       onStableEpisodeFiles: request.onStableEpisodeFiles,
       onLog: baiduNetdiskLogger("download", {
         requesterPlatform: request.requesterPlatform,
@@ -1069,6 +1222,15 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         );
       }
 
+      record = await cleanupRecordedRemoteTransfer(
+        record,
+        port,
+        "AI 海报兜底重试前",
+      );
+      if (record.remoteCleanupPending) {
+        throw new Error("旧网盘中转目录尚未清理，已停止创建新的中转目录；下次启动将自动重试清理。");
+      }
+
       const aiPosterLogger = baiduNetdiskLogger("ai-poster", {
         requesterPlatform: request.requesterPlatform,
         resourceName: request.resourceName,
@@ -1102,6 +1264,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       result = await runDownload();
     }
 
+    record = await cleanupRecordedRemoteTransfer(record, port, "本地下载及校验完成");
     const completedLocalPath = result.localPath || localPath;
     const completedAt = new Date();
     await utimes(completedLocalPath, completedAt, completedAt).catch((error) => {
@@ -1124,6 +1287,19 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     });
   } catch (error) {
     const message = readableError(error);
+    if (record.remoteCleanupPending) {
+      await cleanupBaiduNetdiskDownloadArtifacts({
+        downloadDir: uniqueDownloadDir,
+        targetName: request.resourceName,
+        port,
+      });
+      downloadArtifactsCleaned = true;
+      record = await cleanupRecordedRemoteTransfer(
+        record,
+        port,
+        request.signal?.aborted ? "用户终止任务" : "任务失败",
+      );
+    }
     upsertDownloadRecord({
       ...record,
       state: "failed",
@@ -1131,16 +1307,18 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     });
     throw Object.assign(new Error(message), { cause: error });
   } finally {
-    void cleanupBaiduNetdiskDownloadArtifacts({
-      downloadDir: uniqueDownloadDir,
-      targetName: request.resourceName,
-      port,
-    }).catch((error) => {
-      baiduNetdiskLogger("storage", {
-        requesterPlatform: request.requesterPlatform,
-        resourceName: request.resourceName,
-      }).warn("清理下载临时资源失败", { error });
-    });
+    if (!downloadArtifactsCleaned) {
+      void cleanupBaiduNetdiskDownloadArtifacts({
+        downloadDir: uniqueDownloadDir,
+        targetName: request.resourceName,
+        port,
+      }).catch((error) => {
+        baiduNetdiskLogger("storage", {
+          requesterPlatform: request.requesterPlatform,
+          resourceName: request.resourceName,
+        }).warn("清理下载临时资源失败", { error });
+      });
+    }
   }
 }
 
@@ -1288,4 +1466,8 @@ export function registerBaiduNetdiskPlatformHandlers() {
       withAppVideoTranscode(request as BaiduNetdiskEnsureDownloadedRequest),
     ),
   );
+
+  setTimeout(() => {
+    void recoverPendingRemoteTransferCleanups();
+  }, 1_000);
 }

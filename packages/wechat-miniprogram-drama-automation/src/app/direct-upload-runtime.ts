@@ -34,6 +34,7 @@ export type WechatMiniProgramDirectUploadRuntime = {
     episodeVideos: PreparedEpisodeVideo[]
     onAuthenticated?: () => void
     onProgress?: (progress: { completed: number; total: number }) => void
+    signal?: AbortSignal
   }) => Promise<void>
   closeBrowser: () => Promise<void>
   stop: () => Promise<void>
@@ -42,6 +43,7 @@ export type WechatMiniProgramDirectUploadRuntime = {
 export type WechatMiniProgramDirectUploadRuntimeOptions = {
   userDataDir: string
   settings: Partial<WechatMiniProgramRuntimeSettings>
+  onTaskInterrupted?: (reason: string) => void
 }
 
 async function detectLoginState(
@@ -82,11 +84,20 @@ export function startWechatMiniProgramDirectUploadRuntime(
   let launchPromise: Promise<BrowserContext> | null = null
   let selectedPage: Page | null = null
   let loginState: WechatMiniProgramDirectUploadBrowserStatus["loginState"] = "unknown"
+  let taskActive = false
+  let taskAuthenticated = false
+
+  const notifyTaskInterrupted = (reason: string) => {
+    if (taskActive) options.onTaskInterrupted?.(reason)
+  }
 
   const refreshPageStatus = async (page: Page) => {
     if (page.isClosed()) return
     selectedPage = page
     loginState = await detectLoginState(page)
+    if (taskActive && taskAuthenticated && loginState === "login-required") {
+      notifyTaskInterrupted("微信小程序登录已退出，当前上传任务已中断。")
+    }
   }
 
   const bindPage = (page: Page) => {
@@ -95,7 +106,10 @@ export function startWechatMiniProgramDirectUploadRuntime(
       void refreshPageStatus(page)
     })
     page.on("close", () => {
-      if (selectedPage === page) selectedPage = null
+      if (selectedPage === page) {
+        selectedPage = null
+        notifyTaskInterrupted("微信小程序上传页面已关闭，当前任务已中断。")
+      }
     })
     void refreshPageStatus(page)
   }
@@ -126,6 +140,7 @@ export function startWechatMiniProgramDirectUploadRuntime(
           selectedPage = null
           loginState = "unknown"
         }
+        notifyTaskInterrupted("微信小程序上传浏览器已关闭，当前任务已中断。")
       })
       for (const page of launched.pages()) bindPage(page)
       launched.on("page", bindPage)
@@ -189,17 +204,28 @@ export function startWechatMiniProgramDirectUploadRuntime(
       await refreshPageStatus(page)
     },
     async upload(input) {
-      const page = await getPage()
-      await ensureLoggedIn(page)
-      input.onAuthenticated?.()
-      await uploadEpisodeVideosOnly(page, {
-        resourceName: input.resourceName,
-        uploadBaseName: input.dramaName,
-        episodeCount: input.episodeCount,
-        episodeVideos: input.episodeVideos,
-        videoAccountLabel: "百度资源直传当前登录账号",
-        onProgress: input.onProgress,
-      })
+      taskActive = true
+      taskAuthenticated = false
+      try {
+        input.signal?.throwIfAborted()
+        const page = await getPage()
+        await ensureLoggedIn(page)
+        input.signal?.throwIfAborted()
+        taskAuthenticated = true
+        input.onAuthenticated?.()
+        await uploadEpisodeVideosOnly(page, {
+          resourceName: input.resourceName,
+          uploadBaseName: input.dramaName,
+          episodeCount: input.episodeCount,
+          episodeVideos: input.episodeVideos,
+          videoAccountLabel: "百度资源直传当前登录账号",
+          onProgress: input.onProgress,
+          signal: input.signal,
+        })
+      } finally {
+        taskActive = false
+        taskAuthenticated = false
+      }
     },
     closeBrowser,
     stop: closeBrowser,

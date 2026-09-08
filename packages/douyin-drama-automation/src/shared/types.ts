@@ -1,5 +1,4 @@
 import { z } from "zod";
-import type { OwnershipProjectProofAiClientProvider } from "@drama/drama-media-assets";
 
 export const douyinDramaUpdateStatusValues = ["已完结", "连载中"] as const;
 export const douyinDramaAudienceValues = ["男频", "女频", "通用"] as const;
@@ -132,7 +131,6 @@ export type DouyinDramaRuntimeOptions = {
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadWaitTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
-  ownershipProjectProofAiClientProvider?: OwnershipProjectProofAiClientProvider;
   config?: { browser?: { headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;
   ensureBaiduNetdiskResource?: (request: {

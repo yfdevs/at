@@ -36,9 +36,26 @@ import {
 import { runIqiyiPublishTask } from "../automation/publish-runner.js";
 
 type LastTask = IqiyiDramaRuntimeStatus["lastTask"];
+const iqiyiMaterialPreparationTimeoutMs = 15 * 60 * 1_000;
 
 function message(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+function withTimeout<T>(operation: Promise<T>, timeoutMs: number, errorCode: string): Promise<T> {
+  return new Promise<T>((resolve, reject) => {
+    const timer = setTimeout(() => reject(new Error(errorCode)), timeoutMs);
+    operation.then(
+      (value) => {
+        clearTimeout(timer);
+        resolve(value);
+      },
+      (error) => {
+        clearTimeout(timer);
+        reject(error);
+      },
+    );
+  });
 }
 
 function failStage(error: unknown, fallback: IqiyiDramaTaskFailStage) {
@@ -151,7 +168,13 @@ async function executeTask(
       },
       async () => {
         await ensureRemoteMaterials(task, options);
-        const materials = await prepareIqiyiMaterials(task, options);
+        const materials = await withTimeout(
+          prepareIqiyiMaterials(task, options),
+          iqiyiMaterialPreparationTimeoutMs,
+          `IQIYI_DRAMA_MATERIAL_PREPARATION_TIMEOUT: ${
+            iqiyiMaterialPreparationTimeoutMs / 60_000
+          } minutes`,
+        );
         await runIqiyiPublishTask(page, context, task, options, materials);
       },
     );

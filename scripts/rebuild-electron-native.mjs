@@ -16,6 +16,30 @@ const rebuildEnvironment = {
   npm_config_disturl: "https://electronjs.org/headers",
 };
 
+const verificationSource = [
+  'const Database = require("better-sqlite3")',
+  'const database = new Database(":memory:")',
+  'database.prepare("SELECT 1").get()',
+  'database.close()',
+].join(";");
+
+function verifyBetterSqlite3(stdio = "pipe") {
+  return spawnSync(electronExecutable, ["-e", verificationSource], {
+    cwd: projectRoot,
+    env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
+    stdio,
+  });
+}
+
+// Rebuilding an already compatible native module is unnecessary and fails on
+// Windows while a running development app has the DLL loaded. Verify first so
+// `pnpm install` remains safe to run with the app open.
+const existingVerificationResult = verifyBetterSqlite3();
+if (!existingVerificationResult.error && existingVerificationResult.status === 0) {
+  console.log("better-sqlite3 is already compatible with the installed Electron runtime.");
+  process.exit(0);
+}
+
 console.log(`Rebuilding better-sqlite3 for Electron ${electronVersion} (${process.platform}-${process.arch})...`);
 
 const rebuildResult = packageManagerScript
@@ -44,17 +68,7 @@ if (rebuildResult.status !== 0) {
   process.exit(rebuildResult.status ?? 1);
 }
 
-const verificationSource = [
-  'const Database = require("better-sqlite3")',
-  'const database = new Database(":memory:")',
-  'database.prepare("SELECT 1").get()',
-  'database.close()',
-].join(";");
-const verificationResult = spawnSync(electronExecutable, ["-e", verificationSource], {
-  cwd: projectRoot,
-  env: { ...process.env, ELECTRON_RUN_AS_NODE: "1" },
-  stdio: "inherit",
-});
+const verificationResult = verifyBetterSqlite3("inherit");
 
 if (verificationResult.error) {
   throw verificationResult.error;

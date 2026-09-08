@@ -38,7 +38,6 @@ export type ConfigTextField<TConfig> = {
   type?: "text" | "number" | "password" | "url";
   suffix?: string;
   directory?: boolean;
-  file?: boolean;
   min?: number;
   step?: number | string;
 };
@@ -233,7 +232,6 @@ export function ConfigSection<TConfig extends object>({
   footer,
   onChange,
   onSelectDirectory,
-  onSelectFile,
   section,
 }: {
   config: TConfig;
@@ -241,7 +239,6 @@ export function ConfigSection<TConfig extends object>({
   footer?: ReactNode;
   onChange?: (key: ConfigFieldKey<TConfig>, value: string) => void;
   onSelectDirectory?: (key: ConfigFieldKey<TConfig>) => void;
-  onSelectFile?: (key: ConfigFieldKey<TConfig>) => void;
   section: Pick<ConfigSectionDefinition<TConfig>, "description" | "title">;
 }) {
   const sectionFields = fields ?? [];
@@ -256,7 +253,6 @@ export function ConfigSection<TConfig extends object>({
             field={field}
             onChange={onChange}
             onSelectDirectory={onSelectDirectory}
-            onSelectFile={onSelectFile}
           />
         </div>
       ))}
@@ -299,13 +295,11 @@ function ConfigFieldControl<TConfig extends object>({
   field,
   onChange,
   onSelectDirectory,
-  onSelectFile,
 }: {
   config: TConfig;
   field: ConfigFieldDefinition<TConfig>;
   onChange?: (key: ConfigFieldKey<TConfig>, value: string) => void;
   onSelectDirectory?: (key: ConfigFieldKey<TConfig>) => void;
-  onSelectFile?: (key: ConfigFieldKey<TConfig>) => void;
 }) {
   const value = String(config[field.key] ?? "");
 
@@ -366,18 +360,6 @@ function ConfigFieldControl<TConfig extends object>({
                 aria-label={`选择${field.label}`}
                 className="text-xs"
                 onClick={() => onSelectDirectory?.(field.key)}
-              >
-                <Folder />
-                选择
-              </InputGroupButton>
-            </InputGroupAddon>
-          ) : null}
-          {field.file ? (
-            <InputGroupAddon align="inline-end">
-              <InputGroupButton
-                aria-label={`选择${field.label}`}
-                className="text-xs"
-                onClick={() => onSelectFile?.(field.key)}
               >
                 <Folder />
                 选择

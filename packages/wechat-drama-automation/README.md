@@ -41,7 +41,7 @@
 | `playlet.productionCost.amountWan` | 剧目制作成本 | `30` | 单位：万元。 |
 | `playlet.productionCost.proofFiles` | 剧目制作成本证明文件 | 示例文件数组 | 对应页面里的选择文件上传。 |
 | `playlet.otherMaterials` | 其他材料 | `[]` | 可上传多个文件。 |
-剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频`、`根目录/originalTitle/正片` 下的 `.mp4` 文件。源文件名支持 `originalTitle-第N集.mp4`、`originalTitle - 第N集.mp4`、`originalTitle 第N集.mp4`、`originalTitleNN.mp4`、`originalTitle NN.mp4`、`originalTitle-NN.mp4`、`originalTitle - NN.mp4` 和 `N.mp4`；`-` 前后空格可有可无，不再支持下划线分隔。上传前会在运行数据目录创建硬链接，并把上传文件名设为 `payloadJson.name-第N集.mp4`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
+剧集视频不从任务数据的 `episodes` 字段读取。设置 `localEpisodeVideoRoot` 后，程序使用领取接口返回的 `originalTitle`，扫描 `根目录/originalTitle` 以及 `根目录/originalTitle/成片`、`根目录/originalTitle/成品`、`根目录/originalTitle/视频`、`根目录/originalTitle/正片` 下的 `.mp4` 或 `.mov` 文件（后缀不区分大小写）。源文件名支持 `originalTitle-第N集.<后缀>`、`originalTitle - 第N集.<后缀>`、`originalTitle 第N集.<后缀>`、`originalTitleNN.<后缀>`、`originalTitle NN.<后缀>`、`originalTitle-NN.<后缀>`、`originalTitle - NN.<后缀>` 和 `N.<后缀>`；`-` 前后空格可有可无，不再支持下划线分隔。上传前会在运行数据目录创建硬链接，把上传文件名设为 `payloadJson.name-第N集.<原后缀>`；源视频和 `runDataDir` 需在同一磁盘分区。集数必须从 1 连续到 `playlet.episodeCount`，否则当前任务直接报错退出。
 
 微信会递归扫描 `根目录/originalTitle` 下名称包含“权属”或“工程”的目录，收集目录及其子目录中的 `png/jpg/jpeg/bmp/webp` 图片；能够读取出宽高且高度大于宽度的竖图会被排除，不作为权属文件。图片文件名、剧名、工程类型和编号均不作要求。任务包含百度网盘链接时，程序会将视频目录和完整权属目录分别下载，等待权属目录下载完成后再整理到本地标准目录。默认把筛选后的权属图片按数量平均分为两组并纵向合成为最多两张图片（例如 10 张拆为 5+5），与合同图片共同上传。明星说主体账号除外：忽略领取接口返回的合同图片，权属图片不拼接；至少需要 1 张，不超过 8 张时全部上传，超过 8 张时从筛选后的原始权属图片中无重复随机选取 8 张上传。百度网盘资源同样按至少 1 张有效权属图片校验，并关闭权属图片拼接。
 

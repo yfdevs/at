@@ -1,4 +1,4 @@
-import { Chrome, CircleDashed, Cog, Info, UserSettings } from "@mynaui/icons-react";
+import { Chrome, CircleDashed, Cog, Globe, Info } from "@mynaui/icons-react";
 import { useEffect, useMemo, useState } from "react";
 import { useLocation, useNavigate } from "react-router-dom";
 
@@ -222,6 +222,27 @@ export function AppRuntimeDock() {
         <TooltipTrigger
           render={
             <Button
+              aria-label="打开全局配置"
+              size="xs"
+              variant="ghost"
+              onClick={() => navigate(routePath(globalConfigRoute), {
+                state: { returnRoute: activeRoute },
+              })}
+            />
+          }
+        >
+          <Globe className="size-3.5" aria-hidden="true" />
+          <span>全局配置</span>
+        </TooltipTrigger>
+        <TooltipContent side="top" align="end" sideOffset={8}>
+          打开全局配置
+        </TooltipContent>
+      </Tooltip>
+      <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
+      <Tooltip>
+        <TooltipTrigger
+          render={
+            <Button
               size="xs"
               variant="ghost"
               onClick={() => navigate(routePath(activePlatform.configRoute))}
@@ -233,26 +254,6 @@ export function AppRuntimeDock() {
         </TooltipTrigger>
         <TooltipContent side="top" align="end" sideOffset={8}>
           打开{activePlatform.title}配置
-        </TooltipContent>
-      </Tooltip>
-      <span className="mx-0.5 h-4 w-px shrink-0 bg-border" aria-hidden="true" />
-      <Tooltip>
-        <TooltipTrigger
-          render={
-            <Button
-              aria-label="打开全局配置"
-              size="icon-xs"
-              variant="ghost"
-              onClick={() => navigate(routePath(globalConfigRoute), {
-                state: { returnRoute: activeRoute },
-              })}
-            />
-          }
-        >
-          <UserSettings className="size-3.5" aria-hidden="true" />
-        </TooltipTrigger>
-        <TooltipContent side="top" align="end" sideOffset={8}>
-          打开全局配置
         </TooltipContent>
       </Tooltip>
 

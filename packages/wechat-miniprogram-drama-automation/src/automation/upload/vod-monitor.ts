@@ -22,6 +22,8 @@ export interface VodUploadProgressContext {
   maxRetryAttempts?: number;
   startedAt?: number;
   totalTimeoutMs?: number;
+  signal?: AbortSignal;
+  writeReport?: boolean;
 }
 
 interface PageUploadProgress {
@@ -32,6 +34,14 @@ interface PageUploadProgress {
 
 const failedUploadPattern = /上传失败|未能上传|上传异常|上传出错/;
 const retryStateWaitMs = 30_000;
+const missingUploadPageTimeoutMs = 30_000;
+
+function interruptionError(signal?: AbortSignal, fallback = "上传任务已终止。"): Error {
+  if (signal?.reason instanceof Error) return signal.reason;
+  const error = new Error(fallback);
+  error.name = "AbortError";
+  return error;
+}
 
 function parseJsonPayload(value: string | null): unknown {
   if (!value) return null;
@@ -269,6 +279,9 @@ export async function monitorEpisodeVodUploads(
   timeout = minutesToMs(120),
   progressContext: VodUploadProgressContext = {},
 ): Promise<VodUploadReport> {
+  if (progressContext.signal?.aborted) {
+    throw interruptionError(progressContext.signal);
+  }
   const observationsById = new Map<string, VodUploadObservation>();
   const successesByFile = new Map<string, VodUploadSuccess>();
   const failures: VodUploadFailure[] = [];
@@ -303,6 +316,7 @@ export async function monitorEpisodeVodUploads(
     let actionDone = false;
     let readingPageProgress = false;
     let lastPageProgressSignature = "";
+    let missingPageProgressSince: number | undefined;
     const timer = setTimeout(() => {
       finish(new Error(
         `[upload-failed] 剧集上传超时：总等待时间达到 ${Math.round(totalTimeout / 60000)} 分钟后仍未完成，`
@@ -314,7 +328,15 @@ export async function monitorEpisodeVodUploads(
       readingPageProgress = true;
       void readPageUploadProgress(page)
         .then(async (pageProgress) => {
-          if (settled || !pageProgress) return;
+          if (settled) return;
+          if (!pageProgress) {
+            missingPageProgressSince ??= Date.now();
+            if (Date.now() - missingPageProgressSince >= missingUploadPageTimeoutMs) {
+              finish(new Error("[upload-interrupted] 上传页面已离开或不再可用，任务已中断。"));
+            }
+            return;
+          }
+          missingPageProgressSince = undefined;
           if (pageProgress.signature !== lastPageProgressSignature) {
             lastPageProgressSignature = pageProgress.signature;
             vodLogger.info("video upload progress", progressFields(pageProgress.summary));
@@ -350,6 +372,8 @@ export async function monitorEpisodeVodUploads(
       clearInterval(progressTimer);
       page.off("request", onRequest);
       page.off("response", onResponse);
+      page.off("close", onPageClose);
+      progressContext.signal?.removeEventListener("abort", onAbort);
     };
 
     const finish = (error?: Error) => {
@@ -358,7 +382,11 @@ export async function monitorEpisodeVodUploads(
       cleanup();
       const report = buildReport();
       if (error) {
-        void writeVodUploadReport(report).finally(() => reject(error));
+        if (progressContext.writeReport === false) {
+          reject(error);
+          return;
+        }
+        void writeVodUploadReport(report).catch(() => undefined).finally(() => reject(error));
         return;
       }
       void writeVodUploadReport(report).finally(() => resolve(report));
@@ -422,8 +450,18 @@ export async function monitorEpisodeVodUploads(
         });
     };
 
+    const onPageClose = () => {
+      finish(new Error("[upload-interrupted] 上传页面或浏览器已关闭，任务已中断。"));
+    };
+
+    const onAbort = () => {
+      finish(interruptionError(progressContext.signal));
+    };
+
     page.on("request", onRequest);
     page.on("response", onResponse);
+    page.on("close", onPageClose);
+    progressContext.signal?.addEventListener("abort", onAbort, { once: true });
     vodLogger.info("开始监控剧集上传进度", progressFields(
       `等待本批次 ${expectedCount} 个文件上传，单文件最多重试 ${maxRetryAttempts} 次`,
     ));

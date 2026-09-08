@@ -17,6 +17,30 @@ import type { WechatMiniProgramDirectUploadTask } from "../../storage/wechat-min
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const directUploadWindowMode = "wechat-miniprogram-baidu-upload"
 
+function taskInterruptionError(message: string): Error {
+  const error = new Error(message)
+  error.name = "AbortError"
+  return error
+}
+
+function abortable<T>(promise: Promise<T>, signal: AbortSignal): Promise<T> {
+  if (signal.aborted) {
+    return Promise.reject(
+      signal.reason instanceof Error ? signal.reason : taskInterruptionError("任务已终止。"),
+    )
+  }
+
+  return new Promise<T>((resolve, reject) => {
+    const onAbort = () => reject(
+      signal.reason instanceof Error ? signal.reason : taskInterruptionError("任务已终止。"),
+    )
+    signal.addEventListener("abort", onAbort, { once: true })
+    void promise.then(resolve, reject).finally(() => {
+      signal.removeEventListener("abort", onAbort)
+    })
+  })
+}
+
 type DirectUploadSettings = Partial<WechatMiniProgramRuntimeSettings> & {
   localEpisodeVideoRoot: string
   runDataDir: string
@@ -43,6 +67,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
   private queueRunning = false
   private queueError: string | undefined
   private activeTaskId: string | undefined
+  private activeTaskAbortController: AbortController | null = null
   private workerPromise: Promise<void> | null = null
   private window: BrowserWindow | null = null
 
@@ -102,6 +127,13 @@ export class WechatMiniProgramDirectUploadCoordinator {
       this.broadcast()
       return this.workspace()
     })
+    ipcMain.handle("wechat-miniprogram-drama:baidu-upload:task:cancel-active", async () => {
+      if (!this.activeTaskId) throw new Error("当前没有正在执行的任务。")
+      this.interruptActiveTask("用户已终止当前任务。")
+      await this.runtime?.closeBrowser().catch(() => undefined)
+      this.broadcast()
+      return this.workspace()
+    })
     ipcMain.handle("wechat-miniprogram-drama:baidu-upload:browser:focus", async () => {
       await this.focusBrowser()
       return this.workspace()
@@ -151,6 +183,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
 
   async stop(): Promise<void> {
     this.queueRunning = false
+    this.interruptActiveTask("应用正在退出，当前任务已中断。")
     await this.runtime?.stop().catch(() => undefined)
     this.runtime = null
     this.window?.destroy()
@@ -218,16 +251,27 @@ export class WechatMiniProgramDirectUploadCoordinator {
       }
 
       this.activeTaskId = task.id
+      const abortController = new AbortController()
+      this.activeTaskAbortController = abortController
       this.broadcast()
-      await this.processTask(task)
-      this.activeTaskId = undefined
-      this.broadcast()
+      try {
+        await this.processTask(task, abortController.signal)
+      } finally {
+        if (this.activeTaskAbortController === abortController) {
+          this.activeTaskAbortController = null
+        }
+        if (this.activeTaskId === task.id) this.activeTaskId = undefined
+        this.broadcast()
+      }
     }
     this.activeTaskId = undefined
     this.broadcast()
   }
 
-  private async processTask(task: WechatMiniProgramDirectUploadTask): Promise<void> {
+  private async processTask(
+    task: WechatMiniProgramDirectUploadTask,
+    signal: AbortSignal,
+  ): Promise<void> {
     const logger = this.logger(task)
     const startedAt = new Date().toISOString()
     try {
@@ -243,19 +287,26 @@ export class WechatMiniProgramDirectUploadCoordinator {
       this.repository.update(task.id, { state: "downloading" })
       this.broadcast()
       logger.info("开始检查并下载百度网盘剧集")
-      const download = await ensureBaiduNetdiskShareDownloaded({
+      signal.throwIfAborted()
+      const rememberedEpisodeCount = Number(task.inferredEpisodeCount)
+      const hasRememberedEpisodeCount = Number.isInteger(rememberedEpisodeCount)
+        && rememberedEpisodeCount > 0
+      const download = await abortable(ensureBaiduNetdiskShareDownloaded({
         requesterPlatform: "wechat-miniprogram-drama-direct-upload",
         shareText: task.shareText,
         resourceName: task.dramaName,
         localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
-        inferEpisodeCount: true,
+        episodeCount: hasRememberedEpisodeCount ? rememberedEpisodeCount : undefined,
+        inferEpisodeCount: !hasRememberedEpisodeCount,
         downloadEpisodeVideos: true,
         downloadAssetMaterials: false,
         requiredOwnership: { minimumImages: 0 },
         requiredOwnershipFiles: 0,
         requiredPosterImages: 0,
         requiredAiProductionProofFiles: 0,
-      })
+        signal,
+      }), signal)
+      signal.throwIfAborted()
       const episodeCount = Number(download.episodeCount)
       if (!Number.isInteger(episodeCount) || episodeCount <= 0) {
         throw new Error("百度网盘资源下载完成，但未能确定有效总集数。")
@@ -280,6 +331,12 @@ export class WechatMiniProgramDirectUploadCoordinator {
           `本地下载后的剧集校验失败：期望1-${episodeCount}，实际${episodeIndexes.join("、") || "无"}。`,
         )
       }
+      this.repository.update(task.id, {
+        inferredEpisodeCount: episodeCount,
+        episodeIndexes,
+        localPath: download.localPath,
+      })
+      this.broadcast()
 
       const maxFileMegabytes = Math.max(
         1,
@@ -299,7 +356,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
         ),
         onLog: (message) => logger.info(message),
       })
-      const episodeVideos = await prepareEpisodeVideos({
+      const episodeVideos = await abortable(prepareEpisodeVideos({
         episodes: downloadedEpisodeVideos,
         queue: videoTranscodeQueue,
         cacheRootDir: path.join(
@@ -317,8 +374,10 @@ export class WechatMiniProgramDirectUploadCoordinator {
           ),
         },
         replaceSource: true,
+        signal,
         onLog: (message) => logger.info(message),
-      })
+      }), signal)
+      signal.throwIfAborted()
 
       this.repository.update(task.id, {
         state: "waiting-login",
@@ -331,11 +390,12 @@ export class WechatMiniProgramDirectUploadCoordinator {
       this.broadcast()
 
       const runtime = await this.ensureRuntime()
-      await runtime.upload({
+      await abortable(runtime.upload({
         resourceName: task.dramaName,
         dramaName: task.dramaName,
         episodeCount,
         episodeVideos,
+        signal,
         onAuthenticated: () => {
           this.repository.update(task.id, {
             state: "uploading",
@@ -351,7 +411,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
           })
           this.broadcast()
         },
-      })
+      }), signal)
 
       this.repository.update(task.id, {
         state: "completed",
@@ -362,15 +422,26 @@ export class WechatMiniProgramDirectUploadCoordinator {
       logger.info("百度资源直传任务完成", { episodeCount })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
+      const interrupted = signal.aborted
+        || (error instanceof Error && error.name === "AbortError")
+        || /\[(?:upload-)?interrupted\]/i.test(message)
       const loginRequired = this.runtime?.getStatus().loginState === "login-required"
         || /登录|login/i.test(message)
-      this.repository.update(task.id, {
-        state: loginRequired ? "interrupted" : "failed",
-        error: message,
-        finishedAt: new Date().toISOString(),
-      })
-      if (loginRequired) this.queueRunning = false
-      logger.error("百度资源直传任务失败", { errorMessage: message })
+      const targetState = interrupted || loginRequired ? "interrupted" : "failed"
+      const alreadyRecorded = this.repository.findById(task.id)?.state === targetState
+      if (!alreadyRecorded) {
+        this.repository.update(task.id, {
+          state: targetState,
+          error: message,
+          finishedAt: new Date().toISOString(),
+        })
+        if (interrupted || loginRequired) {
+          logger.warn("百度资源直传任务已中断", { errorMessage: message })
+        } else {
+          logger.error("百度资源直传任务失败", { errorMessage: message })
+        }
+      }
+      if (interrupted || loginRequired) this.queueRunning = false
     }
   }
 
@@ -395,6 +466,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
         "auth",
         "baidu-direct-upload",
       ),
+      onTaskInterrupted: (reason) => this.interruptActiveTask(reason),
     })
     return this.runtime
   }
@@ -450,6 +522,26 @@ export class WechatMiniProgramDirectUploadCoordinator {
         workspace,
       )
     }
+  }
+
+  private interruptActiveTask(reason: string): void {
+    const taskId = this.activeTaskId
+    if (!taskId || this.activeTaskAbortController?.signal.aborted) return
+
+    this.queueRunning = false
+    this.queueError = reason
+    const error = taskInterruptionError(reason)
+    this.activeTaskAbortController?.abort(error)
+    const task = this.repository.findById(taskId)
+    if (task && !["completed", "failed", "interrupted"].includes(task.state)) {
+      this.repository.update(taskId, {
+        state: "interrupted",
+        error: reason,
+        finishedAt: new Date().toISOString(),
+      })
+      this.logger(task).warn("百度资源直传任务已中断", { errorMessage: reason })
+    }
+    this.broadcast()
   }
 
   private logger(task: WechatMiniProgramDirectUploadTask) {

@@ -16,6 +16,7 @@ export interface EpisodeUploadStepOptions {
   episodeVideos?: PreparedEpisodeVideo[];
   videoAccountLabel?: string;
   onProgress?: (progress: { completed: number; total: number }) => void;
+  signal?: AbortSignal;
 }
 
 export interface EpisodeVideosOnlyInput extends EpisodeUploadStepOptions {
@@ -107,6 +108,7 @@ export async function uploadEpisodeVideosOnly(
   page: Page,
   input: EpisodeVideosOnlyInput,
 ): Promise<void> {
+  input.signal?.throwIfAborted();
   uploadLogger.info("正在准备本地剧集视频", {
     title: input.uploadBaseName,
     episodeCount: input.episodeCount,
@@ -121,6 +123,7 @@ export async function uploadEpisodeVideosOnly(
     uploadBaseName: input.uploadBaseName,
     episodes: input.episodeVideos,
   });
+  input.signal?.throwIfAborted();
 
   try {
     const videoFiles = prepared.files;
@@ -146,6 +149,7 @@ export async function uploadEpisodeVideosOnly(
     });
 
     for (let batchIndex = 0; batchIndex < batches.length; batchIndex += 1) {
+      input.signal?.throwIfAborted();
       const batch = batches[batchIndex];
       if (batchIndex > 0) {
         await gotoMiniProgramPage(page, uploadPagePath);
@@ -187,6 +191,7 @@ export async function uploadEpisodeVideosOnly(
           maxRetryAttempts: episodeUploadFailedRetryAttempts(),
           startedAt: uploadStartedAt,
           totalTimeoutMs: uploadTimeout,
+          signal: input.signal,
         },
       );
       if (report.successes.length !== batch.length) {
@@ -225,7 +230,7 @@ function escapedRegex(value: string): string {
 
 function episodeIndexFromFileName(fileName: string, playletName: string): number | null {
   const match = normalizeUiText(fileName).match(
-    new RegExp(`^${escapedRegex(playletName)}-第([1-9]\\d*)集\\.mp4$`, "i"),
+    new RegExp(`^${escapedRegex(playletName)}-第([1-9]\\d*)集\\.(?:mp4|mov)$`, "i"),
   );
   return match ? Number(match[1]) : null;
 }
@@ -255,7 +260,7 @@ async function episodeLibraryRowSnapshots(table: Locator): Promise<EpisodeLibrar
     const cells = Array.from(element.querySelectorAll("td"));
     const fileNameCell = element.querySelector("td.media-table-row.col2")
       ?? element.querySelector("td.table-name")
-      ?? cells.find((cell) => /\.mp4(?:\s|$)/i.test(cell.textContent ?? ""))
+      ?? cells.find((cell) => /\.(?:mp4|mov)(?:\s|$)/i.test(cell.textContent ?? ""))
       ?? cells[1]
       ?? cells[0];
     const checkbox = element.querySelector<HTMLInputElement>('input[type="checkbox"]');
@@ -280,7 +285,7 @@ async function episodeFileNameFromRow(row: Locator): Promise<string> {
     const cells = Array.from(element.querySelectorAll("td"));
     const preferredCell = element.querySelector("td.media-table-row.col2")
       ?? element.querySelector("td.table-name")
-      ?? cells.find((cell) => /\.mp4(?:\s|$)/i.test(cell.textContent ?? ""))
+      ?? cells.find((cell) => /\.(?:mp4|mov)(?:\s|$)/i.test(cell.textContent ?? ""))
       ?? cells[1]
       ?? cells[0];
     return {

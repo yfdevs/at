@@ -79,6 +79,9 @@ export const wechatMiniProgramBaiduUploadService = {
   pauseQueue() {
     return invoke("wechat-miniprogram-drama:baidu-upload:queue:pause")
   },
+  cancelActiveTask() {
+    return invoke("wechat-miniprogram-drama:baidu-upload:task:cancel-active")
+  },
   focusBrowser() {
     return invoke("wechat-miniprogram-drama:baidu-upload:browser:focus")
   },
