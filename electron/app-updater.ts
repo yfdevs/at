@@ -249,7 +249,7 @@ function getAutoUpdater() {
   } catch (error) {
     autoUpdaterInstance = null;
     autoUpdaterLoadError = readableError(error);
-    logMain("error", "自动更新模块加载失败", error);
+    logMain("error", "Failed to load auto-update module", error);
   }
 
   return autoUpdaterInstance;
@@ -315,7 +315,7 @@ async function probeUpdateSources(sources: readonly AppUpdateSource[]) {
         results.push(result);
       } catch (error) {
         recordSourceFailure(source.id);
-        logMain("warn", "应用更新源探测失败", {
+        logMain("warn", "Failed to probe application update source", {
           sourceId: source.id,
           error: readableError(error),
         });
@@ -382,7 +382,7 @@ async function selectAutomaticUpdateSource(excluded = new Set<AppUpdateSourceId>
     throw new Error("所有自动更新源当前均不可用。");
   }
   getStore().set("sourceId", selected.source.id);
-  logMain("info", "已自动选择应用更新源", {
+  logMain("info", "Auto-selected application update source", {
     sourceId: selected.source.id,
     latencyMs: selected.latencyMs,
     version: selected.version,
@@ -405,7 +405,7 @@ function scheduleAutomaticUpdate(delayMs: number) {
   automaticUpdateTimer = setTimeout(() => {
     automaticUpdateTimer = null;
     void checkForAppUpdate(true).catch((error) => {
-      logMain("error", "自动检查应用更新失败", error);
+      logMain("error", "Automatic application update check failed", error);
       scheduleAfterAutomaticFailure();
     });
   }, delayMs);
@@ -546,7 +546,7 @@ async function performAppUpdateCheck(automatic: boolean) {
       && autoDownloadSuppressedVersion !== availableUpdateInfo.version
     ) {
       void downloadAppUpdate(true).catch((error) => {
-        logMain("error", "自动下载应用更新失败", error);
+        logMain("error", "Automatic application update download failed", error);
       });
     } else if (status?.state !== "downloaded") {
       scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
@@ -894,7 +894,7 @@ function applySelectedUpdateSource(
     url: source.url,
     channel: "latest",
   });
-  logMain("info", "应用更新源已配置", {
+  logMain("info", "Application update source configured", {
     sourceId: source.id,
     url: source.url,
   });

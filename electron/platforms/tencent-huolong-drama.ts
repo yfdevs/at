@@ -374,7 +374,7 @@ export function registerTencentHuolongDramaPlatformHandlers() {
   ipcMain.handle("tencent-huolong-drama:service:start", async () => {
     assertGlobalDirectoriesConfigured();
     await controller.start(startRuntime);
-    platformLogger().info("腾讯火龙漫剧服务已启动");
+    platformLogger().info("Tencent Huolong drama service started");
     return status();
   });
   ipcMain.handle("tencent-huolong-drama:service:stop", async () => {

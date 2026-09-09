@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import {
   kuaishouDramaTaskSchema,
   type ClaimedKuaishouDramaTask,
@@ -235,6 +236,7 @@ export async function reportKuaishouDramaTaskErrorApi(
     errorMessage: string;
   },
 ) {
+  if (isBrowserClosedError(options.errorMessage)) return;
   await report({
     ...options,
     taskId: options.accountTaskId,

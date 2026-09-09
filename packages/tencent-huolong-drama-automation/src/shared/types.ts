@@ -20,7 +20,6 @@ export const tencentHuolongTaskPayloadSchema = z.object({
   themeType: z.enum(tencentHuolongThemeValues),
   costAnalysisFiles: z.array(fileReference).default([]),
   copyrightProofFiles: z.array(fileReference).default([]),
-  nonInfringementCommitmentFiles: z.array(fileReference).default([]),
   productionProcessFiles: z.array(fileReference).default([]),
 }).passthrough();
 

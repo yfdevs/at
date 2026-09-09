@@ -286,7 +286,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
 
       this.repository.update(task.id, { state: "downloading" })
       this.broadcast()
-      logger.info("开始检查并下载百度网盘剧集及可选素材")
+      logger.info("Start checking and downloading Baidu Netdisk episodes and optional materials")
       signal.throwIfAborted()
       const rememberedEpisodeCount = Number(task.inferredEpisodeCount)
       const hasRememberedEpisodeCount = Number.isInteger(rememberedEpisodeCount)
@@ -432,7 +432,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
         uploadTotalCount: episodeCount,
         finishedAt: new Date().toISOString(),
       })
-      logger.info("百度资源直传任务完成", { episodeCount })
+      logger.info("Baidu direct upload task completed", { episodeCount })
     } catch (error) {
       const message = error instanceof Error ? error.message : String(error)
       const interrupted = signal.aborted
@@ -449,9 +449,9 @@ export class WechatMiniProgramDirectUploadCoordinator {
           finishedAt: new Date().toISOString(),
         })
         if (interrupted || loginRequired) {
-          logger.warn("百度资源直传任务已中断", { errorMessage: message })
+          logger.warn("Baidu direct upload task interrupted", { errorMessage: message })
         } else {
-          logger.error("百度资源直传任务失败", { errorMessage: message })
+          logger.error("Baidu direct upload task failed", { errorMessage: message })
         }
       }
       if (interrupted || loginRequired) this.queueRunning = false
@@ -552,7 +552,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
         error: reason,
         finishedAt: new Date().toISOString(),
       })
-      this.logger(task).warn("百度资源直传任务已中断", { errorMessage: reason })
+      this.logger(task).warn("Baidu direct upload task interrupted", { errorMessage: reason })
     }
     this.broadcast()
   }

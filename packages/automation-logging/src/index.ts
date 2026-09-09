@@ -25,6 +25,30 @@ export type AutomationLogEntry = {
 
 export type AutomationLogInput = string | AutomationLogEntry;
 
+const browserClosedErrorPattern =
+  /Target (?:page, context or browser|page|context|browser) has been closed|Target closed|(?:page|context|browser) (?:has been|was|is) closed|browser has disconnected|(?:页面|浏览器|上传页面)(?:或浏览器)?已关闭/i;
+
+export function isBrowserClosedError(error: unknown): boolean {
+  let current = error;
+  const seen = new Set<unknown>();
+  for (let depth = 0; depth < 5 && current !== undefined && current !== null; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    const message = current instanceof Error
+      ? `${current.name}: ${current.message}`
+      : typeof current === "string"
+        ? current
+        : typeof current === "object" && "message" in current
+          ? String((current as { message?: unknown }).message ?? "")
+          : String(current);
+    if (browserClosedErrorPattern.test(message)) return true;
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : undefined;
+  }
+  return false;
+}
+
 export type AutomationLogMethod = {
   (message: string, fields?: AutomationLogFields): void;
   (fields: AutomationLogFields, message: string): void;

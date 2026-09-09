@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import {
   claimedTencentHuolongDramaTaskSchema,
   type ClaimedTencentHuolongDramaTask,
@@ -10,13 +11,11 @@ import { ensureLocalTencentHuolongMockFiles } from "./local-mock-files.js";
 
 const useLocalMockTaskSource = true;
 
-// Structural placeholders keep the synchronous mock-task factory useful in
-// validation tests. claimNextTencentHuolongDramaTask replaces both with locally
-// generated, valid test PDFs before the task enters the automation runtime.
+// A structural placeholder keeps the synchronous mock-task factory useful in
+// validation tests. claimNextTencentHuolongDramaTask replaces it with a locally
+// generated, valid test PDF before the task enters the automation runtime.
 const localMockCostAnalysisFile =
   "https://example.invalid/tencent-huolong/replace-with-cost-analysis-commitment.pdf";
-const localMockNonInfringementCommitmentFile =
-  "https://example.invalid/tencent-huolong/replace-with-non-infringement-commitment.pdf";
 
 const localMockTask = claimedTencentHuolongDramaTaskSchema.parse({
   accountTaskId: 900001,
@@ -36,7 +35,6 @@ const localMockTask = claimedTencentHuolongDramaTaskSchema.parse({
     themeType: "都市",
     costAnalysisFiles: [localMockCostAnalysisFile],
     copyrightProofFiles: [],
-    nonInfringementCommitmentFiles: [localMockNonInfringementCommitmentFile],
     productionProcessFiles: [],
   },
 });
@@ -50,7 +48,6 @@ export function getLocalTencentHuolongDramaTask(): ClaimedTencentHuolongDramaTas
       ...localMockTask.playlet,
       costAnalysisFiles: [...localMockTask.playlet.costAnalysisFiles],
       copyrightProofFiles: [...localMockTask.playlet.copyrightProofFiles],
-      nonInfringementCommitmentFiles: [...localMockTask.playlet.nonInfringementCommitmentFiles],
       productionProcessFiles: [...localMockTask.playlet.productionProcessFiles],
     },
   };
@@ -149,9 +146,6 @@ function normalizeTask(
         ),
         ...files(copyright.licenseProofFiles),
       ],
-      nonInfringementCommitmentFiles: files(
-        playlet.nonInfringementCommitmentFiles ?? copyright.nonInfringementCommitmentFiles,
-      ),
       productionProcessFiles: files(playlet.productionProcessFiles ?? production.processFiles),
     },
   });
@@ -166,7 +160,6 @@ export async function claimNextTencentHuolongDramaTask(
     const task = getLocalTencentHuolongDramaTask();
     const mockFiles = await ensureLocalTencentHuolongMockFiles(options);
     task.playlet.costAnalysisFiles = [mockFiles.costAnalysisFile];
-    task.playlet.nonInfringementCommitmentFiles = [mockFiles.nonInfringementFile];
     localMockTaskClaimed = true;
     return task;
   }
@@ -204,6 +197,7 @@ export async function reportTencentHuolongDramaTask(
     resultJson?: Record<string, unknown>;
   },
 ) {
+  if (options.status === "FAILED" && isBrowserClosedError(options.errorMessage)) return;
   if (useLocalMockTaskSource) {
     // 本地模拟模式没有远端任务，因此不需要回写任务状态。
     return;

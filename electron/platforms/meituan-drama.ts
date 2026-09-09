@@ -306,18 +306,18 @@ async function cleanupPreviousMeituanCopyrightProofs(now = new Date()) {
         retryDelay: 500,
       });
       deletedCount += 1;
-      meituanPlatformLogger("storage").info("已删除过期版权材料", { path: taskDir });
+      meituanPlatformLogger("storage").info("Deleted expired copyright materials", { path: taskDir });
     }
   }
 
-  meituanPlatformLogger("storage").info("过期版权材料清理完成", { deletedCount });
+  meituanPlatformLogger("storage").info("Expired copyright materials cleanup completed", { deletedCount });
 }
 
 function scheduleMeituanCopyrightProofCleanup() {
   if (contractCleanupTask) return;
   contractCleanupTask = cron.schedule("0 1 * * *", async () => {
     await cleanupPreviousMeituanCopyrightProofs().catch((error: unknown) => {
-      meituanPlatformLogger("storage").error("过期版权材料清理失败", { error });
+      meituanPlatformLogger("storage").error("Expired copyright materials cleanup failed", { error });
     });
   }, {
     name: "meituan-copyright-proof-cleanup",
@@ -325,8 +325,8 @@ function scheduleMeituanCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   });
-  meituanPlatformLogger("storage").info("版权材料定时清理已启用", {
-    schedule: "每天 01:00",
+  meituanPlatformLogger("storage").info("Copyright materials scheduled cleanup enabled", {
+    schedule: "daily at 01:00",
   });
 }
 
@@ -344,7 +344,7 @@ async function startRuntime() {
     startMeituanCreationRuntime,
   } = await import("@drama/meituan-drama-automation");
   const accounts = await fetchMeituanCreationAccounts(config.apiBaseUrl);
-  meituanPlatformLogger("account").info("已加载启用账号", {
+  meituanPlatformLogger("account").info("Loaded enabled accounts", {
     count: accounts.length,
     accounts: accounts.map((account) => ({ id: account.accountId, name: account.accountName })),
   });

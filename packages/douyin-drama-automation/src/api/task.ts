@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import {
   claimedDouyinDramaTaskSchema,
   type ClaimedDouyinDramaTask,
@@ -156,5 +157,6 @@ export async function reportDouyinDramaTaskErrorApi(
     errorMessage: string;
   },
 ): Promise<void> {
+  if (isBrowserClosedError(options.errorMessage)) return;
   void options;
 }

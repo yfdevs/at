@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import { createLogger } from "../shared/logger.js";
 import { PINDUODUO_DEFAULT_COPYRIGHT_EXPIRE_TIME } from "../shared/constants.js";
 import {
@@ -370,6 +371,7 @@ export async function reportPinduoduoDramaTaskSuccessApi(
 export async function reportPinduoduoDramaTaskErrorApi(
   report: PinduoduoDramaTaskErrorReport,
 ): Promise<void> {
+  if (isBrowserClosedError(report.errorMessage)) return;
   const failStage = z.enum(pinduoduoDramaTaskFailStageValues).parse(report.failStage);
   if (shouldUseMockTaskApi(report)) {
     logger.info("mock fail callback skipped", {

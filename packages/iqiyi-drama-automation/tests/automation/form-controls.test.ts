@@ -101,6 +101,111 @@ test("uploads every production proof file to the intellectual-property declarati
   }
 });
 
+test("finds an upload input by field semantics when upload-slot class is absent", { timeout: 15000 }, async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <section class="modern-proof-field">
+        <div><span>知识产权声明文件</span></div>
+        <div class="modern-proof-control"><input id="modern-production-proofs" type="file" multiple></div>
+      </section>
+    `);
+
+    await uploadIqiyiFiles(page, {}, {
+      aliases: ["知识产权声明文件"],
+      files: proofFiles,
+      required: true,
+    });
+    const productionNames = await page.locator("#modern-production-proofs").evaluate(
+      (element) => Array.from((element as HTMLInputElement).files ?? [], (file) => file.name),
+    );
+    assert.deepEqual(productionNames, ["知识产权声明-1.jpg", "知识产权声明-2.jpg"]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("uses a file chooser when the upload input is created only after clicking", { timeout: 20000 }, async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <section class="modern-proof-field">
+        <span>知识产权声明文件</span>
+        <button id="choose-production-proofs" type="button">上传文件</button>
+      </section>
+      <script>
+        document.querySelector('#choose-production-proofs').addEventListener('click', () => {
+          let input = document.querySelector('#dynamic-production-proofs');
+          if (!input) {
+            input = document.createElement('input');
+            input.id = 'dynamic-production-proofs';
+            input.type = 'file';
+            input.multiple = true;
+            input.hidden = true;
+            document.querySelector('.modern-proof-field').appendChild(input);
+          }
+          input.click();
+        });
+      </script>
+    `);
+
+    await uploadIqiyiFiles(page, {}, {
+      aliases: ["知识产权声明文件"],
+      files: proofFiles,
+      required: true,
+    });
+    const productionNames = await page.locator("#dynamic-production-proofs").evaluate(
+      (element) => Array.from((element as HTMLInputElement).files ?? [], (file) => file.name),
+    );
+    assert.deepEqual(productionNames, ["知识产权声明-1.jpg", "知识产权声明-2.jpg"]);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("waits for a lazily rendered upload field", { timeout: 20000 }, async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <main id="qualification-section"></main>
+      <script>
+        window.setTimeout(() => {
+          document.querySelector('#qualification-section').innerHTML =
+            '<div class="async-proof-field"><span>知识产权声明文件</span>'
+            + '<input id="async-production-proofs" type="file" multiple></div>';
+        }, 700);
+      </script>
+    `);
+
+    await uploadIqiyiFiles(page, {}, {
+      aliases: ["知识产权声明文件"],
+      files: proofFiles,
+      required: true,
+    });
+    const productionNames = await page.locator("#async-production-proofs").evaluate(
+      (element) => Array.from((element as HTMLInputElement).files ?? [], (file) => file.name),
+    );
+    assert.deepEqual(productionNames, ["知识产权声明-1.jpg", "知识产权声明-2.jpg"]);
+  } finally {
+    await browser.close();
+  }
+});
+
 test("selects the fixed no-company values through custom mp-radio controls", {
   timeout: 15000,
 }, async () => {

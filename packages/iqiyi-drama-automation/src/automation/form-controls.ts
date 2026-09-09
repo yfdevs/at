@@ -432,20 +432,121 @@ export async function fillIqiyiTags(
 }
 
 async function fileInput(root: Locator) {
-  const input = root.locator("input[type='file']").first();
+  const input = root.locator("input[type='file']:not([disabled])").last();
   return await input.count() > 0 ? input : null;
 }
 
-async function visibleUploadField(page: Page, aliases: readonly string[]) {
+async function uploadTrigger(root: Locator) {
+  const namedButton = root.getByRole("button", { name: /上传|添加|选择/u })
+    .filter({ visible: true }).last();
+  if (await namedButton.count() > 0) return namedButton;
+
+  const namedControl = root.locator([
+    "label[for]",
+    "[role='button']",
+    ".mp-upload",
+    "[class*='upload-trigger']",
+    "[class*='uploadTrigger']",
+    "[class*='upload-btn']",
+    "[class*='uploadBtn']",
+    "[class*='upload-button']",
+    "[class*='uploadButton']",
+    "[class*='upload-add']",
+    "[class*='uploadAdd']",
+  ].join(",")).filter({ visible: true }).last();
+  return await namedControl.count() > 0 ? namedControl : null;
+}
+
+async function visibleUploadFieldOnce(page: Page, aliases: readonly string[]) {
   for (const alias of aliases) {
     const title = page.getByText(alias, { exact: true }).filter({ visible: true }).last();
     if (await title.count() === 0) continue;
+
+    // 优先按控件语义反查祖先，不依赖爱奇艺可能随版本变化的 class 名。
+    const inputRoot = title.locator(
+      "xpath=ancestor::*[self::div or self::section or self::li][.//input[@type='file']][1]",
+    );
+    if (await inputRoot.count() > 0) return inputRoot;
+
     const uploadSlot = title.locator(
       "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' upload-slot ')][1]",
     );
     if (await uploadSlot.count() > 0) return uploadSlot;
+
+    // 新版上传器可能仅渲染按钮，点击后才动态创建 input 或触发 filechooser。
+    const triggerRoot = title.locator(
+      "xpath=ancestor::*[self::div or self::section or self::li]"
+        + "[.//button or .//*[@role='button'] or .//label[@for]][1]",
+    );
+    if (await triggerRoot.count() > 0) return triggerRoot;
   }
   return visibleField(page, aliases);
+}
+
+async function visibleUploadField(page: Page, aliases: readonly string[], timeoutMs = 15_000) {
+  const deadline = Date.now() + timeoutMs;
+  let lastRoot: Locator | null = null;
+  while (Date.now() < deadline) {
+    const root = await visibleUploadFieldOnce(page, aliases);
+    if (root) {
+      lastRoot = root;
+      if (await fileInput(root) || await uploadTrigger(root)) return root;
+    }
+    await page.waitForTimeout(250);
+  }
+  return lastRoot;
+}
+
+async function uploadInputDiagnostic(page: Page, root: Locator | null) {
+  const [pageInputCount, fieldText] = await Promise.all([
+    page.locator("input[type='file']").count().catch(() => -1),
+    root?.innerText().then((text) => normalizeText(text).slice(0, 160)).catch(() => "")
+      ?? Promise.resolve(""),
+  ]);
+  return `fieldFound=${root !== null}; pageFileInputs=${pageInputCount}; fieldText=${fieldText || "-"}`;
+}
+
+async function setNextUploadBatch(
+  page: Page,
+  root: Locator,
+  files: string[],
+): Promise<number> {
+  const input = await fileInput(root);
+  if (input) {
+    const batch = await input.getAttribute("multiple") !== null ? files : files.slice(0, 1);
+    await input.setInputFiles(batch, { timeout: 120_000 });
+    return batch.length;
+  }
+
+  const trigger = await uploadTrigger(root);
+  if (!trigger) return 0;
+
+  const chooserPromise = page.waitForEvent("filechooser", { timeout: 5_000 })
+    .catch(() => null);
+  await trigger.click({ timeout: 15_000 });
+  const chooser = await chooserPromise;
+  if (chooser) {
+    const batch = chooser.isMultiple() ? files : files.slice(0, 1);
+    await chooser.setFiles(batch, { timeout: 120_000 });
+    return batch.length;
+  }
+
+  // 有些实现点击后才把隐藏 input 挂到字段或弹窗中。
+  const dynamicInput = await fileInput(root)
+    ?? await (async () => {
+      const dialogInput = page.locator([
+        "[role='dialog']:visible input[type='file']:not([disabled])",
+        ".mp-popup:visible input[type='file']:not([disabled])",
+        ".mp-modal:visible input[type='file']:not([disabled])",
+        ".mp-dialog:visible input[type='file']:not([disabled])",
+      ].join(",")).last();
+      return await dialogInput.count() > 0 ? dialogInput : null;
+    })();
+  if (!dynamicInput) return 0;
+
+  const batch = await dynamicInput.getAttribute("multiple") !== null ? files : files.slice(0, 1);
+  await dynamicInput.setInputFiles(batch, { timeout: 120_000 });
+  return batch.length;
 }
 
 async function waitForUploadSettled(
@@ -542,10 +643,12 @@ export async function uploadIqiyiFiles(
     return false;
   }
   const root = await visibleUploadField(page, config.aliases);
-  const input = root ? await fileInput(root) : null;
-  if (!input) {
+  if (!root || (!await fileInput(root) && !await uploadTrigger(root))) {
     if (config.required) {
-      throw new Error(`IQIYI_DRAMA_FILE_INPUT_NOT_FOUND: ${config.aliases.join("/")}`);
+      throw new Error(
+        `IQIYI_DRAMA_FILE_INPUT_NOT_FOUND: ${config.aliases.join("/")}; `
+          + await uploadInputDiagnostic(page, root),
+      );
     }
     return false;
   }
@@ -553,18 +656,25 @@ export async function uploadIqiyiFiles(
     options,
     `[iqiyi-drama] uploading ${config.aliases[0]}: ${config.files.map((file) => path.basename(file)).join(" | ")}`,
   );
-  const supportsMultiple = await input.getAttribute("multiple") !== null;
-  const batches = supportsMultiple
-    ? [config.files]
-    : config.files.map((file) => [file]);
-  for (const [index, batch] of batches.entries()) {
-    const currentInput = await fileInput(root!);
-    if (!currentInput) {
-      throw new Error(`IQIYI_DRAMA_FILE_INPUT_NOT_FOUND: ${config.aliases.join("/")}`);
+  let uploadedCount = 0;
+  let batchNumber = 0;
+  while (uploadedCount < config.files.length) {
+    batchNumber += 1;
+    const batchSize = await setNextUploadBatch(page, root, config.files.slice(uploadedCount));
+    if (batchSize === 0) {
+      throw new Error(
+        `IQIYI_DRAMA_FILE_INPUT_NOT_FOUND: ${config.aliases.join("/")}; `
+          + `uploaded=${uploadedCount}/${config.files.length}; `
+          + await uploadInputDiagnostic(page, root),
+      );
     }
-    log(options, `[iqiyi-drama] uploading ${config.aliases[0]} batch: ${index + 1}/${batches.length}`);
-    await currentInput.setInputFiles(batch, { timeout: 120_000 });
-    await waitForUploadSettled(page, root!, config.aliases[0]!);
+    uploadedCount += batchSize;
+    log(
+      options,
+      `[iqiyi-drama] uploading ${config.aliases[0]} batch: ${batchNumber}; `
+        + `progress=${uploadedCount}/${config.files.length}`,
+    );
+    await waitForUploadSettled(page, root, config.aliases[0]!);
   }
   if (config.settleCoverEditor) {
     await settleIqiyiCoverEditor(page, options);

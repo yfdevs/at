@@ -203,7 +203,7 @@ test("treats the explicitly unavailable iQIYI task API as an empty queue", async
   assert.deepEqual(calls, ["/dramaAiRpa/iqiyi/accountTask/page"]);
 });
 
-test("reports iQIYI task success and failure through the unified API prefix", async () => {
+test("reports iQIYI results but skips a browser-closed failure", async () => {
   const calls: Array<{ path: string; payload: Record<string, unknown> }> = [];
   const client: IqiyiDramaHttpClient = {
     async post(path, payload) {
@@ -222,6 +222,12 @@ test("reports iQIYI task success and failure through the unified API prefix", as
     accountTaskId: 89,
     failStage: "FILL_FORM",
     errorMessage: "字段错误",
+  });
+  await reportIqiyiDramaTaskErrorApi({
+    client,
+    accountTaskId: 90,
+    failStage: "FILL_FORM",
+    errorMessage: "page.waitForTimeout: Target page, context or browser has been closed",
   });
 
   assert.deepEqual(calls.map((call) => call.path), [

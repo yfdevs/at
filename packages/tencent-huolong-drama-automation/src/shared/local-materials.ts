@@ -67,15 +67,12 @@ function assertFiles(label: string, files: string[], minimum: number) {
 export function validateTencentHuolongTaskMaterialReferences(
   task: ClaimedTencentHuolongDramaTask,
 ) {
-  // These documents are business data supplied by the task API. Unlike posters,
-  // episodes and project screenshots, they cannot be derived from the netdisk
-  // resource, so reject the task before starting a potentially large download.
+  // The cost analysis document is business data supplied by the task API. Unlike
+  // posters, episodes and project screenshots, it cannot be derived from the
+  // netdisk resource, so reject the task before starting a potentially large download.
   const missing = [
     task.playlet.costAnalysisFiles.length < 1
       ? `成本配置分析（承诺函）至少需要1个，实际=${task.playlet.costAnalysisFiles.length}`
-      : null,
-    task.playlet.nonInfringementCommitmentFiles.length < 1
-      ? `不侵权承诺函至少需要1个，实际=${task.playlet.nonInfringementCommitmentFiles.length}`
       : null,
   ].filter((message): message is string => Boolean(message));
   if (missing.length > 0) {
@@ -112,13 +109,6 @@ export async function prepareTencentHuolongRequiredMaterials(
       ? proofFiles
       : ownership.slice(0, 2).map((file) => file.file);
   }
-  if (task.playlet.nonInfringementCommitmentFiles.length === 0) {
-    task.playlet.nonInfringementCommitmentFiles = await localFiles(
-      task,
-      options,
-      (file) => /不侵权承诺/.test(file) || (/承诺函/.test(file) && !/成本|片酬/.test(file)),
-    );
-  }
   if (task.playlet.productionProcessFiles.length === 0) {
     const processFiles = await localFiles(
       task,
@@ -133,6 +123,5 @@ export async function prepareTencentHuolongRequiredMaterials(
 
   assertFiles("成本配置分析（承诺函）", task.playlet.costAnalysisFiles, 1);
   assertFiles("版权证明文件", task.playlet.copyrightProofFiles, 1);
-  assertFiles("不侵权承诺函", task.playlet.nonInfringementCommitmentFiles, 1);
   assertFiles("生成过程和工程文件截图", task.playlet.productionProcessFiles, 8);
 }

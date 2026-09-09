@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import type {
   ClaimedMeituanDramaTask,
   MeituanCreationAccount,
@@ -173,6 +174,7 @@ export async function reportMeituanAccountTaskApi(options: {
   report: MeituanTaskReport;
   fetcher?: typeof fetch;
 }): Promise<void> {
+  if (!options.report.success && isBrowserClosedError(options.report.errorMessage)) return;
   const payload = reportResponseSchema.parse(
     await postJson(
       options.apiBaseUrl,

@@ -363,17 +363,17 @@ async function cleanupPreviousQqCopyrightProofs(now = new Date()) {
 
       await rm(taskDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 });
       deletedCount += 1;
-      qqPlatformLogger("storage").info("已删除过期版权材料", { path: taskDir });
+      qqPlatformLogger("storage").info("Deleted expired copyright materials", { path: taskDir });
     }
   }
-  qqPlatformLogger("storage").info("过期版权材料清理完成", { deletedCount });
+  qqPlatformLogger("storage").info("Expired copyright materials cleanup completed", { deletedCount });
 }
 
 function scheduleQqCopyrightProofCleanup() {
   if (contractCleanupTask) return;
   contractCleanupTask = cron.schedule("0 1 * * *", async () => {
     await cleanupPreviousQqCopyrightProofs().catch((error: unknown) => {
-      qqPlatformLogger("storage").error("过期版权材料清理失败", { error });
+      qqPlatformLogger("storage").error("Expired copyright materials cleanup failed", { error });
     });
   }, {
     name: "qq-copyright-proof-cleanup",
@@ -381,8 +381,8 @@ function scheduleQqCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   });
-  qqPlatformLogger("storage").info("版权材料定时清理已启用", {
-    schedule: "每天 01:00",
+  qqPlatformLogger("storage").info("Copyright materials scheduled cleanup enabled", {
+    schedule: "daily at 01:00",
   });
 }
 
@@ -523,7 +523,7 @@ async function startRuntime() {
   if (!accounts.length) {
     throw new Error("QQ_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
   }
-  qqPlatformLogger("account").info("已加载启用账号", {
+  qqPlatformLogger("account").info("Loaded enabled accounts", {
     count: accounts.length,
     accounts: accounts.map((account) => ({ id: account.accountId, name: account.accountName })),
   });
@@ -601,7 +601,7 @@ async function startRuntime() {
     async stop() {
       running = false;
       await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
-      qqPlatformLogger("browser").info("全部账号浏览器已停止");
+      qqPlatformLogger("browser").info("All account browsers stopped");
     },
   };
 }

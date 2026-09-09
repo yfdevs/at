@@ -267,7 +267,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
     const cacheRootStat = await lstat(cacheRoot).catch((error: unknown) => {
       if (isMissingPathError(error)) return undefined;
       failedCount += 1;
-      baiduDramaPlatformLogger("storage").warn("AI封面缓存目录检查失败，已忽略", {
+      baiduDramaPlatformLogger("storage").warn("AI cover cache directory check failed; ignored", {
         path: cacheRoot,
         error,
       });
@@ -278,7 +278,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
     const cacheEntries = await readdir(cacheRoot, { withFileTypes: true }).catch((error: unknown) => {
       if (isMissingPathError(error)) return [];
       failedCount += 1;
-      baiduDramaPlatformLogger("storage").warn("AI封面缓存目录扫描失败，已忽略", {
+      baiduDramaPlatformLogger("storage").warn("AI cover cache directory scan failed; ignored", {
         path: cacheRoot,
         error,
       });
@@ -291,7 +291,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
       const entries = await readdir(cacheDirectory, { withFileTypes: true }).catch((error: unknown) => {
         if (isMissingPathError(error)) return [];
         failedCount += 1;
-        baiduDramaPlatformLogger("storage").warn("AI封面缓存子目录扫描失败，已忽略", {
+        baiduDramaPlatformLogger("storage").warn("AI cover cache subdirectory scan failed; ignored", {
           path: cacheDirectory,
           error,
         });
@@ -304,7 +304,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
         const fileStat = await stat(file).catch((error: unknown) => {
           if (isMissingPathError(error)) return undefined;
           failedCount += 1;
-          baiduDramaPlatformLogger("storage").warn("AI封面临时文件检查失败，已忽略", {
+          baiduDramaPlatformLogger("storage").warn("AI cover temporary file check failed; ignored", {
             path: file,
             error,
           });
@@ -317,7 +317,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
           deletedFileCount += 1;
         } catch (error) {
           failedCount += 1;
-          baiduDramaPlatformLogger("storage").warn("AI封面临时文件清理失败，已忽略", {
+          baiduDramaPlatformLogger("storage").warn("AI cover temporary file cleanup failed; ignored", {
             path: file,
             error,
           });
@@ -326,7 +326,7 @@ async function cleanupStaleBaiduTemporaryAssets(now = new Date()) {
     }
   }
 
-  baiduDramaPlatformLogger("storage").info("临时文件定时清理完成", {
+  baiduDramaPlatformLogger("storage").info("Temporary file scheduled cleanup completed", {
     deletedFileCount,
     failedCount,
     aiCoverRetentionHours: baiduAiCoverTemporaryFileRetentionMs / 3_600_000,
@@ -337,7 +337,7 @@ function scheduleBaiduTemporaryAssetCleanup() {
   if (temporaryAssetCleanupTask) return;
 
   const runCleanup = () => cleanupStaleBaiduTemporaryAssets().catch((error: unknown) => {
-    baiduDramaPlatformLogger("storage").warn("临时文件定时清理失败，已忽略", { error });
+    baiduDramaPlatformLogger("storage").warn("Temporary file scheduled cleanup failed; ignored", { error });
   });
   temporaryAssetCleanupTask = cron.schedule("0 * * * *", runCleanup, {
     name: "baidu-temporary-asset-cleanup",
@@ -346,10 +346,10 @@ function scheduleBaiduTemporaryAssetCleanup() {
     unref: true,
   });
   void runCleanup();
-  baiduDramaPlatformLogger("storage").info("临时文件定时清理已启用", {
-    targets: "AI封面原图",
-    aiCoverRetention: "24小时",
-    schedule: "程序启动时、每小时整点",
+  baiduDramaPlatformLogger("storage").info("Temporary file scheduled cleanup enabled", {
+    targets: "AI cover originals",
+    aiCoverRetention: "24 hours",
+    schedule: "on startup and every hour",
   });
 }
 
@@ -470,7 +470,7 @@ async function startRuntime() {
     async stop() {
       running = false;
       await Promise.allSettled(accountRuntimes.map(({ runtime }) => runtime.stop()));
-      baiduDramaPlatformLogger("browser").info("全部账号浏览器已停止");
+      baiduDramaPlatformLogger("browser").info("All account browsers stopped");
     },
   };
 }

@@ -1,3 +1,4 @@
+import { isBrowserClosedError } from "@drama/automation-logging";
 import type { ClaimedAccountTask } from "../shared/types.js";
 import type { RpaFailStage } from "../shared/errors.js";
 import type { WechatMiniProgramAccount } from "./mini-program-accounts.js";
@@ -276,6 +277,7 @@ export async function reportClaimedTaskSuccessApi(
 export async function reportClaimedTaskErrorApi(
   errorReport: ClaimedTaskErrorReport,
 ): Promise<void> {
+  if (isBrowserClosedError(errorReport.errorMessage)) return;
   if (mockAccountTaskIds.has(errorReport.accountTaskId)) {
     logger.info("fail callback completed", {
       accountTaskId: errorReport.accountTaskId,

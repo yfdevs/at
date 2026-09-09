@@ -30,6 +30,37 @@ export async function openTencentHuolongAddPage(page: Page, context: BrowserCont
   await page.locator('[data-field-name="user_title"] input').waitFor({ state: "visible", timeout: 60_000 });
 }
 
+type FailedEpisodeUpload = {
+  episodeNumber: string;
+  title: string;
+};
+
+type EpisodeUploadRowSnapshot = FailedEpisodeUpload & {
+  statuses: string[];
+};
+
+export function findFailedEpisodeUploads(rows: EpisodeUploadRowSnapshot[]): FailedEpisodeUpload[] {
+  return rows
+    .filter(({ statuses }) => statuses.includes("上传失败"))
+    .map(({ episodeNumber, title }) => ({ episodeNumber, title }));
+}
+
+export async function readFailedEpisodeUploads(page: Page): Promise<FailedEpisodeUpload[]> {
+  const rows = await page.locator("section[data-g-index]").evaluateAll((elements) => elements.map((row) => {
+    const episodeNumber = row.getAttribute("data-g-index")?.trim() ?? "未知";
+    const titleInput = row.querySelector<HTMLInputElement>('[data-field-name$=".video_title"] input');
+    const statuses = Array.from(row.querySelectorAll("header div, header span"))
+      .map((element) => element.textContent?.trim() ?? "")
+      .filter(Boolean);
+    return {
+      episodeNumber,
+      title: titleInput?.value.trim() ?? "",
+      statuses,
+    };
+  }));
+  return findFailedEpisodeUploads(rows);
+}
+
 async function uploadEpisodeVideos(
   page: Page,
   task: ClaimedTencentHuolongDramaTask,
@@ -54,6 +85,22 @@ async function uploadEpisodeVideos(
     const progressTitles = page.locator('header[class*="_header_"] div[class*="_title_"]').filter({ visible: true });
     let lastProgress = "";
     while (Date.now() - startedAt < timeoutMs) {
+      const failedUploads = await readFailedEpisodeUploads(page);
+      if (failedUploads.length > 0) {
+        const failedEpisodes = failedUploads
+          .map(({ episodeNumber, title }) => `视频${episodeNumber}${title ? `（${title}）` : ""}`)
+          .join("、");
+        throw new Error(
+          `TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED: failed=${failedEpisodes}`
+          + (lastProgress ? `; progress=${lastProgress}` : ""),
+        );
+      }
+
+      const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+      if (/上传失败/.test(bodyText)) {
+        throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED${lastProgress ? `: progress=${lastProgress}` : ""}`);
+      }
+
       const titles = await progressTitles.allInnerTexts();
       const progressText = titles.find((text) => /(?:正在上传|上传完成).*?[（(]\s*\d+\s*\/\s*\d+\s*[)）]/u.test(text));
       const match = progressText?.match(/[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/u);
@@ -69,11 +116,6 @@ async function uploadEpisodeVideos(
           log(options, `[tencent-huolong-drama] 剧集视频已全部上传完成：${progress}`);
           return;
         }
-      }
-
-      const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      if (/上传失败/.test(bodyText)) {
-        throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED${lastProgress ? `: progress=${lastProgress}` : ""}`);
       }
       await page.waitForTimeout(1_000);
     }

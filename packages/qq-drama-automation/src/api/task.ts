@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import { log } from "../shared/logger.js";
 import {
   claimedQqDramaTaskSchema,
@@ -365,6 +366,7 @@ export async function reportQqDramaTaskSuccessApi(report: QqDramaTaskSuccessRepo
 }
 
 export async function reportQqDramaTaskErrorApi(report: QqDramaTaskErrorReport): Promise<void> {
+  if (isBrowserClosedError(report.errorMessage)) return;
   void report;
   // oxlint-disable-next-line no-debugger
   debugger;

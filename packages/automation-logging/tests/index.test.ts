@@ -4,7 +4,19 @@ import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
-import { createAutomationLogger } from "../src/index.js";
+import { createAutomationLogger, isBrowserClosedError } from "../src/index.js";
+
+test("识别用户关闭 Playwright 浏览器产生的中断错误", () => {
+  assert.equal(
+    isBrowserClosedError(
+      new Error("page.waitForTimeout: Target page, context or browser has been closed"),
+    ),
+    true,
+  );
+  assert.equal(isBrowserClosedError("browserContext.newPage: Target closed"), true);
+  assert.equal(isBrowserClosedError(new Error("美团页面或浏览器已关闭，无法继续执行页面操作")), true);
+  assert.equal(isBrowserClosedError(new Error("locator.click: Timeout 15000ms exceeded")), false);
+});
 
 test("平台日志独立写入并统一格式", async () => {
   const testDir = await mkdtemp(path.join(tmpdir(), "automation-logging-"));

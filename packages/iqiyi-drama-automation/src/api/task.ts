@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 
 import {
   claimedIqiyiDramaTaskSchema,
@@ -292,6 +293,7 @@ export async function reportIqiyiDramaTaskSuccessApi(
 export async function reportIqiyiDramaTaskErrorApi(
   options: IqiyiDramaTaskErrorReport,
 ): Promise<void> {
+  if (isBrowserClosedError(options.errorMessage)) return;
   await reportIqiyiDramaTask({
     ...options,
     taskId: options.accountTaskId,

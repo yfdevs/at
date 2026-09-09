@@ -399,16 +399,16 @@ async function cleanupPreviousWechatCopyrightProofs(now = new Date()) {
 
     await rm(contractDir, { recursive: true, force: true, maxRetries: 5, retryDelay: 500 })
     deletedCount += 1
-    wechatPlatformLogger('storage').info('已删除过期版权材料', { path: contractDir })
+    wechatPlatformLogger('storage').info('Deleted expired copyright materials', { path: contractDir })
   }
-  wechatPlatformLogger('storage').info('过期版权材料清理完成', { deletedCount })
+  wechatPlatformLogger('storage').info('Expired copyright materials cleanup completed', { deletedCount })
 }
 
 function scheduleWechatCopyrightProofCleanup() {
   if (contractCleanupTask) return
   contractCleanupTask = cron.schedule('0 1 * * *', async () => {
     await cleanupPreviousWechatCopyrightProofs().catch((error: unknown) => {
-      wechatPlatformLogger('storage').error('过期版权材料清理失败', { error })
+      wechatPlatformLogger('storage').error('Expired copyright materials cleanup failed', { error })
     })
   }, {
     name: 'wechat-copyright-proof-cleanup',
@@ -416,8 +416,8 @@ function scheduleWechatCopyrightProofCleanup() {
     noOverlap: true,
     unref: true,
   })
-  wechatPlatformLogger('storage').info('版权材料定时清理已启用', {
-    schedule: '每天 01:00',
+  wechatPlatformLogger('storage').info('Copyright materials scheduled cleanup enabled', {
+    schedule: 'daily at 01:00',
   })
 }
 

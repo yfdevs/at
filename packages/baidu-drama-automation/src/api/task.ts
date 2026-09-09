@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { isBrowserClosedError } from "@drama/automation-logging";
 import { log } from "../shared/logger.js";
 import {
   claimedBaiduDramaTaskSchema,
@@ -438,6 +439,7 @@ export async function reportBaiduDramaTaskSuccessApi(
 export async function reportBaiduDramaTaskErrorApi(
   report: BaiduDramaTaskErrorReport,
 ): Promise<void> {
+  if (isBrowserClosedError(report.errorMessage)) return;
   await reportBaiduDramaTask({
     ...report,
     taskId: report.accountTaskId,

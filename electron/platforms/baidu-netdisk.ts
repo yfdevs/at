@@ -256,7 +256,7 @@ async function driveDUsageRatio() {
 
 async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: Set<string>) {
   if (!isSafeEpisodeVideoRootOnDriveD(rootPath)) {
-    baiduNetdiskLogger("storage").warn("已跳过不安全的剧集目录清理", { path: rootPath });
+    baiduNetdiskLogger("storage").warn("Skipped unsafe show directory cleanup", { path: rootPath });
     return;
   }
 
@@ -268,7 +268,7 @@ async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: 
   const cutoffMs = Date.now() - stalePlayletAgeMs;
   let deletedCount = 0;
 
-  baiduNetdiskLogger("storage").warn("磁盘空间不足，开始清理过期剧目目录", {
+  baiduNetdiskLogger("storage").warn("Low disk space; cleaning stale playlet directories", {
     path: resolvedRoot,
     usedPercent: Number((usageRatio * 100).toFixed(1)),
   });
@@ -289,13 +289,13 @@ async function cleanupStalePlayletDirectories(rootPath: string, protectedPaths: 
 
     await rm(candidate, { recursive: true, force: true });
     deletedCount += 1;
-    baiduNetdiskLogger("storage").warn("已删除过期剧目目录", {
+    baiduNetdiskLogger("storage").warn("Deleted stale playlet directory", {
       path: candidate,
       lastModifiedAt: new Date(latestModifiedAtMs).toISOString(),
     });
   }
 
-  baiduNetdiskLogger("storage").info("过期剧目目录清理完成", {
+  baiduNetdiskLogger("storage").info("Stale playlet directory cleanup completed", {
     path: resolvedRoot,
     deletedCount,
   });
@@ -318,7 +318,7 @@ function runDiskCleanup(protectedExtraPaths: string[] = []) {
 
     for (const rootPath of monitoredEpisodeVideoRoots) {
       await cleanupStalePlayletDirectories(rootPath, protectedPaths).catch((error) => {
-        baiduNetdiskLogger("storage").warn("剧目目录检查或清理失败", {
+        baiduNetdiskLogger("storage").warn("Playlet directory check or cleanup failed", {
           path: rootPath,
           error,
         });
@@ -342,7 +342,7 @@ function runBaiduCdpOperationExclusive<T>(label: string, operation: () => Promis
   queuedBaiduCdpOperations += 1;
   const queuePosition = queuedBaiduCdpOperations;
   if (queuePosition > 1) {
-    baiduNetdiskLogger("netdisk").info("网盘操作正在排队", {
+    baiduNetdiskLogger("netdisk").info("Netdisk operation queued", {
       action: label,
       ahead: queuePosition - 1,
     });
@@ -352,12 +352,12 @@ function runBaiduCdpOperationExclusive<T>(label: string, operation: () => Promis
   const current = previous
     .catch(() => undefined)
     .then(async () => {
-      baiduNetdiskLogger("netdisk").info("网盘操作开始", { action: label });
+      baiduNetdiskLogger("netdisk").info("Netdisk operation started", { action: label });
       try {
         return await operation();
       } finally {
         queuedBaiduCdpOperations = Math.max(0, queuedBaiduCdpOperations - 1);
-        baiduNetdiskLogger("netdisk").info("网盘操作结束", { action: label });
+        baiduNetdiskLogger("netdisk").info("Netdisk operation finished", { action: label });
       }
     });
   baiduCdpOperationTail = current.then(
@@ -502,7 +502,7 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
   try {
     assertDisposableBaiduDownloadDir(options.downloadDir);
   } catch (error) {
-    baiduNetdiskLogger("storage").warn("已跳过不安全的临时目录清理", { error });
+    baiduNetdiskLogger("storage").warn("Skipped unsafe temporary directory cleanup", { error });
     return;
   }
 
@@ -535,7 +535,7 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
       // A material category may not have created its own native download task.
     }
   }
-  baiduNetdiskLogger("download").info("百度客户端下载任务清理完成", {
+  baiduNetdiskLogger("download").info("Baidu download task cleanup completed", {
     resourceName: options.targetName,
     cleanupAttemptCount,
   });
@@ -560,9 +560,9 @@ async function cleanupBaiduNetdiskDownloadArtifacts(options: {
     } finally {
       if (timeout) clearTimeout(timeout);
     }
-    baiduNetdiskLogger("storage").info("临时下载目录已清理", { path: options.downloadDir });
+    baiduNetdiskLogger("storage").info("Temporary download directory cleaned", { path: options.downloadDir });
   } catch (error) {
-    baiduNetdiskLogger("storage").warn("临时下载目录清理失败", {
+    baiduNetdiskLogger("storage").warn("Temporary download directory cleanup failed", {
       path: options.downloadDir,
       error,
     });
@@ -597,7 +597,7 @@ async function cleanupRecordedRemoteTransfer(
         fsId: record.remoteTransferFsId!,
       }),
     );
-    cleanupLogger.info("网盘中转目录清理完成", { reason });
+    cleanupLogger.info("Remote transfer directory cleanup completed", { reason });
     return upsertDownloadRecord({
       ...record,
       remoteCleanupPending: false,
@@ -605,7 +605,7 @@ async function cleanupRecordedRemoteTransfer(
     });
   } catch (error) {
     const cleanupError = readableError(error);
-    cleanupLogger.warn("网盘中转目录清理失败，已保留为待清理任务", {
+    cleanupLogger.warn("Remote transfer directory cleanup failed; retained as pending cleanup task", {
       reason,
       error: cleanupError,
     });
@@ -653,7 +653,7 @@ function recoverPendingRemoteTransferCleanups() {
     }
   })()
     .catch((error) => {
-      baiduNetdiskLogger("storage").warn("启动时恢复网盘中转目录清理失败", { error });
+      baiduNetdiskLogger("storage").warn("Failed to recover remote transfer directory cleanup on startup", { error });
     })
     .finally(() => {
       remoteCleanupRecovery = null;
@@ -752,7 +752,7 @@ function withAppVideoTranscode(
     onStableEpisodeFiles: (files) => {
       for (const file of files) {
         if (file.size <= maxFileBytes) continue;
-        baiduNetdiskLogger("download").info("视频超过大小限制，已加入转码队列", {
+        baiduNetdiskLogger("download").info("Video exceeded size limit and was added to transcode queue", {
           episode: file.index,
           size: file.size,
           maxFileBytes,
@@ -768,7 +768,7 @@ function withAppVideoTranscode(
           },
           replaceSource: true,
         }).catch((error) => {
-          baiduNetdiskLogger("download").error("下载期间视频转码失败", {
+          baiduNetdiskLogger("download").error("Video transcoding failed during download", {
             episode: file.index,
             error,
           });
@@ -1015,7 +1015,7 @@ export async function ensureBaiduNetdiskShareDownloaded(
   if (activeOperation) {
     if (normalizedRequest.onStableEpisodeFiles) {
       activeOperation.stableEpisodeFilesListeners.add(normalizedRequest.onStableEpisodeFiles);
-      requestLogger.info("已将素材处理器附加到进行中的下载任务");
+      requestLogger.info("Material processor attached to ongoing download task");
     }
     return activeOperation.promise;
   }
@@ -1036,7 +1036,7 @@ export async function ensureBaiduNetdiskShareDownloaded(
     ...normalizedRequest,
     onStableEpisodeFiles: (files) => {
       if (stableEpisodeFilesListeners.size > 0) {
-        requestLogger.info("已通知素材处理器", {
+        requestLogger.info("Material processor notified", {
           episodes: files.map((file) => file.index),
         });
       }
@@ -1044,7 +1044,7 @@ export async function ensureBaiduNetdiskShareDownloaded(
         try {
           listener(files);
         } catch (error) {
-          requestLogger.warn("素材处理器接收稳定剧集失败", { error });
+          requestLogger.warn("Material processor failed to receive stable episode files", { error });
         }
       }
     },
@@ -1166,7 +1166,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
               baiduNetdiskLogger("storage", {
                 requesterPlatform: request.requesterPlatform,
                 resourceName: request.resourceName,
-              }).info("已记录本次软件创建的网盘中转目录", {
+              }).info("Recorded remote transfer directory created by software", {
                 path: transfer.path,
               });
             },
@@ -1239,7 +1239,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         requesterPlatform: request.requesterPlatform,
         resourceName: request.resourceName,
       });
-      aiPosterLogger.warn("百度网盘未提供海报，开始使用 AI 生成", {
+      aiPosterLogger.warn("Baidu Netdisk did not provide a poster; starting AI generation", {
         summaryLength: summary.length,
       });
       try {
@@ -1252,7 +1252,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
           summary,
           onLog: aiPosterLogger.callback("ai-poster"),
         });
-        aiPosterLogger.info("AI 海报准备完成，重新校验百度网盘资源", {
+        aiPosterLogger.info("AI poster ready; revalidating Baidu Netdisk resources", {
           file: poster.file,
           height: poster.height,
           reused: poster.reused,
@@ -1272,7 +1272,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
     const completedLocalPath = result.localPath || localPath;
     const completedAt = new Date();
     await utimes(completedLocalPath, completedAt, completedAt).catch((error) => {
-      baiduNetdiskLogger("storage").warn("无法刷新剧目目录保留时间", {
+      baiduNetdiskLogger("storage").warn("Unable to refresh playlet directory retention time", {
         path: completedLocalPath,
         error,
       });
@@ -1320,7 +1320,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         baiduNetdiskLogger("storage", {
           requesterPlatform: request.requesterPlatform,
           resourceName: request.resourceName,
-        }).warn("清理下载临时资源失败", { error });
+        }).warn("Failed to cleanup downloaded temporary resources", { error });
       });
     }
   }

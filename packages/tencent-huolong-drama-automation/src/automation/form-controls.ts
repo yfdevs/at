@@ -3,6 +3,10 @@ import { mkdir, writeFile } from "node:fs/promises";
 import path from "node:path";
 import type { Locator, Page } from "playwright";
 import { tencentHuolongThemeOptionId } from "../shared/constants.js";
+import {
+  tencentHuolongAiCreationDeclarationFile,
+  tencentHuolongNonInfringementCommitmentFile,
+} from "../shared/fixed-assets.js";
 import { log } from "../shared/logger.js";
 import type {
   ClaimedTencentHuolongDramaTask,
@@ -423,9 +427,28 @@ async function uploadCover(
   throw new Error(`TENCENT_HUOLONG_DRAMA_UPLOAD_CONTROL_NOT_FOUND: ${options.description}`);
 }
 
-async function resolveFile(reference: string, options: TencentHuolongRuntimeOptions) {
-  if (!/^https?:\/\//i.test(reference)) return reference;
+export async function resolveFile(reference: string, options: TencentHuolongRuntimeOptions) {
+  if (!/^(?:https?:\/\/|data:)/i.test(reference)) return reference;
   if (!options.assetDownloadDir) throw new Error("TENCENT_HUOLONG_DRAMA_ASSET_DIR_REQUIRED");
+
+  if (/^data:/i.test(reference)) {
+    const response = await fetch(reference);
+    const contentType = response.headers.get("content-type")?.split(";")[0].trim().toLowerCase();
+    const extension = ({
+      "application/pdf": ".pdf",
+      "image/png": ".png",
+      "image/jpeg": ".jpg",
+    } as Record<string, string>)[contentType ?? ""] || ".bin";
+    const file = path.join(
+      options.assetDownloadDir,
+      "fixed-assets",
+      `${createHash("sha1").update(reference).digest("hex").slice(0, 16)}${extension}`,
+    );
+    await mkdir(path.dirname(file), { recursive: true });
+    await writeFile(file, Buffer.from(await response.arrayBuffer()));
+    return file;
+  }
+
   const url = new URL(reference);
   if (url.hostname.endsWith(".invalid")) {
     throw new Error(`TENCENT_HUOLONG_DRAMA_MOCK_TASK_FILE_NOT_CONFIGURED: ${url.pathname}`);
@@ -505,6 +528,43 @@ async function uploadFilesByFieldName(
   );
 }
 
+export async function fillTencentHuolongAiCreationDeclaration(
+  page: Page,
+  options: TencentHuolongRuntimeOptions,
+) {
+  const confirmation = page.locator(
+    '[data-field-name="cp_statement"] input[type="checkbox"]',
+  ).first();
+  await checkCustomControl(page, confirmation, "cp_statement=全AI创作内容");
+
+  const declarationField = page.locator(
+    '[data-field-name="ai_creation_declaration"]',
+  ).first();
+  await declarationField.waitFor({ state: "visible", timeout: 15_000 });
+  await uploadFilesByFieldName(
+    page,
+    "ai_creation_declaration",
+    "AI创作声明",
+    [tencentHuolongAiCreationDeclarationFile],
+    options,
+  );
+  log(options, "[tencent-huolong-drama] 已勾选全AI创作声明并上传固定声明文件");
+}
+
+export async function fillTencentHuolongNonInfringementCommitment(
+  page: Page,
+  options: TencentHuolongRuntimeOptions,
+) {
+  await uploadFilesByFieldName(
+    page,
+    "personal_commitment_letter_file",
+    "不侵权承诺函",
+    [tencentHuolongNonInfringementCommitmentFile],
+    options,
+  );
+  log(options, "[tencent-huolong-drama] 已上传固定不侵权承诺函");
+}
+
 export async function fillTencentHuolongFirstPage(
   page: Page,
   task: ClaimedTencentHuolongDramaTask,
@@ -564,6 +624,8 @@ export async function fillTencentHuolongFirstPage(
     labels: ["上传横版卡片图", "上传横版卡片", "横版卡片图", "横版卡片"],
   }, options);
 
+  await fillTencentHuolongAiCreationDeclaration(page, options);
+
   await checkNamedRadio(page, "is_ai_real_person_short_drama", task.playlet.isAiRealPersonShortDrama === "是" ? 0 : 1);
   await clickFieldOption(page, "micro_series_mode", "非独家首播");
   await clickFieldOption(page, "distribution_platform", "火龙漫剧+腾讯视频");
@@ -593,13 +655,7 @@ export async function fillTencentHuolongFirstPage(
     task.playlet.copyrightProofFiles,
     options,
   );
-  await uploadFilesByFieldName(
-    page,
-    "personal_commitment_letter_file",
-    "不侵权承诺函",
-    task.playlet.nonInfringementCommitmentFiles,
-    options,
-  );
+  await fillTencentHuolongNonInfringementCommitment(page, options);
   await uploadFilesByFieldName(
     page,
     "source_file_screenshot_files",

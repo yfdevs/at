@@ -47,10 +47,6 @@ export async function ensureLocalTencentHuolongMockFiles(options: TencentHuolong
   );
   await mkdir(root, { recursive: true });
   const costAnalysisFile = path.join(root, "成本配置分析-自动化测试.pdf");
-  const nonInfringementFile = path.join(root, "不侵权承诺函-自动化测试.pdf");
-  await Promise.all([
-    writeFile(costAnalysisFile, createTestPdf("Cost Analysis Commitment (test placeholder)")),
-    writeFile(nonInfringementFile, createTestPdf("Non-infringement Commitment (test placeholder)")),
-  ]);
-  return { costAnalysisFile, nonInfringementFile };
+  await writeFile(costAnalysisFile, createTestPdf("Cost Analysis Commitment (test placeholder)"));
+  return { costAnalysisFile };
 }
