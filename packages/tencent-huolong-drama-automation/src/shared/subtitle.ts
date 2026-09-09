@@ -12,6 +12,16 @@ function normalizeName(value: string) {
     .slice(0, 9) ?? "";
 }
 
+function buildSubtitle(protagonist: string, title: string) {
+  const titleCharacters = Array.from(title.trim());
+  if (titleCharacters.length >= 13) return titleCharacters.slice(0, 13).join("");
+  const protagonistCharacters = Array.from(protagonist);
+  return [
+    ...protagonistCharacters.slice(0, 13 - titleCharacters.length),
+    ...titleCharacters,
+  ].join("");
+}
+
 export async function resolveTencentHuolongSubtitle(
   payload: TencentHuolongTaskPayload,
   options: TencentHuolongRuntimeOptions,
@@ -33,8 +43,7 @@ export async function resolveTencentHuolongSubtitle(
     protagonist = normalizeName(result.text);
   }
   if (!protagonist) throw new Error("TENCENT_HUOLONG_DRAMA_PROTAGONIST_NOT_FOUND");
-  const subtitle = `${protagonist}剧目`;
-  if (Array.from(subtitle).length > 13) throw new Error("TENCENT_HUOLONG_DRAMA_SUBTITLE_TOO_LONG");
+  const subtitle = buildSubtitle(protagonist, payload.title);
   log(options, `[tencent-huolong-drama] 副标题已生成：${subtitle}`);
   return subtitle;
 }

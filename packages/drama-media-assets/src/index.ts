@@ -1,9 +1,11 @@
 import { access, copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
+import type { DramaAiClient } from "@drama/ai";
 import sharp from "sharp";
 
-import { classifyOwnershipProjectProofScreenshot } from "./ownership-project-proof-ocr.js";
+import { classifyOwnershipProjectProofScreenshotWithAi } from "./ownership-project-proof-ai.js";
+import { readVideoDurationSeconds } from "./video-transcode.js";
 
 export type LocalEpisodeVideo = {
   index: number;
@@ -64,6 +66,7 @@ export type PreparedEpisodeUploadFiles = {
 
 export {
   prepareEpisodeVideos,
+  readVideoDurationSeconds,
   VideoTranscodeQueue,
   type PreparedVideoFile,
   type VideoSizePolicy,
@@ -347,7 +350,10 @@ export async function listLocalOwnershipMaterials(options: {
 
 const ownershipProjectScreenshotPattern =
   /(?:权属工程文件\s*\d+|剪映|jianying|capcut|剧创|即梦|jimeng|dreamina).*\.(?:png|jpe?g|bmp|webp)$/iu;
-const ownershipProjectProofClassificationTimeoutMs = 90_000;
+// Cloud vision calls can be slower on first use and multiple proof images are
+// classified sequentially. Keep a batch guard without aborting valid work on
+// ordinary network latency.
+const ownershipProjectProofClassificationTimeoutMs = 5 * 60_000;
 
 const ownershipProjectProofClassificationCache = new Map<string, OwnershipProjectProofKind>();
 
@@ -363,6 +369,7 @@ export function classifyOwnershipProjectProofName(
 export async function classifyOwnershipProjectProof(
   file: string,
   nameHint = path.basename(file),
+  aiClient?: DramaAiClient,
 ): Promise<OwnershipProjectProofKind> {
   const parentDirectoryHint = path.basename(path.dirname(file));
   const namedKind = classifyOwnershipProjectProofName(`${parentDirectoryHint}/${nameHint}`);
@@ -373,7 +380,8 @@ export async function classifyOwnershipProjectProof(
   const cached = ownershipProjectProofClassificationCache.get(cacheKey);
   if (cached) return cached;
 
-  const kind = await classifyOwnershipProjectProofScreenshot(file);
+  if (!aiClient) throw new Error("OWNERSHIP_PROJECT_PROOF_AI_CLIENT_REQUIRED");
+  const kind = await classifyOwnershipProjectProofScreenshotWithAi(file, aiClient);
   if (ownershipProjectProofClassificationCache.size >= 512) {
     const oldest = ownershipProjectProofClassificationCache.keys().next().value;
     if (oldest) ownershipProjectProofClassificationCache.delete(oldest);
@@ -440,6 +448,7 @@ export function selectOwnershipProjectProofFiles(
 export async function findOwnershipProjectProofFiles(options: {
   root: string;
   resourceName: string;
+  aiClient?: DramaAiClient;
   filesPerKind?: number;
   onClassificationProgress?: (progress: {
     completed: number;
@@ -457,6 +466,14 @@ export async function findOwnershipProjectProofFiles(options: {
     const parentDirectoryName = path.basename(path.dirname(material.file));
     return ownershipProjectScreenshotPattern.test(material.name)
       || classifyOwnershipProjectProofName(parentDirectoryName) !== undefined;
+  }).sort((left, right) => {
+    const leftNamed = classifyOwnershipProjectProofName(
+      `${path.basename(path.dirname(left.file))}/${left.name}`,
+    ) !== undefined;
+    const rightNamed = classifyOwnershipProjectProofName(
+      `${path.basename(path.dirname(right.file))}/${right.name}`,
+    ) !== undefined;
+    return Number(rightNamed) - Number(leftNamed) || ownershipProjectProofOrder(left, right);
   });
   const filesPerKind = options.filesPerKind ?? 2;
   const classified: ClassifiedOwnershipProjectProof[] = [];
@@ -465,7 +482,7 @@ export async function findOwnershipProjectProofFiles(options: {
     const remainingMs = deadline - Date.now();
     if (remainingMs <= 0) {
       throw new Error(
-        `[ownership-project-proof-ocr-timeout] 权属工程截图识别超过 ${
+        `[ownership-project-proof-ai-timeout] 权属工程截图识别超过 ${
           ownershipProjectProofClassificationTimeoutMs / 1_000
         } 秒。`,
       );
@@ -473,11 +490,11 @@ export async function findOwnershipProjectProofFiles(options: {
     let timeout: ReturnType<typeof setTimeout> | undefined;
     const timeoutPromise = new Promise<never>((_resolve, reject) => {
       timeout = setTimeout(() => reject(new Error(
-        `[ownership-project-proof-ocr-timeout] 权属工程截图识别超时：${material.file}`,
+        `[ownership-project-proof-ai-timeout] 权属工程截图识别超时：${material.file}`,
       )), remainingMs);
     });
     const kind = await Promise.race([
-      classifyOwnershipProjectProof(material.file, material.name),
+      classifyOwnershipProjectProof(material.file, material.name, options.aiClient),
       timeoutPromise,
     ]).finally(() => {
       if (timeout) clearTimeout(timeout);
@@ -659,10 +676,25 @@ export async function standardizeOwnershipMaterialsToRoot(options: {
   const targetDir = path.join(playletDir(options.targetRoot, options.resourceName), "权属文件");
   await mkdir(targetDir, { recursive: true });
   const standardized: LocalOwnershipMaterialSet = [];
+  const proofKindPositions = { jianying: 0, juchuang: 0 };
 
   for (const [position, material] of selected.entries()) {
     const extension = path.extname(material.file).toLowerCase() || ".jpg";
-    const target = path.join(targetDir, `${options.resourceName} - 权属工程文件${position + 1}${extension}`);
+    const proofKind = classifyOwnershipProjectProofName(
+      `${path.basename(path.dirname(material.file))}/${material.name}`,
+    );
+    const proofLabel = proofKind === "jianying"
+      ? "剪映"
+      : proofKind === "juchuang"
+        ? "剧创"
+        : "权属工程文件";
+    const proofPosition = proofKind === "jianying" || proofKind === "juchuang"
+      ? ++proofKindPositions[proofKind]
+      : position + 1;
+    const target = path.join(
+      targetDir,
+      `${options.resourceName} - ${proofLabel}${proofPosition}${extension}`,
+    );
     if (!sameResolvedPath(material.file, target)) await copyFile(material.file, target);
     const targetStat = await stat(target);
     standardized.push({ ...material, index: position + 1, name: path.basename(target), file: target, size: targetStat.size });
@@ -1049,6 +1081,123 @@ export async function validateLocalEpisodeVideos(options: {
         )}`,
     );
   }
+}
+
+export type EpisodeVideoDuration = {
+  index: number;
+  file: string;
+  durationSeconds: number;
+};
+
+export function findEpisodeMinimumDurationViolations(
+  episodes: EpisodeVideoDuration[],
+  minimumDurationSeconds: number,
+) {
+  return episodes.filter((episode) => episode.durationSeconds <= minimumDurationSeconds);
+}
+
+const episodeDurationCache = new Map<string, number>();
+
+async function cachedVideoDurationSeconds(
+  file: LocalEpisodeFile,
+  timeoutMs: number,
+  signal?: AbortSignal,
+) {
+  const cacheKey = `${path.resolve(file.file).toLowerCase()}#${file.size}#${file.modifiedAtMs}`;
+  const cached = episodeDurationCache.get(cacheKey);
+  if (cached !== undefined) return cached;
+
+  const controller = new AbortController();
+  const abortFromCaller = () => controller.abort(signal?.reason);
+  if (signal?.aborted) abortFromCaller();
+  signal?.addEventListener("abort", abortFromCaller, { once: true });
+  const timer = setTimeout(() => controller.abort(), timeoutMs);
+  try {
+    const durationSeconds = await readVideoDurationSeconds(file.file, controller.signal);
+    if (episodeDurationCache.size >= 2_048) {
+      const oldest = episodeDurationCache.keys().next().value;
+      if (oldest) episodeDurationCache.delete(oldest);
+    }
+    episodeDurationCache.set(cacheKey, durationSeconds);
+    return durationSeconds;
+  } catch (error) {
+    if (signal?.aborted) {
+      throw signal.reason instanceof Error
+        ? signal.reason
+        : Object.assign(new Error("视频时长校验已终止。"), { name: "AbortError" });
+    }
+    if (controller.signal.aborted) {
+      throw new Error(`[episode-duration-invalid] 读取视频时长超时: ${file.file}`);
+    }
+    throw new Error(
+      `[episode-duration-invalid] 无法读取视频时长: ${file.file}; ${
+        error instanceof Error ? error.message : String(error)
+      }`,
+    );
+  } finally {
+    clearTimeout(timer);
+    signal?.removeEventListener("abort", abortFromCaller);
+  }
+}
+
+export async function validateLocalEpisodeMinimumDuration(options: {
+  localEpisodeVideoRoot: string;
+  resourceName: string;
+  episodeCount: number;
+  minimumDurationSeconds?: number;
+  concurrency?: number;
+  perFileTimeoutMs?: number;
+  onLog?: (message: string) => void;
+  signal?: AbortSignal;
+}) {
+  const minimumDurationSeconds = Number(options.minimumDurationSeconds);
+  if (!Number.isFinite(minimumDurationSeconds) || minimumDurationSeconds <= 0) return [];
+
+  await validateLocalEpisodeVideos(options);
+  const files = await listLocalEpisodeFiles({
+    root: options.localEpisodeVideoRoot,
+    resourceName: options.resourceName,
+  });
+  const durations = new Array<EpisodeVideoDuration>(files.length);
+  const concurrency = Math.min(files.length, Math.max(1, Math.floor(options.concurrency ?? 4)));
+  const perFileTimeoutMs = Math.max(1_000, options.perFileTimeoutMs ?? 15_000);
+  let cursor = 0;
+
+  options.onLog?.(
+    `[episode-duration] 开始校验${files.length}集，要求每集时长大于${minimumDurationSeconds}秒`,
+  );
+  await Promise.all(Array.from({ length: concurrency }, async () => {
+    while (cursor < files.length) {
+      options.signal?.throwIfAborted();
+      const position = cursor;
+      cursor += 1;
+      const file = files[position];
+      durations[position] = {
+        index: file.index,
+        file: file.file,
+        durationSeconds: await cachedVideoDurationSeconds(file, perFileTimeoutMs, options.signal),
+      };
+    }
+  }));
+
+  const violations = findEpisodeMinimumDurationViolations(durations, minimumDurationSeconds);
+  if (violations.length > 0) {
+    const visible = violations.slice(0, 20).map((episode) => (
+      `第${episode.index}集=${episode.durationSeconds.toFixed(2)}秒(${path.basename(episode.file)})`
+    ));
+    const remaining = violations.length > visible.length
+      ? `；另有${violations.length - visible.length}集不符合要求`
+      : "";
+    throw new Error(
+      `[episode-duration-invalid] 存在时长不超过${minimumDurationSeconds}秒的剧集，共${violations.length}集：`
+        + `${visible.join("；")}${remaining}`,
+    );
+  }
+
+  options.onLog?.(
+    `[episode-duration] 校验通过：${durations.length}集时长均大于${minimumDurationSeconds}秒`,
+  );
+  return durations;
 }
 
 async function createEpisodeUploadHardLink(source: string, target: string) {

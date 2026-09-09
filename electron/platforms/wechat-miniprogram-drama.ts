@@ -70,6 +70,7 @@ export type WechatMiniProgramConfig = {
   videoTranscodeThreadsPerJob: string
   episodeVideoMaxFileMegabytes: string
   episodeVideoTargetFileMegabytes: string
+  episodeVideoMinimumDurationSeconds: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string
@@ -109,6 +110,7 @@ const defaultWechatMiniProgramConfig: WechatMiniProgramConfig = {
   videoTranscodeThreadsPerJob: '2',
   episodeVideoMaxFileMegabytes: '490',
   episodeVideoTargetFileMegabytes: '480',
+  episodeVideoMinimumDurationSeconds: '0',
   episodeUploadWaitTimeoutSeconds: '7200',
   episodeUploadFailedRetryAttempts: '5',
   feishuBotWebhookUrl: '',
@@ -225,6 +227,14 @@ function broadcastConfigChanged(result: WechatMiniProgramConfigResult) {
 function normalizeConfig(
   config: Partial<WechatMiniProgramConfig> & Record<string, string | undefined>,
 ): WechatMiniProgramConfig {
+  const configuredMinimumDuration = config.episodeVideoMinimumDurationSeconds?.trim()
+  const normalizedMinimumDuration = configuredMinimumDuration !== undefined
+    && configuredMinimumDuration !== ''
+    && Number.isFinite(Number(configuredMinimumDuration))
+    && Number(configuredMinimumDuration) >= 0
+    ? configuredMinimumDuration
+    : defaultWechatMiniProgramConfig.episodeVideoMinimumDurationSeconds
+
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatMiniProgramConfig.apiBaseUrl,
     taskApiPrefix: config.taskApiPrefix?.trim() || defaultWechatMiniProgramConfig.taskApiPrefix,
@@ -255,6 +265,7 @@ function normalizeConfig(
         ? defaultWechatMiniProgramConfig.episodeVideoMaxFileMegabytes
         : config.episodeVideoMaxFileMegabytes,
     episodeVideoTargetFileMegabytes: config.episodeVideoTargetFileMegabytes ?? defaultWechatMiniProgramConfig.episodeVideoTargetFileMegabytes,
+    episodeVideoMinimumDurationSeconds: normalizedMinimumDuration,
     episodeUploadWaitTimeoutSeconds: config.episodeUploadWaitTimeoutSeconds ?? defaultWechatMiniProgramConfig.episodeUploadWaitTimeoutSeconds,
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatMiniProgramConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatMiniProgramConfig.feishuBotWebhookUrl,
@@ -414,6 +425,10 @@ function assertWechatMiniProgramConfigReady(config = readConfig()) {
     || targetVideoMegabytes >= maxVideoMegabytes
   ) {
     throw new Error('视频压缩目标体积必须大于 0 且小于单集视频上限。')
+  }
+  const minimumDurationSeconds = Number(config.episodeVideoMinimumDurationSeconds)
+  if (!Number.isFinite(minimumDurationSeconds) || minimumDurationSeconds < 0) {
+    throw new Error('单集最小时长必须是大于或等于 0 的数字。')
   }
 }
 

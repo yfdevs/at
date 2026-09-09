@@ -80,6 +80,7 @@ export type TencentHuolongRuntimeOptions = {
   episodeUploadWaitTimeoutMinutes?: number;
   episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
+  closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
   config?: { browser?: { headless?: boolean; slowMo?: number } };

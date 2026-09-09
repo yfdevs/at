@@ -19,6 +19,7 @@ const emptyConfig: TencentHuolongDramaConfig = {
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
+  closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/tencent-huolong-drama",
   logRetentionDays: "3",
 }
@@ -30,6 +31,14 @@ const sections: ConfigSectionDefinition<TencentHuolongDramaConfig>[] = [
     fields: [
       { key: "apiBaseUrl", label: "接口地址", description: "后端 RPA 任务接口根地址。", type: "url" },
       { key: "taskPollIntervalSeconds", label: "任务轮询间隔", description: "没有任务时再次领取的间隔。", type: "number", suffix: "秒", min: 1 },
+      {
+        kind: "switch",
+        key: "closeFailedTaskPages",
+        label: "失败任务页面",
+        description: "任务失败后是否关闭对应标签页；保留页面便于检查失败现场。",
+        activeLabel: "自动关闭失败页",
+        inactiveLabel: "保留失败页",
+      },
       { key: "baiduNetdiskDownloadRetryAttempts", label: "网盘下载重试", description: "百度网盘资源下载失败后的重试次数。", type: "number", suffix: "次", min: 0 },
       { key: "episodeUploadWaitTimeoutMinutes", label: "视频上传等待", description: "等待全部剧集上传完成的最长时间。", type: "number", suffix: "分钟", min: 1 },
       { key: "episodeUploadFailedRetryAttempts", label: "上传失败重试", description: "单集上传失败后的最多重试次数。", type: "number", suffix: "次", min: 0 },

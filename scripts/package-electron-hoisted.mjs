@@ -20,8 +20,6 @@ const runtimeDependencyNames = [
   "p-queue",
   "playwright",
   "sharp",
-  "tesseract.js",
-  "@tesseract.js-data/chi_sim",
 ];
 
 function runExecutable(command, args, options = {}) {
@@ -216,7 +214,6 @@ async function writeHoistedPnpmConfig() {
     "  electron: true",
     "  esbuild: true",
     "  ffmpeg-static: true",
-    "  tesseract.js: false",
     "",
   ].join("\n"));
 }

@@ -40,6 +40,7 @@ export type WechatMiniProgramConfig = {
   videoTranscodeThreadsPerJob: string
   episodeVideoMaxFileMegabytes: string
   episodeVideoTargetFileMegabytes: string
+  episodeVideoMinimumDurationSeconds: string
   episodeUploadWaitTimeoutSeconds: string
   episodeUploadFailedRetryAttempts: string
   feishuBotWebhookUrl: string

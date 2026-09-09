@@ -230,6 +230,7 @@ async function prepareCopyrightProofFiles(
   const selection = await findOwnershipProjectProofFiles({
     root,
     resourceName,
+    aiClient: options.aiClient,
     onClassificationProgress: (progress) => log(
       options,
       "[iqiyi-drama] classified copyright proof screenshot",

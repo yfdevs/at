@@ -55,6 +55,7 @@ export type BaiduNetdiskShareDownloadOptions = {
   expectedAiProductionProofFiles?: number;
   downloadEpisodeVideos?: boolean;
   downloadAssetMaterials?: boolean;
+  requireAllDiscoveredAssets?: boolean;
   port?: number;
   downloadDir?: string;
   signal?: AbortSignal;
@@ -69,6 +70,7 @@ export type BaiduNetdiskRemoteOwnershipFile = {
   path: string;
   fsId?: number | string;
   size?: number;
+  proofKind?: "jianying" | "juchuang";
 };
 
 export type BaiduNetdiskRemoteEpisodeFile = {

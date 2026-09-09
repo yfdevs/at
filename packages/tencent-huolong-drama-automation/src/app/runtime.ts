@@ -12,7 +12,10 @@ import {
   log,
   runWithLogContext,
 } from "../shared/logger.js";
-import { materialRoot } from "../shared/local-materials.js";
+import {
+  materialRoot,
+  validateTencentHuolongTaskMaterialReferences,
+} from "../shared/local-materials.js";
 import type {
   ClaimedTencentHuolongDramaTask,
   TencentHuolongRuntime,
@@ -72,6 +75,15 @@ async function ensureResource(task: ClaimedTencentHuolongDramaTask, options: Ten
   throw lastError;
 }
 
+export async function ensureTencentHuolongTaskResource(
+  task: ClaimedTencentHuolongDramaTask,
+  options: TencentHuolongRuntimeOptions,
+) {
+  validateTencentHuolongTaskMaterialReferences(task);
+  log(options, "[tencent-huolong-drama] 任务必需合同材料校验通过");
+  await ensureResource(task, options);
+}
+
 async function runTask(
   page: Page,
   context: BrowserContext,
@@ -89,7 +101,7 @@ async function runTask(
     await runWithLogContext(
       { accountId: task.accountId, accountName: task.accountName, accountTaskId: task.accountTaskId },
       async () => {
-        await ensureResource(task, options);
+        await ensureTencentHuolongTaskResource(task, options);
         await runTencentHuolongPublishTask(page, context, task, options);
       },
     );
@@ -165,10 +177,25 @@ export async function startTencentHuolongDramaRuntime(
         const task = await claimNextTencentHuolongDramaTask(options);
         if (task) {
           const taskPage = await activeContext.newPage();
+          let taskFailed = false;
+          log(options, `[tencent-huolong-drama] 已打开独立任务标签页：accountTaskId=${task.accountTaskId}`);
           try {
             await runTask(taskPage, activeContext, task, options, (value) => { lastTask = value; });
+          } catch (error) {
+            taskFailed = true;
+            throw error;
           } finally {
-            await taskPage.close().catch(() => undefined);
+            if (taskPage.isClosed()) {
+              log(options, `[tencent-huolong-drama] 任务标签页已被关闭：accountTaskId=${task.accountTaskId}`);
+            } else if (!taskFailed || options.closeFailedTaskPages === true) {
+              await taskPage.close().catch(() => undefined);
+              log(options, `[tencent-huolong-drama] 已关闭独立任务标签页：accountTaskId=${task.accountTaskId}`);
+            } else {
+              log(options, `[tencent-huolong-drama] 已保留失败任务标签页供排查`, {
+                accountTaskId: task.accountTaskId,
+                activeUrl: taskPage.url(),
+              });
+            }
           }
         } else {
           log(options, "[tencent-huolong-drama] 暂无可领取任务");

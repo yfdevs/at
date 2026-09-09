@@ -6,9 +6,23 @@ import test from "node:test";
 
 import {
   cleanupEpisodeUploadFiles,
+  findEpisodeMinimumDurationViolations,
   findLocalEpisodeVideos,
   prepareEpisodeUploadFiles,
 } from "../src/index.js";
+
+test("treats episode durations at or below the configured minimum as invalid", () => {
+  const episodes = [
+    { index: 1, file: "1.mp4", durationSeconds: 179.99 },
+    { index: 2, file: "2.mp4", durationSeconds: 180 },
+    { index: 3, file: "3.mp4", durationSeconds: 180.01 },
+  ];
+
+  assert.deepEqual(
+    findEpisodeMinimumDurationViolations(episodes, 180).map((episode) => episode.index),
+    [1, 2],
+  );
+});
 
 test("finds MP4 and MOV episodes and preserves their suffixes for upload", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "drama-episode-videos-"));

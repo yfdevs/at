@@ -286,7 +286,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
 
       this.repository.update(task.id, { state: "downloading" })
       this.broadcast()
-      logger.info("开始检查并下载百度网盘剧集")
+      logger.info("开始检查并下载百度网盘剧集及可选素材")
       signal.throwIfAborted()
       const rememberedEpisodeCount = Number(task.inferredEpisodeCount)
       const hasRememberedEpisodeCount = Number.isInteger(rememberedEpisodeCount)
@@ -299,7 +299,9 @@ export class WechatMiniProgramDirectUploadCoordinator {
         episodeCount: hasRememberedEpisodeCount ? rememberedEpisodeCount : undefined,
         inferEpisodeCount: !hasRememberedEpisodeCount,
         downloadEpisodeVideos: true,
-        downloadAssetMaterials: false,
+        downloadAssetMaterials: true,
+        forceAssetDownload: true,
+        requireAllDiscoveredAssets: true,
         requiredOwnership: { minimumImages: 0 },
         requiredOwnershipFiles: 0,
         requiredPosterImages: 0,
@@ -315,6 +317,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
       const {
         findLocalEpisodeVideos,
         prepareEpisodeVideos,
+        validateLocalEpisodeMinimumDuration,
         VideoTranscodeQueue,
       } = await import("@drama/drama-media-assets")
       const downloadedEpisodeVideos = await findLocalEpisodeVideos({
@@ -331,6 +334,16 @@ export class WechatMiniProgramDirectUploadCoordinator {
           `本地下载后的剧集校验失败：期望1-${episodeCount}，实际${episodeIndexes.join("、") || "无"}。`,
         )
       }
+      await abortable(validateLocalEpisodeMinimumDuration({
+        localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
+        resourceName: task.dramaName,
+        episodeCount,
+        minimumDurationSeconds: Number(settings.episodeVideoMinimumDurationSeconds),
+        concurrency: 4,
+        signal,
+        onLog: (message) => logger.info(message),
+      }), signal)
+      signal.throwIfAborted()
       this.repository.update(task.id, {
         inferredEpisodeCount: episodeCount,
         episodeIndexes,

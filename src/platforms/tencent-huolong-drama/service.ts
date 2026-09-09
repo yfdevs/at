@@ -10,6 +10,7 @@ export type TencentHuolongDramaConfig = {
   headless: string
   operationDelaySeconds: string
   taskPollIntervalSeconds: string
+  closeFailedTaskPages: string
   runDataDir: string
   logRetentionDays: string
 }

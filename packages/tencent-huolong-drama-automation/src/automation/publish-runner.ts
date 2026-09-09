@@ -51,16 +51,33 @@ async function uploadEpisodeVideos(
     await input.setInputFiles(prepared.files, { timeout: 120_000 });
     const timeoutMs = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
     const startedAt = Date.now();
+    const progressTitles = page.locator('header[class*="_header_"] div[class*="_title_"]').filter({ visible: true });
+    let lastProgress = "";
     while (Date.now() - startedAt < timeoutMs) {
+      const titles = await progressTitles.allInnerTexts();
+      const progressText = titles.find((text) => /(?:正在上传|上传完成).*?[（(]\s*\d+\s*\/\s*\d+\s*[)）]/u.test(text));
+      const match = progressText?.match(/[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/u);
+      if (match) {
+        const completed = Number(match[1]);
+        const total = Number(match[2]);
+        const progress = `${completed}/${total}`;
+        if (progress !== lastProgress) {
+          log(options, `[tencent-huolong-drama] 剧集视频上传进度：${progress}`);
+          lastProgress = progress;
+        }
+        if (completed >= prepared.files.length && total === prepared.files.length) {
+          log(options, `[tencent-huolong-drama] 剧集视频已全部上传完成：${progress}`);
+          return;
+        }
+      }
+
       const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      if (
-        /全部.*上传完成|上传完成|上传成功|已完成/.test(bodyText)
-        && !/上传中|处理中|封面图生成中/.test(bodyText)
-      ) return;
-      if (/上传失败|重新上传/.test(bodyText)) throw new Error("TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED");
-      await page.waitForTimeout(2_000);
+      if (/上传失败/.test(bodyText)) {
+        throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED${lastProgress ? `: progress=${lastProgress}` : ""}`);
+      }
+      await page.waitForTimeout(1_000);
     }
-    throw new Error("TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_TIMEOUT");
+    throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_TIMEOUT${lastProgress ? `: progress=${lastProgress}` : ""}`);
   } finally {
     await cleanupEpisodeUploadFiles(prepared);
   }

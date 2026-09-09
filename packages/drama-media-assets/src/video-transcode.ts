@@ -114,7 +114,7 @@ function runFfmpeg(
   });
 }
 
-async function readVideoDurationSeconds(inputFile: string, signal?: AbortSignal) {
+export async function readVideoDurationSeconds(inputFile: string, signal?: AbortSignal) {
   const result = await runFfmpeg(
     ["-hide_banner", "-i", inputFile],
     {

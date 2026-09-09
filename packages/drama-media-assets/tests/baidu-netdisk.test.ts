@@ -53,13 +53,15 @@ test("strict mode waits for every remotely discovered optional asset", () => {
       requiredOwnershipFiles: 0,
       discoveredOwnershipImages: 13,
       discoveredOwnershipFiles: 13,
+      discoveredPosterImages: 4,
+      discoveredAiProductionProofFiles: 2,
       requireAllDiscoveredAssets: true,
     }),
     {
       ownershipImages: 13,
       ownershipFiles: 13,
-      posterImages: 0,
-      aiProductionProofFiles: 0,
+      posterImages: 4,
+      aiProductionProofFiles: 2,
     },
   );
 });

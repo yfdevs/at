@@ -81,6 +81,13 @@ export function isSupportedEpisodeVideoFileName(fileName: string) {
   return /\.(?:mp4|mov)$/i.test(fileName);
 }
 
+export function classifyBaiduNetdiskOwnershipProofName(name: string) {
+  const compactName = String(name || "").replace(/\s+/g, "");
+  if (/剪映|jianying|capcut/iu.test(compactName)) return "jianying" as const;
+  if (/剧创|即梦|jimeng|dreamina/iu.test(compactName)) return "juchuang" as const;
+  return undefined;
+}
+
 export function isAutomationTemporaryTransferPath(value: string, nowMs = Date.now()) {
   const parts = String(value || "").split("/").filter(Boolean);
   if (parts.length !== 1) return false;
@@ -1595,6 +1602,7 @@ async function saveShareToOwnNetdisk(
   const alreadySaved = !createdTarget && transferredCount === 0;
   const escapeRegExp = (value) => String(value).replace(/[\\\\^$.*+?()[\\]{}|]/g, "\\\\$&");
   const isSupportedEpisodeVideoFileName = ${isSupportedEpisodeVideoFileName.toString()};
+  const classifyOwnershipProofName = ${classifyBaiduNetdiskOwnershipProofName.toString()};
   const episodeBaseNames = [...new Set([expectedName, sourceName, ...sourceNames, finalFileName].filter(Boolean))];
   const episodePatterns = episodeBaseNames.flatMap((baseName) => {
     const escaped = escapeRegExp(baseName);
@@ -1786,6 +1794,7 @@ async function saveShareToOwnNetdisk(
             path: entryPath,
             fsId: itemFsId(entry),
             size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+            proofKind: classifyOwnershipProofName(current.name + "/" + name),
           });
         }
       }
@@ -2700,6 +2709,7 @@ async function submitSavedDownload(
   downloadEpisodeVideos = true,
   inferEpisodeCount = false,
   downloadAssetMaterials = true,
+  requireAllDiscoveredAssets = false,
   saveOptions: SaveShareOptions = {},
   onTemporaryTransferCreated?: BaiduNetdiskShareDownloadOptions["onTemporaryTransferCreated"],
   signal?: AbortSignal,
@@ -2832,6 +2842,7 @@ async function submitSavedDownload(
           downloadEpisodeVideos,
           inferEpisodeCount,
           downloadAssetMaterials,
+          requireAllDiscoveredAssets,
           { isolatedRoot: true, isolatedRootUnique: true },
           onTemporaryTransferCreated,
           signal,
@@ -2887,6 +2898,7 @@ async function submitSavedDownload(
           downloadEpisodeVideos,
           inferEpisodeCount,
           downloadAssetMaterials,
+          requireAllDiscoveredAssets,
           { isolatedRoot: true, isolatedRootUnique: true },
           onTemporaryTransferCreated,
           signal,
@@ -2912,6 +2924,13 @@ async function submitSavedDownload(
   }
   const requiredOwnershipImages = Math.max(0, expectedOwnershipCounts?.minimumImages ?? 0);
   log(`网盘权属材料清单：图片=${remoteOwnership.files.length}/${requiredOwnershipImages}`);
+  const namedJianyingProofs = remoteOwnership.files.filter((file) => file.proofKind === "jianying").length;
+  const namedJuchuangProofs = remoteOwnership.files.filter((file) => file.proofKind === "juchuang").length;
+  const unnamedOwnershipProofs = remoteOwnership.files.length - namedJianyingProofs - namedJuchuangProofs;
+  log(
+    `网盘权属文件名识别：剪映=${namedJianyingProofs}，剧创=${namedJuchuangProofs}，` +
+      `需图片识别=${unnamedOwnershipProofs}`,
+  );
   if (remoteOwnership.files.length < requiredOwnershipImages) {
     throw new RemoteMaterialValidationError({
       material: "ownership-images",
@@ -3060,7 +3079,10 @@ async function submitSavedDownload(
     if (!posterSubmitted) throw new Error(`百度网盘海报封面目录下载任务提交失败：${posterTaskName}`);
   }
 
-  if (downloadAssetMaterials && requiredAiProductionProofFiles > 0) {
+  if (
+    downloadAssetMaterials
+    && (requiredAiProductionProofFiles > 0 || requireAllDiscoveredAssets)
+  ) {
     for (const proofRoot of remoteAiProductionProofs.roots) {
       if (!proofRoot.path || !proofRoot.fsId || submittedAssetRoots.has(proofRoot.path)) continue;
       assertDedicatedAssetRoot(proofRoot.path, "AI制作证明");
@@ -3168,6 +3190,7 @@ async function downloadBaiduNetdiskSharePromise(
     options.downloadEpisodeVideos !== false,
     options.inferEpisodeCount === true,
     options.downloadAssetMaterials !== false,
+    options.requireAllDiscoveredAssets === true,
     {},
     options.onTemporaryTransferCreated,
     options.signal,

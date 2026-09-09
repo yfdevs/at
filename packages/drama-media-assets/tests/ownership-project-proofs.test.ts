@@ -1,10 +1,11 @@
 import assert from "node:assert/strict";
 import { existsSync } from "node:fs";
-import { copyFile, mkdir, mkdtemp, rm } from "node:fs/promises";
+import { copyFile, mkdir, mkdtemp, rm, stat } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
 
+import type { DramaAiClient } from "@drama/ai";
 import sharp from "sharp";
 
 import {
@@ -12,13 +13,32 @@ import {
   classifyOwnershipProjectProofName,
   findOwnershipProjectProofFiles,
   selectOwnershipProjectProofFiles,
+  standardizeOwnershipMaterialsToRoot,
   type ClassifiedOwnershipProjectProof,
 } from "../src/index.js";
-import { ownershipProjectProofOcrTextContainsJianying } from
-  "../src/ownership-project-proof-ocr.js";
 
 const liveOwnershipProofDirectory =
   "D:\\BaiduNetdiskDownload\\装够了，本宫天下无敌\\权属文件";
+
+function cloudAiClassifier(hasJianying: boolean): DramaAiClient {
+  return {
+    analyzeImages: async (options) => {
+      assert.equal(options.images.length, 1);
+      const image = options.images[0];
+      assert.equal(image?.type, "data-url");
+      if (image?.type === "data-url") {
+        assert.match(image.dataUrl, /^data:image\/jpeg;base64,/u);
+      }
+      return {
+        finishReason: "stop",
+        model: "test-vision-model",
+        text: JSON.stringify({ hasJianying }),
+      };
+    },
+    generateImage: async () => { throw new Error("not used"); },
+    generateText: async () => { throw new Error("not used"); },
+  };
+}
 
 function proof(index: number, kind: ClassifiedOwnershipProjectProof["kind"]) {
   return {
@@ -42,15 +62,6 @@ test("prefers explicit proof source names", () => {
   assert.equal(classifyOwnershipProjectProofName("测试剧 - 权属工程文件1.png"), undefined);
 });
 
-test("recognizes 剪映 from OCR text and its common wordmark misreadings", () => {
-  assert.equal(ownershipProjectProofOcrTextContainsJianying("剪 映  菜单"), true);
-  assert.equal(
-    ownershipProjectProofOcrTextContainsJianying("兰勇相 菜单 素材 音频 文本 贴纸"),
-    true,
-  );
-  assert.equal(ownershipProjectProofOcrTextContainsJianying("开启创作"), false);
-});
-
 test("classifies explicitly named parent directories without opening the image", async () => {
   assert.equal(
     await classifyOwnershipProjectProof("D:\\素材\\权属文件\\剪映\\工程1.png", "工程1.png"),
@@ -62,7 +73,44 @@ test("classifies explicitly named parent directories without opening the image",
   );
 });
 
-test("treats valid screenshots without 剪映 OCR text as 剧创 and rejects non-screenshots", async () => {
+test("preserves Baidu filename labels while standardizing and skips cloud AI", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ownership-name-preservation-"));
+  const sourceDir = path.join(root, "download", "权属");
+  const targetRoot = path.join(root, "materials");
+  const resourceName = "测试剧";
+  await mkdir(sourceDir, { recursive: true });
+  const sourceNames = ["剪映.png", "剪映1.png", "剧创.png", "剧创1.png"];
+
+  try {
+    const sourceFiles = await Promise.all(sourceNames.map(async (name, index) => {
+      const file = path.join(sourceDir, name);
+      await sharp({
+        create: { width: 1_920, height: 1_080, channels: 3, background: `rgb(${index},0,0)` },
+      }).png().toFile(file);
+      return { name, file, size: (await stat(file)).size };
+    }));
+    const standardized = await standardizeOwnershipMaterialsToRoot({
+      materials: sourceFiles,
+      requirements: { minimumImages: 4 },
+      targetRoot,
+      resourceName,
+    });
+
+    assert.deepEqual(standardized.map((file) => file.name), [
+      "测试剧 - 剪映1.png",
+      "测试剧 - 剪映2.png",
+      "测试剧 - 剧创1.png",
+      "测试剧 - 剧创2.png",
+    ]);
+    const selection = await findOwnershipProjectProofFiles({ root: targetRoot, resourceName });
+    assert.equal(selection.jianying.length, 2);
+    assert.equal(selection.juchuang.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("uses cloud AI for valid screenshots and rejects non-screenshots", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "ownership-project-proof-"));
   try {
     const darkScreenshot = path.join(root, "工程1.png");
@@ -80,16 +128,25 @@ test("treats valid screenshots without 剪映 OCR text as 剧创 and rejects non
         .toFile(portraitLikeImage),
     ]);
 
-    assert.equal(await classifyOwnershipProjectProof(darkScreenshot), "juchuang");
-    assert.equal(await classifyOwnershipProjectProof(lightScreenshot), "juchuang");
-    assert.equal(await classifyOwnershipProjectProof(portraitLikeImage), "unknown");
+    assert.equal(
+      await classifyOwnershipProjectProof(darkScreenshot, undefined, cloudAiClassifier(true)),
+      "jianying",
+    );
+    assert.equal(
+      await classifyOwnershipProjectProof(lightScreenshot, undefined, cloudAiClassifier(false)),
+      "juchuang",
+    );
+    assert.equal(
+      await classifyOwnershipProjectProof(portraitLikeImage, undefined, cloudAiClassifier(false)),
+      "unknown",
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }
 });
 
 test(
-  "classifies the live 剪映 and 剧创 screenshots from pixels after removing filename hints",
+  "sends live ownership screenshots to the cloud AI classifier after removing filename hints",
   { skip: !existsSync(liveOwnershipProofDirectory) },
   async () => {
     const root = await mkdtemp(path.join(tmpdir(), "ownership-project-proof-live-"));
@@ -109,7 +166,11 @@ test(
         const neutralFile = path.join(root, `截图-${index + 1}.png`);
         await copyFile(fixture.source, neutralFile);
         assert.equal(
-          await classifyOwnershipProjectProof(neutralFile, path.basename(neutralFile)),
+          await classifyOwnershipProjectProof(
+            neutralFile,
+            path.basename(neutralFile),
+            cloudAiClassifier(fixture.expected === "jianying"),
+          ),
           fixture.expected,
           fixture.source,
         );

@@ -24,6 +24,8 @@ import {
 } from "./form-controls.js";
 import { uploadIqiyiEpisodeVideos } from "./video-upload.js";
 
+const postSubmitSettleMs = 10_000;
+
 async function waitForCreateForm(page: Page) {
   const deadline = Date.now() + 60_000;
   while (Date.now() < deadline) {
@@ -321,8 +323,11 @@ export async function runIqiyiPublishTask(
   await throwIfIqiyiFormInvalid(page);
   const clicked = await clickIqiyiButton(page, ["提交项目"]);
   if (!clicked) throw new Error("IQIYI_DRAMA_SUBMIT_BUTTON_NOT_FOUND");
-  await page.waitForTimeout(2_000);
+  log(
+    options,
+    `[iqiyi-drama] clicked project action: ${clicked}; waiting ${postSubmitSettleMs / 1_000}s before task page may close`,
+  );
+  await page.waitForTimeout(postSubmitSettleMs);
   await throwIfIqiyiFormInvalid(page);
-  log(options, `[iqiyi-drama] clicked project action: ${clicked}`);
   await saveCredentialState(context, options).catch(() => undefined);
 }

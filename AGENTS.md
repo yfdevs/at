@@ -28,6 +28,12 @@ This repository is a multi-platform desktop automation app. The current implemen
 - Business configuration is injected into automation runtimes from the platform main-process module. Do not read business settings from environment files or `process.env`.
 - Infrastructure variables required by tooling, such as `PLAYWRIGHT_BROWSERS_PATH`, are allowed only at the platform/runtime boot boundary.
 
+## Submission And Task Page Lifecycle
+
+- After a platform's final submit action is clicked, keep its dedicated task page open for at least 10 seconds before closing it, even when a success signal appears immediately.
+- The 10-second settle period is only a minimum safety buffer. It does not replace platform-specific success verification; close a successful task page only after both the settle period and the success check have completed.
+- Failed task pages must continue to follow the platform's configured failure-page retention policy.
+
 ## Platform Expansion Checklist
 
 When adding a new platform:

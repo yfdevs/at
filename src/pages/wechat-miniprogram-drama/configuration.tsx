@@ -58,6 +58,7 @@ const emptyConfig: WechatMiniProgramConfig = {
   videoTranscodeThreadsPerJob: "2",
   episodeVideoMaxFileMegabytes: "490",
   episodeVideoTargetFileMegabytes: "480",
+  episodeVideoMinimumDurationSeconds: "0",
   episodeUploadWaitTimeoutSeconds: "7200",
   episodeUploadFailedRetryAttempts: "5",
   feishuBotWebhookUrl: "",
@@ -252,6 +253,13 @@ const sections: Array<{
         type: "number",
         description: "为容器开销预留余量，必须小于单集视频上限。",
         suffix: "MB",
+      },
+      {
+        key: "episodeVideoMinimumDurationSeconds",
+        label: "单集最小时长",
+        type: "number",
+        description: "任一集时长不超过该值时任务失败；设为 0 则关闭校验。正常任务和百度网盘直传同时生效。",
+        suffix: "秒",
       },
       {
         key: "videoTranscodeConcurrency",

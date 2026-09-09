@@ -2,6 +2,7 @@ import {
   findLocalEpisodeVideos,
   isNonRetryableBaiduNetdiskResourceError,
   prepareEpisodeVideos,
+  validateLocalEpisodeMinimumDuration,
   VideoTranscodeQueue,
   type VideoSizePolicy,
 } from "@drama/drama-media-assets";
@@ -351,6 +352,19 @@ export class TaskWorkerPool {
           worker.abortController.signal,
         );
         await validateLocalEpisodeVideos(playletConfig);
+        const settings = getWechatMiniProgramRuntimeSettings();
+        await validateLocalEpisodeMinimumDuration({
+          localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
+          resourceName: playletConfig.originalTitle,
+          episodeCount: playletConfig.playlet.episodeCount,
+          minimumDurationSeconds: Number(settings.episodeVideoMinimumDurationSeconds),
+          concurrency: 4,
+          signal: worker.abortController.signal,
+          onLog: (message) => logger.info(message, {
+            accountTaskId: claimedAccountTask.accountTaskId,
+            videoAccountId,
+          }),
+        });
         await prepareWechatPosterMaterials(playletConfig);
         const aiProductionProofFiles = await prepareWechatAiProductionProofMaterials(playletConfig);
         const productionProofFiles = await prepareWechatProductionProofMaterials(

@@ -23,6 +23,7 @@ export interface WechatMiniProgramRuntimeSettings {
   videoTranscodeThreadsPerJob: string;
   episodeVideoMaxFileMegabytes: string;
   episodeVideoTargetFileMegabytes: string;
+  episodeVideoMinimumDurationSeconds: string;
   episodeUploadWaitTimeoutSeconds: string;
   episodeUploadFailedRetryAttempts: string;
   feishuBotWebhookUrl: string;
@@ -53,6 +54,7 @@ export const defaultWechatMiniProgramRuntimeSettings: WechatMiniProgramRuntimeSe
   videoTranscodeThreadsPerJob: "2",
   episodeVideoMaxFileMegabytes: "490",
   episodeVideoTargetFileMegabytes: "480",
+  episodeVideoMinimumDurationSeconds: "0",
   episodeUploadWaitTimeoutSeconds: "7200",
   episodeUploadFailedRetryAttempts: "5",
   feishuBotWebhookUrl: "",

@@ -32,22 +32,72 @@ export async function selectFormItem(page: Page, label: string, value: string) {
   await selectDropdownOption(page, trigger, value);
 }
 
-export async function selectDropdownOption(page: Page, trigger: Locator, value: string) {
-  const currentValue = [
+async function dropdownTriggerValue(trigger: Locator) {
+  const selectRoot = trigger.locator(
+    "xpath=ancestor-or-self::*[contains(concat(' ', normalize-space(@class), ' '), ' cheetah-select ')][1]",
+  );
+  const selectionItem = selectRoot.locator(".cheetah-select-selection-item").first();
+  return [
     await trigger.inputValue().catch(() => ""),
     await trigger.textContent().catch(() => ""),
     await trigger.getAttribute("title").catch(() => ""),
-  ].filter(Boolean).join(" ");
-  if (currentValue.trim() === value || currentValue.split(/\s+/).includes(value)) return;
-  await trigger.click();
-  const dropdown = page.locator(".cheetah-select-dropdown:visible").last();
-  await dropdown.waitFor({ state: "visible", timeout: 10_000 });
-  const option = dropdown
-    .locator('[role="option"], .cheetah-select-item-option')
+    await selectionItem.textContent().catch(() => ""),
+    await selectionItem.getAttribute("title").catch(() => ""),
+  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+}
+
+async function findVirtualizedDropdownOption(
+  page: Page,
+  dropdown: Locator,
+  value: string,
+) {
+  const option = () => dropdown
+    .locator(".cheetah-select-item-option")
     .filter({ hasText: exactTextPattern(value), visible: true })
     .first();
-  await option.waitFor({ state: "visible", timeout: 10_000 });
-  await option.click();
+  if (await option().isVisible().catch(() => false)) return option();
+
+  const holder = dropdown.locator(".rc-virtual-list-holder").first();
+  if (!(await holder.count())) {
+    throw new Error(`BAIDU_DRAMA_DROPDOWN_OPTION_NOT_FOUND: ${value}`);
+  }
+  const metrics = await holder.evaluate((element) => ({
+    clientHeight: element.clientHeight,
+    maximumScrollTop: Math.max(0, element.scrollHeight - element.clientHeight),
+  }));
+  const step = Math.max(36, Math.floor(metrics.clientHeight * 0.75));
+  const offsets: number[] = [];
+  for (let offset = 0; offset < metrics.maximumScrollTop; offset += step) offsets.push(offset);
+  offsets.push(metrics.maximumScrollTop);
+
+  for (const scrollTop of [...new Set(offsets)]) {
+    await holder.evaluate((element, nextScrollTop) => {
+      element.scrollTop = nextScrollTop;
+      element.dispatchEvent(new Event("scroll", { bubbles: true }));
+    }, scrollTop);
+    await page.waitForTimeout(80);
+    if (await option().isVisible().catch(() => false)) return option();
+  }
+
+  throw new Error(`BAIDU_DRAMA_DROPDOWN_OPTION_NOT_FOUND: ${value}`);
+}
+
+export async function selectDropdownOption(page: Page, trigger: Locator, value: string) {
+  const currentValue = await dropdownTriggerValue(trigger);
+  if (currentValue.trim() === value || currentValue.split(/\s+/).includes(value)) return;
+  if (await trigger.getAttribute("aria-expanded").catch(() => "false") !== "true") {
+    await trigger.click();
+  }
+  const dropdown = page.locator(".cheetah-select-dropdown:visible").last();
+  await dropdown.waitFor({ state: "visible", timeout: 10_000 });
+  const option = await findVirtualizedDropdownOption(page, dropdown, value);
+  await option.click({ force: true, timeout: 5_000 });
+  await dropdown.waitFor({ state: "hidden", timeout: 5_000 });
+
+  const selectedValue = await dropdownTriggerValue(trigger);
+  if (selectedValue !== value && !selectedValue.split(/\s+/).includes(value)) {
+    throw new Error(`BAIDU_DRAMA_DROPDOWN_OPTION_NOT_SELECTED: ${value}`);
+  }
 }
 
 export async function selectRadio(page: Page, label: string, value: string) {

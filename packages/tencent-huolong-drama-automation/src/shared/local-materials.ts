@@ -64,10 +64,30 @@ function assertFiles(label: string, files: string[], minimum: number) {
   }
 }
 
+export function validateTencentHuolongTaskMaterialReferences(
+  task: ClaimedTencentHuolongDramaTask,
+) {
+  // These documents are business data supplied by the task API. Unlike posters,
+  // episodes and project screenshots, they cannot be derived from the netdisk
+  // resource, so reject the task before starting a potentially large download.
+  const missing = [
+    task.playlet.costAnalysisFiles.length < 1
+      ? `成本配置分析（承诺函）至少需要1个，实际=${task.playlet.costAnalysisFiles.length}`
+      : null,
+    task.playlet.nonInfringementCommitmentFiles.length < 1
+      ? `不侵权承诺函至少需要1个，实际=${task.playlet.nonInfringementCommitmentFiles.length}`
+      : null,
+  ].filter((message): message is string => Boolean(message));
+  if (missing.length > 0) {
+    throw new Error(`TENCENT_HUOLONG_DRAMA_TASK_MATERIAL_INVALID: ${missing.join("；")}`);
+  }
+}
+
 export async function prepareTencentHuolongRequiredMaterials(
   task: ClaimedTencentHuolongDramaTask,
   options: TencentHuolongRuntimeOptions,
 ) {
+  validateTencentHuolongTaskMaterialReferences(task);
   await validateEpisodeVideos(task, options);
   const ownership = await listLocalOwnershipMaterials({
     root: materialRoot(options),

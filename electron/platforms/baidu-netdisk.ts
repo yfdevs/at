@@ -128,6 +128,7 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   downloadEpisodeVideos?: boolean;
   downloadAssetMaterials?: boolean;
   forceAssetDownload?: boolean;
+  requireAllDiscoveredAssets?: boolean;
   requiredOwnership?: {
     minimumImages?: number;
   };
@@ -827,6 +828,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       expectedAiProductionProofFiles?: number;
       downloadEpisodeVideos?: boolean;
       downloadAssetMaterials?: boolean;
+      requireAllDiscoveredAssets?: boolean;
       port: number;
       downloadDir: string;
       signal?: AbortSignal;
@@ -1125,6 +1127,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       downloadAssetMaterials: request.downloadAssetMaterials,
       inferEpisodeCount: request.inferEpisodeCount,
       forceAssetDownload: request.forceAssetDownload,
+      requireAllDiscoveredAssets: request.requireAllDiscoveredAssets,
       requiredOwnership: request.requiredOwnership,
       requiredOwnershipFiles: request.requiredOwnershipFiles,
       requiredPosterImages: request.requiredPosterImages,
@@ -1147,6 +1150,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             expectedAiProductionProofFiles: downloadRequest.expectedAiProductionProofFiles,
             downloadEpisodeVideos: downloadRequest.downloadEpisodeVideos,
             downloadAssetMaterials: downloadRequest.downloadAssetMaterials,
+            requireAllDiscoveredAssets: downloadRequest.requireAllDiscoveredAssets,
             port,
             downloadDir: downloadRequest.downloadDir,
             signal: request.signal,

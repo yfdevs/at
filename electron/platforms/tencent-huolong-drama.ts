@@ -74,6 +74,7 @@ export type TencentHuolongDramaConfig = {
   headless: string;
   operationDelaySeconds: string;
   taskPollIntervalSeconds: string;
+  closeFailedTaskPages: string;
   runDataDir: string;
   logRetentionDays: string;
 };
@@ -100,6 +101,7 @@ const defaults: TencentHuolongDramaConfig = {
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
+  closeFailedTaskPages: "false",
   runDataDir: "D:\\.drama-runs\\tencent-huolong-drama",
   logRetentionDays: "3",
 };
@@ -133,6 +135,7 @@ function normalizeConfig(config: Partial<TencentHuolongDramaConfig>): TencentHuo
     headless: config.headless ?? defaults.headless,
     operationDelaySeconds: numberText(config.operationDelaySeconds, "0"),
     taskPollIntervalSeconds: numberText(config.taskPollIntervalSeconds, "10", 1),
+    closeFailedTaskPages: config.closeFailedTaskPages ?? defaults.closeFailedTaskPages,
     runDataDir: config.runDataDir?.trim() || defaults.runDataDir,
     logRetentionDays: numberText(config.logRetentionDays, "3", 1),
   };
@@ -251,6 +254,7 @@ async function startRuntime(): Promise<PlatformRuntime> {
         episodeUploadWaitTimeoutMinutes: Number(config.episodeUploadWaitTimeoutMinutes) || 120,
         episodeUploadFailedRetryAttempts: Number(config.episodeUploadFailedRetryAttempts) || 0,
         taskPollIntervalMs: (Number(config.taskPollIntervalSeconds) || 10) * 1_000,
+        closeFailedTaskPages: config.closeFailedTaskPages === "true",
         aiClient,
         aiImageModel,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) =>

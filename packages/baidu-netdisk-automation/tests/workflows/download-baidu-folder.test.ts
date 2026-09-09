@@ -2,12 +2,20 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  classifyBaiduNetdiskOwnershipProofName,
   compareRemoteVideoDirectoryCandidates,
   inspectContiguousEpisodeIndexes,
   isAutomationTemporaryTransferPath,
   isSupportedEpisodeVideoFileName,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
+
+test("recognizes labeled ownership screenshots from Baidu filenames", () => {
+  assert.equal(classifyBaiduNetdiskOwnershipProofName("权属/剪映.png"), "jianying");
+  assert.equal(classifyBaiduNetdiskOwnershipProofName("权属/剪映 1.PNG"), "jianying");
+  assert.equal(classifyBaiduNetdiskOwnershipProofName("权属/剧创2.png"), "juchuang");
+  assert.equal(classifyBaiduNetdiskOwnershipProofName("权属/权属工程文件1.png"), undefined);
+});
 
 test("only accepts root-level timestamped automation transfer directories", () => {
   const createdAt = Date.parse("2026-09-05T06:31:54.375Z");

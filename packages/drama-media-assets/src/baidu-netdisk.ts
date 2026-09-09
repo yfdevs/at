@@ -102,6 +102,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
     expectedAiProductionProofFiles?: number;
     downloadEpisodeVideos?: boolean;
     downloadAssetMaterials?: boolean;
+    requireAllDiscoveredAssets?: boolean;
     downloadDir: string;
   }) => Promise<BaiduNetdiskShareDownloadResult>;
   getDownloadTaskStatus?: (request: {
@@ -1015,6 +1016,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     ),
     downloadEpisodeVideos,
     downloadAssetMaterials: options.downloadAssetMaterials,
+    requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
     downloadDir,
   }), options.signal);
   throwIfAborted(options.signal);
