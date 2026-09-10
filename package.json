@@ -1,6 +1,6 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.106",
+  "version": "0.0.107",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -16,9 +16,7 @@
     "release:win": "node scripts/release-win.mjs",
     "postinstall": "node scripts/rebuild-electron-native.mjs",
     "prepare": "vp config",
-    "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --if-present test",
-    "tencent-huolong-drama:check": "pnpm --filter @drama/tencent-huolong-drama-automation check",
-    "tencent-huolong-drama:build": "pnpm --filter @drama/tencent-huolong-drama-automation build"
+    "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --if-present test"
   },
   "dependencies": {
     "@base-ui/react": "^1.6.0",

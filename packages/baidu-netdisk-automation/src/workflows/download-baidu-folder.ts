@@ -81,6 +81,10 @@ export function isSupportedEpisodeVideoFileName(fileName: string) {
   return /\.(?:mp4|mov)$/i.test(fileName);
 }
 
+export function isBaiduNetdiskIncompleteProgressDirectoryName(name: string) {
+  return /(?:^|[^\d])\d{1,2}(?:\.\d+)?\s*[%％]/.test(String(name || "").trim());
+}
+
 export function classifyBaiduNetdiskOwnershipProofName(name: string) {
   const compactName = String(name || "").replace(/\s+/g, "");
   if (/剪映|jianying|capcut/iu.test(compactName)) return "jianying" as const;
@@ -795,6 +799,7 @@ async function saveShareToOwnNetdisk(
   const REMOTE_DIR_ENTRY_SAMPLE_LIMIT = ${REMOTE_DIR_ENTRY_SAMPLE_LIMIT};
   const REMOTE_VIDEO_SCAN_MAX_DEPTH = ${REMOTE_VIDEO_SCAN_MAX_DEPTH};
   const REMOTE_VIDEO_SCAN_MAX_DIRS = ${REMOTE_VIDEO_SCAN_MAX_DIRS};
+  const isBaiduNetdiskIncompleteProgressDirectoryName = ${isBaiduNetdiskIncompleteProgressDirectoryName.toString()};
 
   for (const item of document.querySelectorAll(
     ".dialog-close,#dialog1 .close,#moduleDownloadDialog .dialog-close,.nd-dialog-close",
@@ -1683,8 +1688,8 @@ async function saveShareToOwnNetdisk(
   };
   const scannedDirs = [];
   const scannedDirPaths = new Set();
-  const rootIsOwnership = /工程|权属|资质|版权/.test(String(finalFileName).replace(/\s+/g, ""));
-  const rootIsAiProductionProof = /ai制作证明/i.test(String(finalFileName).replace(/\s+/g, ""));
+  const rootIsOwnership = /工程|权属|资质|版权/.test(String(finalFileName).replace(/s+/g, ""));
+  const rootIsAiProductionProof = /ai制作证明/i.test(String(finalFileName).replace(/s+/g, ""));
   const queue = [{
     path: normalizeDir(savedPath),
     name: finalFileName,
@@ -1716,7 +1721,7 @@ async function saveShareToOwnNetdisk(
     scannedDirs.push(listResult.debug);
     const entries = listResult.entries;
     const directImages = entries
-      .filter((entry) => !(entry?.isdir === 1 || entry?.isdir === true) && /\.(?:png|jpe?g|bmp|webp)$/i.test(itemName(entry)))
+      .filter((entry) => !(entry?.isdir === 1 || entry?.isdir === true) && /.(?:png|jpe?g|bmp|webp)$/i.test(itemName(entry)))
       .sort((left, right) => itemName(left).localeCompare(itemName(right), "zh-CN", { numeric: true }));
     const namedPosterImages = directImages.filter((entry) => /封面|海报/.test(itemName(entry)));
     const selectedPosterImages = namedPosterImages.length > 0
@@ -1731,10 +1736,14 @@ async function saveShareToOwnNetdisk(
       const name = itemName(entry);
       const entryPath = itemPath(entry) || joinPath(current.path, name);
       if (entry?.isdir === 1 || entry?.isdir === true) {
+        if (isBaiduNetdiskIncompleteProgressDirectoryName(name)) {
+          console.log("[baidu] 排除未完成进度目录：" + entryPath);
+          continue;
+        }
         if (current.depth < REMOTE_VIDEO_SCAN_MAX_DEPTH) {
           const entersOwnershipScope = !current.ownershipScope
-            && /工程|权属|资质|版权/.test(String(name).replace(/\s+/g, ""));
-          const entersAiProductionProofScope = !current.aiProductionProofScope && /ai制作证明/i.test(String(name).replace(/\s+/g, ""));
+            && /工程|权属|资质|版权/.test(String(name).replace(/s+/g, ""));
+          const entersAiProductionProofScope = !current.aiProductionProofScope && /ai制作证明/i.test(String(name).replace(/s+/g, ""));
           if (entersOwnershipScope) ownershipRoots.set(normalizeDir(entryPath), itemFsId(entry));
           if (entersAiProductionProofScope) aiProductionProofRoots.set(normalizeDir(entryPath), itemFsId(entry));
           queue.push({
@@ -1749,7 +1758,7 @@ async function saveShareToOwnNetdisk(
         continue;
       }
       const lowerName = name.toLowerCase();
-      if (current.ownershipScope && /\.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)) {
+      if (current.ownershipScope && /.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)) {
         ownershipAllFiles.set(entryPath, {
           name,
           path: entryPath,
@@ -1758,8 +1767,8 @@ async function saveShareToOwnNetdisk(
         });
       }
       if (
-        /\.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)
-        && (current.aiProductionProofScope || /ai制作证明/i.test(name.replace(/\s+/g, "")))
+        /.(?:png|jpe?g|bmp|webp|pdf)$/i.test(lowerName)
+        && (current.aiProductionProofScope || /ai制作证明/i.test(name.replace(/s+/g, "")))
       ) {
         aiProductionProofFiles.set(entryPath, {
           name,
@@ -1773,7 +1782,7 @@ async function saveShareToOwnNetdisk(
           aiProductionProofRoots.set(current.path, current.fsId);
         }
       }
-      if (/\.(?:png|jpe?g|bmp|webp)$/i.test(lowerName)) {
+      if (/.(?:png|jpe?g|bmp|webp)$/i.test(lowerName)) {
         if (selectedPosterPaths.has(entryPath)) {
           const posterFile = {
             name,
@@ -1786,8 +1795,8 @@ async function saveShareToOwnNetdisk(
           (namedPosterPaths.has(entryPath) ? namedPosterFiles : directoryPosterFiles).set(entryPath, posterFile);
         }
         if (current.ownershipScope) {
-          const stem = name.replace(/\.[^.]+$/, "");
-          const indexMatch = stem.match(/(\d{1,4})\s*$/);
+          const stem = name.replace(/.[^.]+$/, "");
+          const indexMatch = stem.match(/(d{1,4})s*$/);
           ownershipFiles.set(entryPath, {
             index: indexMatch ? Number(indexMatch[1]) : undefined,
             name,
@@ -1834,7 +1843,7 @@ async function saveShareToOwnNetdisk(
       duplicateIndexes.length === 0 &&
       uniqueIndexes.length === highestIndex &&
       uniqueIndexes.every((index, position) => index === position + 1);
-    const normalizedName = String(candidate.name || "").replace(/\s+/g, "");
+    const normalizedName = String(candidate.name || "").replace(/s+/g, "");
     const materialDirectory = /素材|工程|花絮|片段|预告|拍摄|源文件/i.test(normalizedName);
     const preferredEpisodeDirectory =
       !materialDirectory && /成片|成品|正片|剧集|视频/i.test(normalizedName);

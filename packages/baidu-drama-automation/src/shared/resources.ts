@@ -26,6 +26,8 @@ type BaiduCoverKind = "landscape" | "portrait";
 
 const baiduAiCoverPromptVersion = "baidu-counterpart-cover-v2-text-safety";
 const baiduAiCoverGenerationAttempts = 3;
+const baiduAiTransientRetryAttempts = 5;
+const baiduAiTransientRetryBaseDelayMs = 1_000;
 const activeAiCoverGenerations = new Map<string, Promise<string>>();
 
 const baiduAiCoverValidationSchema = z.object({
@@ -52,6 +54,67 @@ const baiduCoverDetails = {
     target: BAIDU_DRAMA_PORTRAIT_COVER_SIZE,
   },
 } as const;
+
+function errorMessage(error: unknown) {
+  return error instanceof Error ? error.message : String(error);
+}
+
+function errorChain(error: unknown) {
+  const chain: unknown[] = [];
+  const visited = new Set<unknown>();
+  let current: unknown = error;
+  while (current !== undefined && current !== null && !visited.has(current)) {
+    chain.push(current);
+    visited.add(current);
+    current = typeof current === "object" && "cause" in current
+      ? (current as { cause?: unknown }).cause
+      : undefined;
+  }
+  return chain;
+}
+
+function isBaiduAiTransientError(error: unknown) {
+  return errorChain(error).some((item) => {
+    const candidate = item as {
+      code?: unknown;
+      message?: unknown;
+      name?: unknown;
+      status?: unknown;
+    };
+    const status = typeof candidate?.status === "number" ? candidate.status : undefined;
+    if (status === 408 || status === 429 || status === 504) return true;
+    const text = [candidate?.name, candidate?.code, candidate?.message]
+      .filter((value): value is string => typeof value === "string")
+      .join(" ");
+    return /(?:HTTP\s*)?(?:408|429|504)\b|too many requests|rate.?limit|timeout|timed out|abort(?:ed|error)|ETIMEDOUT|UND_ERR_(?:CONNECT_)?TIMEOUT/i.test(text);
+  });
+}
+
+async function runBaiduAiWithTransientRetries<T>(options: {
+  action: string;
+  operation: () => Promise<T>;
+  onLog?: (message: string) => void;
+}) {
+  let lastError: unknown;
+  for (let attempt = 1; attempt <= baiduAiTransientRetryAttempts; attempt += 1) {
+    try {
+      return await options.operation();
+    } catch (error) {
+      lastError = error;
+      if (!isBaiduAiTransientError(error) || attempt >= baiduAiTransientRetryAttempts) throw error;
+      const delayMs = Math.min(
+        baiduAiTransientRetryBaseDelayMs * (2 ** (attempt - 1)),
+        8_000,
+      );
+      options.onLog?.(
+        `[baidu-cover-ai] AI ${options.action}遇到超时或限流，` +
+          `${attempt}/${baiduAiTransientRetryAttempts}，${delayMs / 1_000} 秒后重试：${errorMessage(error)}`,
+      );
+      await new Promise<void>((resolve) => setTimeout(resolve, delayMs));
+    }
+  }
+  throw lastError;
+}
 
 export function baiduDramaResourceName(task: ClaimedBaiduDramaTask) {
   return task.originalTitle.trim();
@@ -218,6 +281,7 @@ async function generateMissingBaiduCover(options: {
     const aiClient = options.getAiClient();
     const basePrompt = baiduCounterpartCoverPrompt(options);
     let lastError: unknown;
+    let previousValidationFailure: string | undefined;
     for (let attempt = 1; attempt <= baiduAiCoverGenerationAttempts; attempt += 1) {
       const nonce = `${process.pid}-${Date.now()}-${attempt}`;
       const temporarySource = path.join(
@@ -229,15 +293,20 @@ async function generateMissingBaiduCover(options: {
         `.prepared-${options.kind}-${nonce}.jpg`,
       );
       try {
-        const retryInstruction = attempt > 1
-          ? "\n\n上一张图片未通过文字验收。请重新生成，并严格确保除唯一且准确的作品名外没有任何文字、字母、数字、署名、字幕或技术标注。"
+        const retryInstruction = previousValidationFailure
+          ? `\n\n上一张图片未通过文字验收，原因：${previousValidationFailure.slice(0, 600)}。` +
+            "请重新生成并逐项修正，严格确保除唯一且准确的作品名外没有任何文字、字母、数字、署名、字幕或技术标注。"
           : "";
-        const result = await aiClient.generateImage({
-          model: options.aiImageModel,
-          prompt: basePrompt + retryInstruction,
-          referenceImages: [{ type: "file", path: options.referenceFile }],
-          size: baiduCoverDetails[options.kind].size,
-          watermark: false,
+        const result = await runBaiduAiWithTransientRetries({
+          action: "封面生成",
+          onLog: options.onLog,
+          operation: () => aiClient.generateImage({
+            model: options.aiImageModel,
+            prompt: basePrompt + retryInstruction,
+            referenceImages: [{ type: "file", path: options.referenceFile }],
+            size: baiduCoverDetails[options.kind].size,
+            watermark: false,
+          }),
         });
         const generated = result.images[0];
         if (!generated?.data.length) {
@@ -252,14 +321,19 @@ async function generateMissingBaiduCover(options: {
           maxFileBytes: 4_700_000,
           onLog: options.onLog,
         });
-        const validation = await validateBaiduGeneratedCover({
-          generatedFile: temporaryOutput,
-          title: options.title,
-          aiClient,
+        const validation = await runBaiduAiWithTransientRetries({
+          action: "封面文字验收",
+          onLog: options.onLog,
+          operation: () => validateBaiduGeneratedCover({
+            generatedFile: temporaryOutput,
+            title: options.title,
+            aiClient,
+          }),
         });
         if (!validation.passed) {
+          previousValidationFailure = validation.failures.join("；");
           throw new Error(
-            `BAIDU_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: ${validation.failures.join("；")}`,
+            `BAIDU_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: ${previousValidationFailure}`,
           );
         }
         await rm(output, { force: true });
@@ -272,8 +346,9 @@ async function generateMissingBaiduCover(options: {
         lastError = error;
         options.onLog?.(
           `[baidu-cover-ai] AI 封面生成或文字验收失败：${attempt}/${baiduAiCoverGenerationAttempts} ` +
-            `${error instanceof Error ? error.message : String(error)}`,
+            errorMessage(error),
         );
+        if (isBaiduAiTransientError(error)) break;
       } finally {
         await Promise.all([
           rm(temporarySource, { force: true }).catch(() => undefined),
@@ -281,9 +356,10 @@ async function generateMissingBaiduCover(options: {
         ]);
       }
     }
-    throw Object.assign(new Error("BAIDU_DRAMA_AI_COVER_GENERATION_FAILED"), {
-      cause: lastError,
-    });
+    throw Object.assign(
+      new Error(`BAIDU_DRAMA_AI_COVER_GENERATION_FAILED: ${errorMessage(lastError)}`),
+      { cause: lastError },
+    );
   })().finally(() => {
     activeAiCoverGenerations.delete(cacheKey);
   });

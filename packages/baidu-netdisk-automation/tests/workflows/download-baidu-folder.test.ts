@@ -6,6 +6,7 @@ import {
   compareRemoteVideoDirectoryCandidates,
   inspectContiguousEpisodeIndexes,
   isAutomationTemporaryTransferPath,
+  isBaiduNetdiskIncompleteProgressDirectoryName,
   isSupportedEpisodeVideoFileName,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
@@ -38,6 +39,16 @@ test("recognizes MP4 and MOV episode video suffixes case-insensitively", () => {
   assert.equal(isSupportedEpisodeVideoFileName("第1集.mp4"), true);
   assert.equal(isSupportedEpisodeVideoFileName("第2集.MOV"), true);
   assert.equal(isSupportedEpisodeVideoFileName("第3集.avi"), false);
+});
+
+test("excludes directories containing an incomplete percentage from remote resource scans", () => {
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("劫骨燃尽渡苍生-60%"), true);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("劫骨燃尽渡苍生（60％）"), true);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("剧名_99.5%"), true);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("成片"), false);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("100%完成"), false);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("剧名-100%"), false);
+  assert.equal(isBaiduNetdiskIncompleteProgressDirectoryName("剧名-60%修复版"), true);
 });
 
 function videoDirectoryCandidate(

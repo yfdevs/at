@@ -170,3 +170,48 @@ test("generates a missing 3:4 cover from the 16:9 cover", async () => {
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("retries transient AI timeouts and rate limits without consuming a cover validation attempt", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "baidu-drama-cover-"));
+  try {
+    const portraitFile = path.join(root, "portrait.svg");
+    await writeSvg(portraitFile, 900, 1200, "#1565c0");
+    const fake = fakeAiClient();
+    const generateImage = fake.client.generateImage;
+    let generationCalls = 0;
+    fake.client.generateImage = async (options: ImageGenerationOptions) => {
+      generationCalls += 1;
+      if (generationCalls === 1) {
+        throw Object.assign(new Error("Request timed out"), { code: "ETIMEDOUT" });
+      }
+      if (generationCalls === 2) {
+        throw Object.assign(new Error("HTTP 429 Too Many Requests"), { status: 429 });
+      }
+      return generateImage(options);
+    };
+    const messages: string[] = [];
+
+    const result = await prepareBaiduDramaCoverVariants({
+      sourceFile: portraitFile,
+      portraitSourceFile: portraitFile,
+      title: "限流重试测试剧",
+      outputDir: path.join(root, "output"),
+      aiCacheDir: path.join(root, "cache"),
+      aiImageModel: "test-image-model",
+      createAiClient: () => fake.client,
+      onLog: (message) => messages.push(message),
+    });
+
+    await assertBaiduCoverDimensions(result);
+    assert.equal(generationCalls, 3);
+    assert.equal(fake.requests.length, 1);
+    assert.ok(messages.some((message) => (
+      message.includes("AI 封面生成遇到超时或限流") && message.includes("1/5")
+    )));
+    assert.ok(messages.some((message) => (
+      message.includes("AI 封面生成遇到超时或限流") && message.includes("2/5")
+    )));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

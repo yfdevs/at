@@ -64,6 +64,7 @@ export class OpenAiCompatibleClient implements DramaAiClient {
   readonly model: string;
   private readonly sdk: OpenAI;
   private readonly apiKey: string;
+  private readonly timeoutMs: number;
 
   constructor(options: OpenAiCompatibleClientOptions) {
     const apiKey = requiredValue(options.apiKey, "DRAMA_AI_API_KEY_REQUIRED");
@@ -73,12 +74,13 @@ export class OpenAiCompatibleClient implements DramaAiClient {
       options.baseURL ?? DEFAULT_OPENAI_COMPATIBLE_BASE_URL,
       "DRAMA_AI_BASE_URL_REQUIRED",
     ).replace(/\/+$/, "");
+    this.timeoutMs = options.timeoutMs ?? 60_000;
 
     this.sdk = new OpenAI({
       apiKey,
       baseURL: this.baseURL,
       maxRetries: options.maxRetries ?? 2,
-      timeout: options.timeoutMs ?? 60_000,
+      timeout: this.timeoutMs,
     });
   }
 
@@ -164,6 +166,7 @@ export class OpenAiCompatibleClient implements DramaAiClient {
         response_format: "url",
         watermark: options.watermark ?? false,
       }),
+      signal: AbortSignal.timeout(this.timeoutMs),
     });
 
     if (providerResponse.ok) {
