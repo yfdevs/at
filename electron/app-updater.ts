@@ -7,6 +7,9 @@ import type { ProgressInfo, UpdateInfo } from "electron-updater";
 import { logMain } from "./main-logger";
 
 const require = createRequire(import.meta.url);
+const { gt: isVersionGreater } = require("semver") as {
+  gt: (candidate: string, current: string) => boolean;
+};
 
 const AUTOMATIC_UPDATE_START_DELAY_MS = 15_000;
 const AUTOMATIC_UPDATE_INTERVAL_MS = 10 * 60_000;
@@ -145,6 +148,8 @@ type RegisterAppUpdaterHandlersOptions = {
 let configured = false;
 let registered = false;
 let latestUpdateInfo: UpdateInfo | null = null;
+let downloadedUpdateInfo: UpdateInfo | null = null;
+let downloadedUpdateProgress: AppUpdateProgress | undefined;
 let status: AppUpdateStatus | null = null;
 let getRunningPlatformCount: () => number = () => 0;
 let autoUpdaterLoadError: string | null = null;
@@ -399,7 +404,7 @@ function clearAutomaticUpdateTimer() {
 
 function scheduleAutomaticUpdate(delayMs: number) {
   clearAutomaticUpdateTimer();
-  if (shuttingDown || readDisabledReason() || status?.state === "downloaded") return;
+  if (shuttingDown || readDisabledReason()) return;
   const nextCheckAt = new Date(Date.now() + delayMs).toISOString();
   setStatus({ nextCheckAt });
   automaticUpdateTimer = setTimeout(() => {
@@ -478,15 +483,17 @@ async function performAppUpdateCheck(automatic: boolean) {
     });
   }
 
-  if (["downloading", "downloaded", "installing"].includes(status?.state ?? "")) {
+  if (["downloading", "installing"].includes(status?.state ?? "")) {
     return getAppUpdateStatus();
   }
 
   if (!net.isOnline()) {
+    const networkError = "当前网络不可用，联网后将自动重试更新。";
     setStatus({
-      state: "error",
-      progress: undefined,
-      error: "当前网络不可用，联网后将自动重试更新。",
+      ...(downloadedUpdateInfo
+        ? downloadedStatus(downloadedUpdateInfo)
+        : { state: "error" as const, progress: undefined }),
+      error: networkError,
       lastCheckedAt: new Date().toISOString(),
       nextCheckAt: undefined,
     });
@@ -540,7 +547,14 @@ async function performAppUpdateCheck(automatic: boolean) {
     const checkedAt = new Date().toISOString();
     setStatus({ lastCheckedAt: checkedAt, retryAttempt: undefined });
     const availableUpdateInfo = latestUpdateInfo as UpdateInfo | null;
-    if (
+    if (downloadedUpdateInfo && !isNewerUpdate(availableUpdateInfo, downloadedUpdateInfo)) {
+      latestUpdateInfo = downloadedUpdateInfo;
+      setStatus({
+        ...downloadedStatus(downloadedUpdateInfo),
+        lastCheckedAt: checkedAt,
+      });
+      scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
+    } else if (
       availableUpdateInfo
       && status?.state === "available"
       && autoDownloadSuppressedVersion !== availableUpdateInfo.version
@@ -553,9 +567,12 @@ async function performAppUpdateCheck(automatic: boolean) {
     }
   } catch (error) {
     setStatus({
-      state: "error",
-      progress: undefined,
-      error: readableError(error),
+      ...(downloadedUpdateInfo
+        ? downloadedStatus(downloadedUpdateInfo)
+        : { state: "error" as const, progress: undefined }),
+      error: downloadedUpdateInfo
+        ? `检查新版本失败：${readableError(error)}`
+        : readableError(error),
       lastCheckedAt: new Date().toISOString(),
       retryAttempt: undefined,
     });
@@ -651,8 +668,9 @@ async function performAppUpdateDownload(automatic: boolean) {
   }
 
   setStatus({
-    state: "error",
-    progress: undefined,
+    ...(downloadedUpdateInfo
+      ? downloadedStatus(downloadedUpdateInfo)
+      : { state: "error" as const, progress: undefined }),
     error: `自动更新下载失败：${readableError(lastError)}`,
     retryAttempt: undefined,
   });
@@ -814,16 +832,15 @@ function configureAutoUpdater() {
   });
 
   autoUpdater.on("update-downloaded", (info) => {
-    clearAutomaticUpdateTimer();
+    downloadedUpdateInfo = info;
+    downloadedUpdateProgress = status?.progress;
     latestUpdateInfo = info;
     setStatus({
-      ...statusFromUpdateInfo(info),
-      state: "downloaded",
-      progress: status?.progress,
+      ...downloadedStatus(info),
       error: undefined,
-      nextCheckAt: undefined,
       retryAttempt: undefined,
     });
+    scheduleAutomaticUpdate(AUTOMATIC_UPDATE_INTERVAL_MS);
   });
 
   autoUpdater.on("update-cancelled", (info) => {
@@ -949,6 +966,30 @@ function statusFromUpdateInfo(info: UpdateInfo): Partial<AppUpdateStatus> {
     releaseDate: info.releaseDate,
     releaseNotes: normalizeReleaseNotes(info.releaseNotes),
   };
+}
+
+function downloadedStatus(info: UpdateInfo): Partial<AppUpdateStatus> {
+  return {
+    ...statusFromUpdateInfo(info),
+    state: "downloaded",
+    progress: downloadedUpdateProgress,
+    nextCheckAt: undefined,
+  };
+}
+
+function isNewerUpdate(candidate: UpdateInfo | null, downloaded: UpdateInfo) {
+  if (!candidate) return false;
+
+  try {
+    return isVersionGreater(candidate.version, downloaded.version);
+  } catch (error) {
+    logMain("warn", "Failed to compare application update versions", {
+      candidateVersion: candidate.version,
+      downloadedVersion: downloaded.version,
+      error: readableError(error),
+    });
+    return candidate.version !== downloaded.version;
+  }
 }
 
 function statusFromProgress(progress: ProgressInfo): AppUpdateProgress {

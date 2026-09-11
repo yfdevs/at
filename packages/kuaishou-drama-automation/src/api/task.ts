@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import {
   kuaishouDramaTaskSchema,
   type ClaimedKuaishouDramaTask,
@@ -237,11 +237,14 @@ export async function reportKuaishouDramaTaskErrorApi(
   },
 ) {
   if (isBrowserClosedError(options.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(options.errorMessage, {
+    fallbackMessage: "快手任务提交失败，未获取到具体错误原因",
+  });
   await report({
     ...options,
     taskId: options.accountTaskId,
     success: false,
     failStage: options.failStage,
-    errorMessage: options.errorMessage,
+    errorMessage,
   });
 }

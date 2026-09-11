@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import { log } from "../shared/logger.js";
 import {
   claimedQqDramaTaskSchema,
@@ -367,6 +367,9 @@ export async function reportQqDramaTaskSuccessApi(report: QqDramaTaskSuccessRepo
 
 export async function reportQqDramaTaskErrorApi(report: QqDramaTaskErrorReport): Promise<void> {
   if (isBrowserClosedError(report.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(report.errorMessage, {
+    fallbackMessage: "QQ 任务提交失败，未获取到具体错误原因",
+  });
   void report;
   // oxlint-disable-next-line no-debugger
   debugger;
@@ -375,6 +378,6 @@ export async function reportQqDramaTaskErrorApi(report: QqDramaTaskErrorReport):
     taskId: report.accountTaskId,
     success: false,
     failStage: report.failStage,
-    errorMessage: report.errorMessage,
+    errorMessage,
   });
 }

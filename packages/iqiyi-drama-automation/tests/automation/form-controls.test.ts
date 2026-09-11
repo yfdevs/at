@@ -10,7 +10,13 @@ process.env.PLAYWRIGHT_BROWSERS_PATH = path.join(workspaceRoot, ".cache/playwrig
 
 const [
   { chromium },
-  { clickIqiyiButton, fillIqiyiField, selectFirstIqiyiOption, uploadIqiyiFiles },
+  {
+    clickIqiyiButton,
+    fillIqiyiField,
+    iqiyiButtonDiagnostic,
+    selectFirstIqiyiOption,
+    uploadIqiyiFiles,
+  },
 ] = await Promise.all([
   import("playwright"),
   import("../../src/automation/form-controls.js"),
@@ -66,6 +72,63 @@ test("clicks the exact 提交项目 button instead of a save action", async () =
     assert.equal(
       await page.evaluate(() => (window as unknown as { clickedAction: string }).clickedAction),
       "submit-project",
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("waits for the 提交项目 button to become enabled", async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <button type="button" id="submit-project" disabled>提交项目</button>
+      <script>
+        window.clickedAction = '';
+        const button = document.querySelector('#submit-project');
+        button.addEventListener('click', () => { window.clickedAction = button.id; });
+        setTimeout(() => { button.disabled = false; }, 150);
+      </script>
+    `);
+
+    assert.equal(
+      await clickIqiyiButton(page, ["提交项目"], { timeoutMs: 1_000, pollIntervalMs: 50 }),
+      "提交项目",
+    );
+    assert.equal(
+      await page.evaluate(() => (window as unknown as { clickedAction: string }).clickedAction),
+      "submit-project",
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("reports whether the submit target is disabled when it cannot be clicked", async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <button type="button">保存项目</button>
+      <button type="button" disabled>提交项目</button>
+    `);
+
+    assert.equal(
+      await clickIqiyiButton(page, ["提交项目"], { timeoutMs: 100, pollIntervalMs: 50 }),
+      null,
+    );
+    assert.match(
+      await iqiyiButtonDiagnostic(page, ["提交项目"]),
+      /targets=提交项目\[0\]=visible:true,enabled:false; visibleButtons=保存项目 \| 提交项目/u,
     );
   } finally {
     await browser.close();

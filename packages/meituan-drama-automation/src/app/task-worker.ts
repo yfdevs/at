@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import {
   claimMeituanAccountTaskApi,
   fetchReadyMeituanAccountTasksApi,
@@ -23,51 +24,6 @@ const reportMaxAttempts = 3;
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
-}
-
-function reportableErrorMessage(error: unknown) {
-  const ansiEscapePattern = new RegExp(`${String.fromCharCode(27)}\\[[0-?]*[ -/]*[@-~]`, "g");
-  const sanitizedMessage = errorMessage(error)
-    .replace(ansiEscapePattern, "")
-    .replace(/\r\n/g, "\n")
-    .trim();
-  const locatorDescription = sanitizedMessage
-    .match(/\n\s*-\s*waiting for (.+?)(?:\n|$)/i)?.[1]
-    ?.trim()
-    .slice(0, 300);
-  const message = sanitizedMessage.replace(/\nCall log:[\s\S]*$/i, "").trim();
-
-  if (/Target page, context or browser has been closed/i.test(message)) {
-    return "美团页面或浏览器已关闭，无法继续执行页面操作";
-  }
-
-  if (message.includes("MEITUAN_LOGIN_PAGE_OPEN_FAILED")) {
-    return "美团登录已失效，但登录页打开失败，请检查网络后重新登录";
-  }
-
-  const loginRequired = message.match(/MEITUAN_LOGIN_REQUIRED:\s*(.*)$/s);
-  if (loginRequired) {
-    return loginRequired[1]?.trim() || "美团登录已失效，请重新登录";
-  }
-
-  const locatorTimeout = message.match(
-    /^locator\.(click|waitFor|fill|check|setInputFiles): Timeout (\d+)ms exceeded\.?$/i,
-  );
-  if (locatorTimeout) {
-    const actionLabels: Record<string, string> = {
-      click: "点击页面元素",
-      waitfor: "等待页面元素显示",
-      fill: "填写页面内容",
-      check: "勾选页面选项",
-      setinputfiles: "选择上传文件",
-    };
-    const action = actionLabels[locatorTimeout[1].toLowerCase()] ?? "执行页面操作";
-    return `${action}超时（等待 ${locatorTimeout[2]} 毫秒${
-      locatorDescription ? `，定位：${locatorDescription}` : ""
-    }）`;
-  }
-
-  return message || "美团任务执行失败，未获取到具体错误信息";
 }
 
 function classifyFailStage(error: unknown): MeituanCreationTaskFailStage {
@@ -248,7 +204,9 @@ export async function runMeituanAccountTaskWorker(options: {
             );
           });
       } catch (error) {
-        const message = reportableErrorMessage(error);
+        const message = formatAutomationErrorReport(error, {
+          fallbackMessage: "美团任务提交失败，未获取到具体错误原因",
+        });
         const failStage = taskNormalized ? classifyFailStage(error) : "OTHER";
         const diagnosticDir = await saveTaskFailureDiagnostics({
           page: taskPage,

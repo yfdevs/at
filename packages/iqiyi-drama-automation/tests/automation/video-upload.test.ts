@@ -246,6 +246,80 @@ test("uploads all short-drama episodes through the shared batch uploader", {
   }
 });
 
+test("ignores an empty default upload row", {
+  timeout: 20_000,
+}, async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <div class="proj-catalog-wrap">
+        <p class="upload-title">上传视频</p>
+        <input id="episode-files" type="file" multiple accept=".mp4,.mov,.mkv">
+        <div id="episode-list">
+          <div class="catalog-item-form" style="height: 40px">
+            <button type="button">选择视频</button>
+          </div>
+        </div>
+      </div>
+      <script>${uploadFixtureScript("success")}</script>
+    `);
+
+    await uploadIqiyiEpisodeVideos(page, taskWithTwoEpisodes(), {
+      localMaterialRoot,
+      assetDownloadDir,
+      videoUploadTimeoutMinutes: 1,
+    });
+
+    assert.deepEqual(
+      (await page.locator(".catalog-form-text").allInnerTexts()).filter(Boolean),
+      ["正片上传测试剧-第1集.mp4", "正片上传测试剧-第2集.mp4"],
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("rejects a real video row left on the upload page", {
+  timeout: 20_000,
+}, async () => {
+  const browser = await chromium.launch({
+    headless: true,
+    executablePath: cachedChromiumExecutable,
+  });
+  const page = await browser.newPage();
+
+  try {
+    await page.setContent(`
+      <div class="proj-catalog-wrap">
+        <p class="upload-title">上传视频</p>
+        <input id="episode-files" type="file" multiple accept=".mp4,.mov,.mkv">
+        <div id="episode-list">
+          <div class="catalog-item-form">
+            <div class="catalog-form-text">上次任务-第1集.mp4</div>
+            <div class="file-status"><svg data-upload-status="success"></svg></div>
+          </div>
+        </div>
+      </div>
+    `);
+
+    await assert.rejects(
+      () => uploadIqiyiEpisodeVideos(page, taskWithTwoEpisodes(), {
+        localMaterialRoot,
+        assetDownloadDir,
+        videoUploadTimeoutMinutes: 1,
+      }),
+      /IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: rows=1 visibleRows=1/u,
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
 test("does not allow save flow to continue when any episode upload fails", {
   timeout: 20_000,
 }, async () => {

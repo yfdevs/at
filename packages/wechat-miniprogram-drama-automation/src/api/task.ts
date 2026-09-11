@@ -1,4 +1,4 @@
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import type { ClaimedAccountTask } from "../shared/types.js";
 import type { RpaFailStage } from "../shared/errors.js";
 import type { WechatMiniProgramAccount } from "./mini-program-accounts.js";
@@ -278,6 +278,9 @@ export async function reportClaimedTaskErrorApi(
   errorReport: ClaimedTaskErrorReport,
 ): Promise<void> {
   if (isBrowserClosedError(errorReport.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(errorReport.errorMessage, {
+    fallbackMessage: "微信小程序任务提交失败，未获取到具体错误原因",
+  });
   if (mockAccountTaskIds.has(errorReport.accountTaskId)) {
     logger.info("fail callback completed", {
       accountTaskId: errorReport.accountTaskId,
@@ -292,7 +295,7 @@ export async function reportClaimedTaskErrorApi(
     accountTaskId: errorReport.accountTaskId,
     failStage: errorReport.failStage,
     resultJson: errorReport.resultJson ?? {},
-    errorMessage: errorReport.errorMessage,
+    errorMessage,
   };
   logger.info("fail callback request", {
     url,
@@ -300,7 +303,7 @@ export async function reportClaimedTaskErrorApi(
     dramaId: errorReport.dramaId,
     failStage: errorReport.failStage,
     videoAccountId: errorReport.videoAccountId,
-    errorMessage: errorReport.errorMessage,
+    errorMessage,
     resultJson: requestPayload.resultJson,
   });
   const payload = await httpClient.post<TaskCallbackResponse>(url, requestPayload);

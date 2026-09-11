@@ -1,4 +1,5 @@
 import { chromium, type BrowserContext, type Page } from "playwright";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { KUAISHOU_DRAMA_PLATFORM } from "../shared/constants.js";
 import { parseTaskConfig } from "../shared/task-config.js";
@@ -15,10 +16,7 @@ import {
   log,
   saveCredentialState,
 } from "../automation/browser-session.js";
-import {
-  prepareKuaishouDramaIdlePage,
-  runPublishTask,
-} from "../automation/publish-runner.js";
+import { prepareKuaishouDramaIdlePage, runPublishTask } from "../automation/publish-runner.js";
 import {
   getKuaishouDramaLocalEpisodeVideoRoot,
   validateKuaishouDramaLocalEpisodeVideos,
@@ -251,7 +249,9 @@ export async function startKuaishouDramaRuntime(
           log(options, `[kuaishou-drama] task succeeded: ${completedTask.accountTaskId}`);
         }
       } catch (error) {
-        const message = errorMessage(error);
+        const message = formatAutomationErrorReport(error, {
+          fallbackMessage: "快手任务提交失败，未获取到具体错误原因",
+        });
         log(options, `[kuaishou-drama] task failed: ${message}`);
         const failedTask = currentClaimedTask();
         if (failedTask) {

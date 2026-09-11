@@ -29,14 +29,14 @@ export function createKuaishouDramaPublishVariants(
   const variants: KuaishouDramaPublishVariant[] = [
     {
       kind: "full-paid",
-      title: task.title,
+      title: `《${withoutBookTitleMarks(task.title)}》`,
       saleMode: "全剧付费",
       fullDramaPriceYuan: task.fullDramaPriceYuan,
       episodePriceRanges: fullPaidRanges,
     },
     {
       kind: "ad-unlock",
-      title: `《${withoutBookTitleMarks(task.title)}》`,
+      title: withoutBookTitleMarks(task.title),
       saleMode: "观看广告解锁",
       episodePriceRanges: adUnlockRanges,
     },

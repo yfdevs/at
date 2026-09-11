@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import type {
   ClaimedMeituanDramaTask,
   MeituanCreationAccount,
@@ -175,11 +175,19 @@ export async function reportMeituanAccountTaskApi(options: {
   fetcher?: typeof fetch;
 }): Promise<void> {
   if (!options.report.success && isBrowserClosedError(options.report.errorMessage)) return;
+  const report = options.report.success
+    ? options.report
+    : {
+        ...options.report,
+        errorMessage: formatAutomationErrorReport(options.report.errorMessage, {
+          fallbackMessage: "美团任务提交失败，未获取到具体错误原因",
+        }),
+      };
   const payload = reportResponseSchema.parse(
     await postJson(
       options.apiBaseUrl,
       "/dramaAiRpa/meituan/rpa/report",
-      options.report,
+      report,
       options.fetcher ?? fetch,
     ),
   );
@@ -300,11 +308,7 @@ export function normalizeClaimedMeituanDramaTask(options: {
         : fallbackLicenseProofFile
           ? [fallbackLicenseProofFile]
           : [],
-    expectedPremiereTimeText: meituanTimeFieldValue(
-      payload,
-      extra,
-      "expectedPremiereTimeText",
-    ),
+    expectedPremiereTimeText: meituanTimeFieldValue(payload, extra, "expectedPremiereTimeText"),
     otherPlatformPremiereDateText: meituanTimeFieldValue(
       payload,
       extra,

@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 
 import {
   claimedIqiyiDramaTaskSchema,
@@ -65,10 +65,12 @@ const readyTaskSchema = z
   })
   .passthrough();
 const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
-  data: z.object({
-    total: z.coerce.number().int().nonnegative().optional(),
-    data: z.array(readyTaskSchema),
-  }).nullish(),
+  data: z
+    .object({
+      total: z.coerce.number().int().nonnegative().optional(),
+      data: z.array(readyTaskSchema),
+    })
+    .nullish(),
 });
 const claimDataSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
@@ -81,11 +83,13 @@ const claimDataSchema = z.object({
 const claimResponseSchema = apiResponseBaseSchema.extend({
   data: claimDataSchema.nullish(),
 });
-const claimPayloadJsonSchema = z.object({
-  name: z.string().trim().min(1),
-  copyright: z.unknown(),
-  iqiyiPlaylet: z.record(z.unknown()),
-}).passthrough();
+const claimPayloadJsonSchema = z
+  .object({
+    name: z.string().trim().min(1),
+    copyright: z.unknown(),
+    iqiyiPlaylet: z.record(z.unknown()),
+  })
+  .passthrough();
 const reportResponseSchema = apiResponseBaseSchema.extend({
   data: z.boolean().nullish(),
 });
@@ -113,17 +117,17 @@ function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action
   }
 }
 
-function formatZodIssues(
-  issues: z.ZodIssue[],
-  playlet?: Record<string, unknown>,
-): string[] {
+function formatZodIssues(issues: z.ZodIssue[], playlet?: Record<string, unknown>): string[] {
   return issues.flatMap((issue) => {
     if (issue.code === z.ZodIssueCode.invalid_union) {
-      const branchIndex = playlet?.dramaType === "comic-drama"
-        ? 0
-        : playlet?.dramaType === "short-drama"
-          ? playlet.paymentStatus === "免费" ? 2 : 1
-          : -1;
+      const branchIndex =
+        playlet?.dramaType === "comic-drama"
+          ? 0
+          : playlet?.dramaType === "short-drama"
+            ? playlet.paymentStatus === "免费"
+              ? 2
+              : 1
+            : -1;
       if (branchIndex >= 0) {
         return formatZodIssues(issue.unionErrors[branchIndex]?.issues ?? []);
       }
@@ -209,8 +213,8 @@ async function claimTask(
   if (!payload.data) return null;
   if (payload.data.accountTaskId !== accountTaskId) {
     throw new Error(
-      `IQIYI_DRAMA_CLAIMED_TASK_ID_MISMATCH: expected=${accountTaskId} `
-        + `actual=${payload.data.accountTaskId}`,
+      `IQIYI_DRAMA_CLAIMED_TASK_ID_MISMATCH: expected=${accountTaskId} ` +
+        `actual=${payload.data.accountTaskId}`,
     );
   }
 
@@ -226,8 +230,8 @@ async function claimTask(
     }).catch((reportError) => {
       log(
         options.runtimeOptions ?? {},
-        `[iqiyi-drama] invalid claimed task report failed: accountTaskId=${accountTaskId} `
-          + `error=${reportError instanceof Error ? reportError.message : String(reportError)}`,
+        `[iqiyi-drama] invalid claimed task report failed: accountTaskId=${accountTaskId} ` +
+          `error=${reportError instanceof Error ? reportError.message : String(reportError)}`,
       );
     });
     throw error;
@@ -248,8 +252,8 @@ export async function claimNextIqiyiDramaTaskApi(
     } catch (error) {
       log(
         options.runtimeOptions ?? {},
-        `[iqiyi-drama] task claim failed: accountTaskId=${listedTask.id} `
-          + `error=${error instanceof Error ? error.message : String(error)}`,
+        `[iqiyi-drama] task claim failed: accountTaskId=${listedTask.id} ` +
+          `error=${error instanceof Error ? error.message : String(error)}`,
       );
     }
   }
@@ -294,11 +298,14 @@ export async function reportIqiyiDramaTaskErrorApi(
   options: IqiyiDramaTaskErrorReport,
 ): Promise<void> {
   if (isBrowserClosedError(options.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(options.errorMessage, {
+    fallbackMessage: "爱奇艺任务提交失败，未获取到具体错误原因",
+  });
   await reportIqiyiDramaTask({
     ...options,
     taskId: options.accountTaskId,
     success: false,
     failStage: options.failStage,
-    errorMessage: options.errorMessage,
+    errorMessage,
   });
 }

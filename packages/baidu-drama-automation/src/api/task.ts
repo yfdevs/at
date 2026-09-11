@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import { log } from "../shared/logger.js";
 import {
   claimedBaiduDramaTaskSchema,
@@ -8,10 +8,7 @@ import {
   type BaiduDramaTaskFailStage,
   type ClaimedBaiduDramaTask,
 } from "../shared/types.js";
-import {
-  createBaiduDramaHttpClient,
-  type BaiduDramaHttpClient,
-} from "./http-client.js";
+import { createBaiduDramaHttpClient, type BaiduDramaHttpClient } from "./http-client.js";
 
 export type BaiduDramaTaskApiEndpoints = {
   accountTaskPage: string;
@@ -81,12 +78,7 @@ const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
 });
 
 const baiduContractFileSchema = z.object({
-  fileType: z.enum([
-    "CONTRACT",
-    "AUTHORIZATION",
-    "COST_REPORT",
-    "COMMITMENT",
-  ]),
+  fileType: z.enum(["CONTRACT", "AUTHORIZATION", "COST_REPORT", "COMMITMENT"]),
   fileUrl: z.string().trim().url(),
   tosKey: z.string().trim().nullish(),
 });
@@ -123,10 +115,7 @@ function taskEndpoints(options: BaiduDramaTaskApiOptions) {
   return { ...defaultEndpoints, ...options.endpoints };
 }
 
-function assertApiSuccess(
-  payload: z.infer<typeof apiResponseBaseSchema>,
-  action: string,
-) {
+function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action: string) {
   if (payload.code !== 0) {
     throw new Error(`${action}: code=${payload.code} message=${payload.msg || "-"}`);
   }
@@ -162,13 +151,9 @@ function uniqueStrings(values: string[]) {
 }
 
 function contractFileUrls(payload: Record<string, unknown>, fileType: string) {
-  const result = z.array(baiduContractFileSchema).safeParse(
-    payload.baiduContractFiles,
-  );
+  const result = z.array(baiduContractFileSchema).safeParse(payload.baiduContractFiles);
   if (!result.success) return [];
-  return result.data
-    .filter((file) => file.fileType === fileType)
-    .map((file) => file.fileUrl);
+  return result.data.filter((file) => file.fileType === fileType).map((file) => file.fileUrl);
 }
 
 function classifyClaimedTaskFailStage(error: unknown): BaiduDramaTaskFailStage {
@@ -190,11 +175,7 @@ export function normalizeClaimedBaiduDramaTask(
   const claimed = baiduDramaClaimDataSchema.parse(input);
   const expectedAccountId = options.runtimeOptions?.baiduAccountId?.trim();
   const claimedAccountId = claimed.accountId?.trim();
-  if (
-    expectedAccountId &&
-    claimedAccountId &&
-    expectedAccountId !== claimedAccountId
-  ) {
+  if (expectedAccountId && claimedAccountId && expectedAccountId !== claimedAccountId) {
     throw new Error(
       `BAIDU_DRAMA_CLAIMED_ACCOUNT_MISMATCH: expected=${expectedAccountId} ` +
         `actual=${claimedAccountId}`,
@@ -224,34 +205,24 @@ export function normalizeClaimedBaiduDramaTask(
     ...recordValue(payload.productionCost),
   };
   const productionOrganization =
-    stringValue(baiduPlaylet.productionOrganization) ??
-    stringValue(payload.producerName);
+    stringValue(baiduPlaylet.productionOrganization) ?? stringValue(payload.producerName);
 
   const result = claimedBaiduDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
     dramaId: options.listedTask?.dramaId,
-    originalTitle:
-      claimed.originalTitle ?? options.listedTask?.originalTitle,
-    baiduAccountId:
-      claimedAccountId ?? options.listedTask?.accountId ?? expectedAccountId,
+    originalTitle: claimed.originalTitle ?? options.listedTask?.originalTitle,
+    baiduAccountId: claimedAccountId ?? options.listedTask?.accountId ?? expectedAccountId,
     baiduAccountName:
       claimed.accountName ??
       options.listedTask?.accountName ??
       options.runtimeOptions?.baiduAccountName,
     playlet: {
       ...baiduPlaylet,
-      title:
-        stringValue(baiduPlaylet.title) ??
-        stringValue(payload.name) ??
-        claimed.originalTitle,
-      summary:
-        stringValue(baiduPlaylet.summary) ?? stringValue(payload.summary),
-      episodeCount:
-        numberValue(baiduPlaylet.episodeCount) ??
-        numberValue(payload.episodeCount),
+      title: stringValue(baiduPlaylet.title) ?? stringValue(payload.name) ?? claimed.originalTitle,
+      summary: stringValue(baiduPlaylet.summary) ?? stringValue(payload.summary),
+      episodeCount: numberValue(baiduPlaylet.episodeCount) ?? numberValue(payload.episodeCount),
       baiduPanResourceLink:
-        stringValue(baiduPlaylet.baiduPanResourceLink) ??
-        stringValue(payload.baiduPanResourceLink),
+        stringValue(baiduPlaylet.baiduPanResourceLink) ?? stringValue(payload.baiduPanResourceLink),
       productionOrganization,
       isMatched: false,
       matchedIp: undefined,
@@ -269,19 +240,14 @@ export function normalizeClaimedBaiduDramaTask(
         : [],
       copyright: {
         ...copyright,
-        productionProofFiles: uniqueStrings(
-          contractFileUrls(payload, "CONTRACT"),
-        ),
-        licenseProofFiles: uniqueStrings(
-          contractFileUrls(payload, "AUTHORIZATION"),
-        ),
+        productionProofFiles: uniqueStrings(contractFileUrls(payload, "CONTRACT")),
+        licenseProofFiles: uniqueStrings(contractFileUrls(payload, "AUTHORIZATION")),
       },
       qualification,
       productionCost: {
         ...productionCost,
         amountWan:
-          numberValue(productionCost.amountWan) ??
-          numberValue(baiduPlaylet.productionCostWan),
+          numberValue(productionCost.amountWan) ?? numberValue(baiduPlaylet.productionCostWan),
         proofFiles: uniqueStrings(contractFileUrls(payload, "COST_REPORT")),
       },
       commitmentFiles: uniqueStrings(contractFileUrls(payload, "COMMITMENT")),
@@ -406,10 +372,7 @@ export async function claimNextBaiduDramaTaskApi(
   const readyTasks = await fetchReadyTasks(options);
   if (readyTasks.length === 0) return null;
 
-  log(
-    options.runtimeOptions ?? {},
-    `[baidu-drama] fetched ${readyTasks.length} READY task(s)`,
-  );
+  log(options.runtimeOptions ?? {}, `[baidu-drama] fetched ${readyTasks.length} READY task(s)`);
   for (const listedTask of readyTasks) {
     try {
       const claimed = await claimTask(options, listedTask.id, listedTask);
@@ -440,12 +403,15 @@ export async function reportBaiduDramaTaskErrorApi(
   report: BaiduDramaTaskErrorReport,
 ): Promise<void> {
   if (isBrowserClosedError(report.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(report.errorMessage, {
+    fallbackMessage: "百度任务提交失败，未获取到具体错误原因",
+  });
   await reportBaiduDramaTask({
     ...report,
     taskId: report.accountTaskId,
     success: false,
     failStage: report.failStage,
-    errorMessage: report.errorMessage,
+    errorMessage,
     resultJson: report.resultJson ?? {},
   });
 }

@@ -1,4 +1,5 @@
 import type { Page } from "playwright";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { PINDUODUO_SHORTPLAY_APPLY_EDIT_URL } from "../shared/constants.js";
 import {
@@ -118,7 +119,9 @@ async function claimAndSubmitApplyTask(
     // 后端成功接收提报结果后，再写入本地数据库用于后续审核轮询。
     applyRecordsRepository.upsertSubmittedRecord(task, submittedRecord);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = formatAutomationErrorReport(error, {
+      fallbackMessage: "拼多多短剧申报提交失败，未获取到具体错误原因",
+    });
     log(options, "error", "runtime", "failed to submit shortplay apply edit", {
       accountTaskId: task.accountTaskId,
       dramaId: task.dramaId,
@@ -194,7 +197,7 @@ async function reportAndUpdateAuditRecord(
 ): Promise<void> {
   try {
     if (!record) {
-      const errorMessage = `Pinduoduo submitted shortplay record was not found in first ${SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE} submitted records.`;
+      const errorMessage = `在平台最近 ${SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE} 条已提交记录中未找到该短剧，无法确认审核状态。`;
       const resultJson = {
         activeUrl: page.url(),
         checkedSubmittedRecordCount: SUBMITTED_SHORTPLAY_AUDIT_LIST_PAGE_SIZE,
@@ -214,7 +217,7 @@ async function reportAndUpdateAuditRecord(
     }
 
     if (record.status === 3) {
-      const errorMessage = record.rejectReason || "Pinduoduo shortplay audit rejected.";
+      const errorMessage = record.rejectReason || "拼多多短剧审核未通过，平台未返回具体驳回原因。";
       await reportPinduoduoDramaTaskErrorApi({
         apiConfig: options.config?.api,
         accountTaskId: trackedRecord.accountTaskId,
@@ -260,7 +263,9 @@ async function reportAndUpdateAuditRecord(
     });
     applyRecordsRepository.markAuditChecked(trackedRecord, "APPROVED", record);
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = formatAutomationErrorReport(error, {
+      fallbackMessage: "拼多多短剧审核状态检查失败，未获取到具体错误原因",
+    });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,
       accountTaskId: trackedRecord.accountTaskId,
@@ -349,7 +354,9 @@ async function prepareLocalVideoResourceTask(
     applyRecordsRepository.markVideoResourceReady(trackedRecord);
     return true;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = formatAutomationErrorReport(error, {
+      fallbackMessage: "拼多多视频素材准备失败，未获取到具体错误原因",
+    });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,
       accountTaskId: task.accountTaskId,
@@ -389,7 +396,9 @@ async function runApprovedShortplayFlowTask(
     applyRecordsRepository.markVideoUploading(trackedRecord);
     return true;
   } catch (error) {
-    const errorMessage = error instanceof Error ? error.message : String(error);
+    const errorMessage = formatAutomationErrorReport(error, {
+      fallbackMessage: "拼多多视频上传失败，未获取到具体错误原因",
+    });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,
       accountTaskId: task.accountTaskId,

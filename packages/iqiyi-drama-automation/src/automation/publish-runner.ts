@@ -17,6 +17,7 @@ import {
 import {
   clickIqiyiButton,
   fillIqiyiField,
+  iqiyiButtonDiagnostic,
   openIqiyiSection,
   selectFirstIqiyiOption,
   throwIfIqiyiFormInvalid,
@@ -321,8 +322,14 @@ export async function runIqiyiPublishTask(
   });
 
   await throwIfIqiyiFormInvalid(page);
-  const clicked = await clickIqiyiButton(page, ["提交项目"]);
-  if (!clicked) throw new Error("IQIYI_DRAMA_SUBMIT_BUTTON_NOT_FOUND");
+  const submitButtonNames = ["提交项目"] as const;
+  const clicked = await clickIqiyiButton(page, submitButtonNames, { timeoutMs: 60_000 });
+  if (!clicked) {
+    throw new Error(
+      `IQIYI_DRAMA_SUBMIT_BUTTON_NOT_FOUND: `
+        + await iqiyiButtonDiagnostic(page, submitButtonNames),
+    );
+  }
   log(
     options,
     `[iqiyi-drama] clicked project action: ${clicked}; waiting ${postSubmitSettleMs / 1_000}s before task page may close`,

@@ -22,10 +22,9 @@ function task(publishType?: KuaishouDramaPublishType) {
 }
 
 void test("publishes both variants when publishType is empty", () => {
-  assert.deepEqual(
-    createKuaishouDramaPublishVariants(task()).map((item) => item.kind),
-    ["full-paid", "ad-unlock"],
-  );
+  const variants = createKuaishouDramaPublishVariants(task());
+  assert.deepEqual(variants.map((item) => item.kind), ["full-paid", "ad-unlock"]);
+  assert.deepEqual(variants.map((item) => item.title), ["《测试短剧》", "测试短剧"]);
 
   for (const publishType of [null, "", "   "]) {
     const parsed = kuaishouDramaTaskSchema.parse({
@@ -38,14 +37,29 @@ void test("publishes both variants when publishType is empty", () => {
 
 void test("publishes only the paid variant when publishType is 付费", () => {
   assert.deepEqual(
-    createKuaishouDramaPublishVariants(task("付费")).map((item) => item.kind),
-    ["full-paid"],
+    createKuaishouDramaPublishVariants(task("付费")).map((item) => ({
+      kind: item.kind,
+      title: item.title,
+    })),
+    [{ kind: "full-paid", title: "《测试短剧》" }],
   );
 });
 
 void test("publishes only the ad variant when publishType is 广告", () => {
   assert.deepEqual(
-    createKuaishouDramaPublishVariants(task("广告")).map((item) => item.kind),
-    ["ad-unlock"],
+    createKuaishouDramaPublishVariants(task("广告")).map((item) => ({
+      kind: item.kind,
+      title: item.title,
+    })),
+    [{ kind: "ad-unlock", title: "测试短剧" }],
+  );
+});
+
+void test("normalizes existing book-title marks before formatting each variant", () => {
+  const markedTask = task();
+  markedTask.title = "《测试短剧》";
+  assert.deepEqual(
+    createKuaishouDramaPublishVariants(markedTask).map((item) => item.title),
+    ["《测试短剧》", "测试短剧"],
   );
 });

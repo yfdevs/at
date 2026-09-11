@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 
 import {
@@ -84,8 +85,8 @@ async function reportWithRetry(
       if (attempt < 3) {
         log(
           options,
-          `[iqiyi-drama] task report retry ${attempt}/3: `
-            + `accountTaskId=${accountTaskId} error=${message(error)}`,
+          `[iqiyi-drama] task report retry ${attempt}/3: ` +
+            `accountTaskId=${accountTaskId} error=${message(error)}`,
         );
         await new Promise((resolve) => setTimeout(resolve, 5_000));
       }
@@ -191,7 +192,7 @@ async function executeTask(
           dramaType: task.playlet.dramaType,
           generatedLandscapeCover: task.playlet.horizontalCoverFile,
         },
-      })
+      }),
     );
     setLastTask({
       accountTaskId: task.accountTaskId,
@@ -201,7 +202,9 @@ async function executeTask(
       updatedAt: new Date().toISOString(),
     });
   } catch (error) {
-    const errorMessage = message(error);
+    const errorMessage = formatAutomationErrorReport(error, {
+      fallbackMessage: "爱奇艺任务提交失败，未获取到具体错误原因",
+    });
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -219,7 +222,7 @@ async function executeTask(
           failStage: failStage(error, "FILL_FORM"),
           errorMessage,
           resultJson: { activeUrl: page.url(), dramaType: task.playlet.dramaType },
-        })
+        }),
       ).catch((reportError) => {
         errorLog(options, `[iqiyi-drama] fail callback failed: ${message(reportError)}`);
       });
@@ -261,20 +264,23 @@ export async function startIqiyiDramaRuntime(
   });
   const page = await context.newPage();
 
-  const waitNext = () => new Promise<void>((resolve) => {
-    wakeLoop = resolve;
-    loopTimer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
-  }).finally(() => {
-    if (loopTimer) clearTimeout(loopTimer);
-    loopTimer = null;
-    wakeLoop = null;
-  });
+  const waitNext = () =>
+    new Promise<void>((resolve) => {
+      wakeLoop = resolve;
+      loopTimer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
+    }).finally(() => {
+      if (loopTimer) clearTimeout(loopTimer);
+      loopTimer = null;
+      wakeLoop = null;
+    });
 
   const loop = (async () => {
-    await page.goto(IQIYI_COMIC_DRAMA_CREATE_URL, {
-      waitUntil: "domcontentloaded",
-      timeout: 60_000,
-    }).catch((error) => errorLog(options, `[iqiyi-drama] initial page failed: ${message(error)}`));
+    await page
+      .goto(IQIYI_COMIC_DRAMA_CREATE_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      })
+      .catch((error) => errorLog(options, `[iqiyi-drama] initial page failed: ${message(error)}`));
     while (running && !page.isClosed()) {
       try {
         await waitForIqiyiLogin(page, context, options);

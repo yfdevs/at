@@ -58,7 +58,7 @@ async function readIqiyiVideoUploadSnapshot(
   root: Locator,
 ): Promise<IqiyiVideoUploadSnapshot> {
   const rows = await root.locator(".catalog-item-form:visible").evaluateAll((elements) =>
-    elements.map((element) => {
+    elements.flatMap((element) => {
       const status = element.querySelector(".file-status");
       const statusIcon = status?.querySelector("svg");
       const statusMarkup = statusIcon?.outerHTML.toLowerCase() ?? "";
@@ -82,15 +82,15 @@ async function readIqiyiVideoUploadSnapshot(
       const failed = Boolean(errorText)
         || /fail|error|failed|batch-failed|#f45c50|#fa4b5c|rgb\(244,\s*92,\s*80\)/u
           .test(`${statusMarkup} ${statusStyle}`);
-      return {
-        fileName: element.querySelector(".catalog-form-text")?.textContent?.trim()
-          || element.textContent?.trim()
-          || "",
+      const fileName = element.querySelector(".catalog-form-text")?.textContent?.trim() ?? "";
+      const row = {
+        fileName,
         uploading,
         failed,
         terminal: Boolean(statusIcon) && !uploading,
         errorText,
       };
+      return fileName || uploading || failed || row.terminal || errorText ? [row] : [];
     })
   );
   const globalErrors = (await page.locator([
@@ -307,9 +307,16 @@ export async function uploadIqiyiEpisodeVideos(
   const root = await iqiyiVideoUploadRoot(page);
   const input = root.locator(videoInputSelector).last();
   await input.waitFor({ state: "attached", timeout: 30_000 });
-  const existingRowCount = await root.locator(".catalog-item-form:visible").count();
-  if (existingRowCount > 0) {
-    throw new Error(`IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: rows=${existingRowCount}`);
+  const visibleRowCount = await root.locator(".catalog-item-form:visible").count();
+  const existingSnapshot = await readIqiyiVideoUploadSnapshot(page, root);
+  if (existingSnapshot.rows.length > 0) {
+    throw new Error(
+      `IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: rows=${existingSnapshot.rows.length} `
+        + `visibleRows=${visibleRowCount}`,
+    );
+  }
+  if (visibleRowCount > 0) {
+    log(options, `[iqiyi-drama] ignored ${visibleRowCount} empty video upload placeholder row(s)`);
   }
 
   let prepared: PreparedEpisodeUploadFiles | null = null;

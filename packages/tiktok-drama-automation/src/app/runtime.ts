@@ -1,23 +1,19 @@
-import { mkdir } from 'node:fs/promises';
-import { FeishuNotifier } from '@drama/feishu-notifier';
-import path from 'node:path';
-import { formatDateKey } from '@drama/automation-logging';
-import { chromium, type BrowserContext, type Page } from 'playwright';
-import {
-  config,
-  configureTiktokDramaCenterRuntimeSettings,
-  logger,
-} from '../config.js';
-import { formatReadableLogEntry } from '@drama/automation-logging';
-import { claimNextTiktokDramaTaskApi } from '../api/index.js';
-import { fillDraft, waitForDraftPage } from '../draft-form.js';
-import { matchVideos, resolveCoverFile } from '../media.js';
-import type { Scheme } from '../scheme.js';
+import { mkdir } from "node:fs/promises";
+import { FeishuNotifier } from "@drama/feishu-notifier";
+import path from "node:path";
+import { formatAutomationErrorReport, formatDateKey } from "@drama/automation-logging";
+import { chromium, type BrowserContext, type Page } from "playwright";
+import { config, configureTiktokDramaCenterRuntimeSettings, logger } from "../config.js";
+import { formatReadableLogEntry } from "@drama/automation-logging";
+import { claimNextTiktokDramaTaskApi } from "../api/index.js";
+import { fillDraft, waitForDraftPage } from "../draft-form.js";
+import { matchVideos, resolveCoverFile } from "../media.js";
+import type { Scheme } from "../scheme.js";
 
-export type TiktokDramaCenterLoginState = 'login-required' | 'logged-in' | 'unknown';
+export type TiktokDramaCenterLoginState = "login-required" | "logged-in" | "unknown";
 
 export type TiktokDramaCenterRuntimeStatus = {
-  platform: 'tiktok-drama';
+  platform: "tiktok-drama";
   running: boolean;
   loginState: TiktokDramaCenterLoginState;
   activeUrl?: string;
@@ -39,7 +35,7 @@ type TiktokDramaCenterRuntimeConfig = {
   keepBrowserOpen?: boolean;
   feishuBotWebhookUrl?: string;
   logFile?: string;
-  logLevel?: 'fatal' | 'error' | 'warn' | 'info' | 'debug' | 'trace' | 'silent';
+  logLevel?: "fatal" | "error" | "warn" | "info" | "debug" | "trace" | "silent";
   loginUrl?: string;
   postTaskWatchMs?: number;
   schemeApi?: string;
@@ -58,10 +54,10 @@ export type TiktokDramaCenterRuntimeOptions = {
 };
 
 export async function startTiktokDramaCenterRuntime(
-  options: TiktokDramaCenterRuntimeOptions = {}
+  options: TiktokDramaCenterRuntimeOptions = {},
 ): Promise<TiktokDramaCenterRuntime> {
   if (!options.userDataDir) {
-    throw new Error('TikTok userDataDir is required.');
+    throw new Error("TikTok userDataDir is required.");
   }
 
   const userDataDir = options.userDataDir;
@@ -72,26 +68,28 @@ export async function startTiktokDramaCenterRuntime(
   let page: Page | null = null;
   let context: BrowserContext | null = null;
 
-  configureTiktokDramaCenterRuntimeSettings({
-    ...runtimeSettings,
-    userDataDir,
-    headless: browser?.headless ?? runtimeSettings.headless ?? false,
-    logFile: runtimeSettings.logFile ?? path.join(runDataDir, 'logs', `app-${formatDateKey()}.log`),
-    schemeFile: runtimeSettings.schemeFile ?? path.join(runDataDir, 'scheme.local.json'),
-    tempDir: runtimeSettings.tempDir ?? path.join(runDataDir, 'tmp'),
-    videoDir: runtimeSettings.videoDir ?? path.join(runDataDir, 'videos'),
-  }, options.onLog
-    ? (entry) => options.onLog?.(formatReadableLogEntry(entry))
-    : undefined);
+  configureTiktokDramaCenterRuntimeSettings(
+    {
+      ...runtimeSettings,
+      userDataDir,
+      headless: browser?.headless ?? runtimeSettings.headless ?? false,
+      logFile:
+        runtimeSettings.logFile ?? path.join(runDataDir, "logs", `app-${formatDateKey()}.log`),
+      schemeFile: runtimeSettings.schemeFile ?? path.join(runDataDir, "scheme.local.json"),
+      tempDir: runtimeSettings.tempDir ?? path.join(runDataDir, "tmp"),
+      videoDir: runtimeSettings.videoDir ?? path.join(runDataDir, "videos"),
+    },
+    options.onLog ? (entry) => options.onLog?.(formatReadableLogEntry(entry)) : undefined,
+  );
   const notifier = new FeishuNotifier({
-    channelIdLabel: 'platform',
-    channelLabel: 'TikTok',
+    channelIdLabel: "platform",
+    channelLabel: "TikTok",
     logger,
     webhookUrl: config.feishuBotWebhookUrl,
   });
 
   await mkdir(userDataDir, { recursive: true });
-  log(options, '[tiktok-drama] starting browser');
+  log(options, "[tiktok-drama] starting browser");
   context = await chromium.launchPersistentContext(userDataDir, {
     acceptDownloads: true,
     headless: config.headless,
@@ -99,21 +97,21 @@ export async function startTiktokDramaCenterRuntime(
     timeout: 0,
     viewport: { width: 1440, height: 1000 },
   });
-  context.on('close', () => {
+  context.on("close", () => {
     running = false;
   });
 
-  page = context.pages()[0] ?? await context.newPage();
-  void runDraftTask(page, options, notifier).catch(error => {
+  page = context.pages()[0] ?? (await context.newPage());
+  void runDraftTask(page, options, notifier).catch((error) => {
     log(options, `[tiktok-drama] task failed: ${errorMessage(error)}`);
-    logger.error({ err: error }, 'task failed');
+    logger.error({ err: error }, "task failed");
   });
 
   return {
     getStatus(): TiktokDramaCenterRuntimeStatus {
       const activeUrl = page?.url();
       return {
-        platform: 'tiktok-drama',
+        platform: "tiktok-drama",
         running,
         loginState: loginStateFromUrl(activeUrl),
         activeUrl,
@@ -127,7 +125,7 @@ export async function startTiktokDramaCenterRuntime(
       }
       running = false;
       await context?.close();
-      log(options, '[tiktok-drama] runtime stopped');
+      log(options, "[tiktok-drama] runtime stopped");
     },
   };
 }
@@ -135,38 +133,41 @@ export async function startTiktokDramaCenterRuntime(
 async function runDraftTask(
   page: Page,
   options: TiktokDramaCenterRuntimeOptions,
-  notifier: FeishuNotifier
+  notifier: FeishuNotifier,
 ) {
-  await page.goto(config.draftUrl, { waitUntil: 'domcontentloaded' });
+  await page.goto(config.draftUrl, { waitUntil: "domcontentloaded" });
   await waitForDraftPage(page);
 
-  logger.info('draft ready; claiming task');
+  logger.info("draft ready; claiming task");
   const task = await claimNextTiktokDramaTaskApi();
   if (!task) {
-    logger.info('no tiktok drama task claimed');
-    log(options, '[tiktok-drama] no task claimed');
+    logger.info("no tiktok drama task claimed");
+    log(options, "[tiktok-drama] no task claimed");
     return;
   }
 
   const scheme = task.scheme;
   const notificationPayload = {
     accountTaskId: task.accountTaskId,
-    channelId: 'tiktok-drama',
-    channelName: 'TikTok Drama Center',
+    channelId: "tiktok-drama",
+    channelName: "TikTok Drama Center",
     dramaId: task.dramaId,
     originalTitle: task.originalTitle,
   };
-  logger.info({
-    accountTaskId: task.accountTaskId,
-    dramaId: task.dramaId,
-    taskId: scheme.id,
-    title: scheme.title
-  }, 'claimed task');
+  logger.info(
+    {
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      taskId: scheme.id,
+      title: scheme.title,
+    },
+    "claimed task",
+  );
   log(options, `[tiktok-drama] claimed task: ${scheme.title}`);
 
   await notifier.notifyTaskStarted({
     ...notificationPayload,
-    mode: 'run',
+    mode: "run",
   });
 
   try {
@@ -175,13 +176,16 @@ async function runDraftTask(
       : await resolveTaskVideos(scheme, task.originalTitle, task.allowMissingVideos);
     const coverFile = await resolveCoverFile(scheme.coverFile, scheme.id);
 
-    logger.info({
-      accountTaskId: task.accountTaskId,
-      dramaId: task.dramaId,
-      taskId: scheme.id,
-      title: scheme.title,
-      videos: videos.length
-    }, 'starting task');
+    logger.info(
+      {
+        accountTaskId: task.accountTaskId,
+        dramaId: task.dramaId,
+        taskId: scheme.id,
+        title: scheme.title,
+        videos: videos.length,
+      },
+      "starting task",
+    );
     const stopWatchingToast = new AbortController();
     try {
       await Promise.race([
@@ -197,24 +201,33 @@ async function runDraftTask(
   } catch (error) {
     await notifier.notifyTaskFailed({
       ...notificationPayload,
-      errorMessage: errorMessage(error),
+      errorMessage: formatAutomationErrorReport(error, {
+        fallbackMessage: "TikTok 任务提交失败，未获取到具体错误原因",
+      }),
     });
     throw error;
   }
 }
 
-async function resolveTaskVideos(scheme: Scheme, originalTitle: string, allowMissingVideos = false) {
+async function resolveTaskVideos(
+  scheme: Scheme,
+  originalTitle: string,
+  allowMissingVideos = false,
+) {
   try {
     return await matchVideos(config.videoDir, originalTitle, scheme.episodeCount);
   } catch (error) {
     if (!allowMissingVideos) throw error;
-    logger.warn({
-      err: error,
-      taskId: scheme.id,
-      originalTitle,
-      title: scheme.title,
-      videoDir: config.videoDir
-    }, 'video files missing; skipping video upload for fake task');
+    logger.warn(
+      {
+        err: error,
+        taskId: scheme.id,
+        originalTitle,
+        title: scheme.title,
+        videoDir: config.videoDir,
+      },
+      "video files missing; skipping video upload for fake task",
+    );
     return [];
   }
 }
@@ -223,33 +236,33 @@ async function fillDraftAndWait(
   page: Page,
   scheme: Scheme,
   coverFile: string,
-  videos: Awaited<ReturnType<typeof matchVideos>>
+  videos: Awaited<ReturnType<typeof matchVideos>>,
 ) {
   await fillDraft(page, scheme, coverFile, videos);
 
   if (scheme.submit || config.submit) {
-    await page.getByRole('button', { name: '提交' }).click();
-    logger.info({ taskId: scheme.id }, 'task submitted');
+    await page.getByRole("button", { name: "提交" }).click();
+    logger.info({ taskId: scheme.id }, "task submitted");
   } else {
-    logger.info({ taskId: scheme.id }, 'task finished without submit');
+    logger.info({ taskId: scheme.id }, "task finished without submit");
   }
   await page.waitForTimeout(config.postTaskWatchMs);
 }
 
 async function watchToast(page: Page, signal: AbortSignal) {
-  const portal = page.locator('[data-tux-toast-portal]').last();
+  const portal = page.locator("[data-tux-toast-portal]").last();
   while (!signal.aborted) {
     await Promise.race([
-      portal.waitFor({ state: 'attached', timeout: 0 }),
-      new Promise(resolve => signal.addEventListener('abort', resolve, { once: true })),
+      portal.waitFor({ state: "attached", timeout: 0 }),
+      new Promise((resolve) => signal.addEventListener("abort", resolve, { once: true })),
     ]);
     if (signal.aborted) return await new Promise<never>(() => {});
 
-    const message = (await portal.innerText()).replace(/\s*复制\s*$/, '').trim();
+    const message = (await portal.innerText()).replace(/\s*复制\s*$/, "").trim();
     if (await clickToastConfirm(page, message)) {
       continue;
     }
-    logger.error({ toast: message }, 'toast error');
+    logger.error({ toast: message }, "toast error");
     throw new Error(`toast error: ${message}`);
   }
 
@@ -257,34 +270,32 @@ async function watchToast(page: Page, signal: AbortSignal) {
 }
 
 async function clickToastConfirm(page: Page, message: string) {
-  const confirmButton = page
-    .getByRole('button', { name: /^(Confirm|确认|确定)$/i })
-    .last();
+  const confirmButton = page.getByRole("button", { name: /^(Confirm|确认|确定)$/i }).last();
   if (!(await confirmButton.isVisible({ timeout: 2_000 }).catch(() => false))) {
     return false;
   }
 
   await confirmButton.click();
-  logger.warn({ toast: message }, 'toast confirmed');
+  logger.warn({ toast: message }, "toast confirmed");
   await page.waitForTimeout(500);
   return true;
 }
 
 function loginStateFromUrl(url: string | undefined): TiktokDramaCenterLoginState {
-  if (!url || url === 'about:blank') return 'unknown';
+  if (!url || url === "about:blank") return "unknown";
 
   try {
     return new URL(url).pathname === new URL(config.loginUrl).pathname
-      ? 'login-required'
-      : 'logged-in';
+      ? "login-required"
+      : "logged-in";
   } catch {
-    return url.includes('login') ? 'login-required' : 'logged-in';
+    return url.includes("login") ? "login-required" : "logged-in";
   }
 }
 
 function runDataDirFromUserDataDir(userDataDir: string) {
   const parent = path.dirname(userDataDir);
-  return path.basename(parent) === 'auth' ? path.dirname(parent) : parent;
+  return path.basename(parent) === "auth" ? path.dirname(parent) : parent;
 }
 
 function log(_options: TiktokDramaCenterRuntimeOptions, message: string) {

@@ -692,12 +692,51 @@ export async function throwIfIqiyiFormInvalid(page: Page) {
   if (errors.length > 0) throw new Error(`IQIYI_DRAMA_FORM_INVALID: ${errors.join("；")}`);
 }
 
-export async function clickIqiyiButton(page: Page, names: readonly string[]) {
-  for (const name of names) {
-    const button = page.getByRole("button", { name, exact: true }).filter({ visible: true }).last();
-    if (await button.count() === 0 || !await button.isEnabled().catch(() => false)) continue;
-    await button.click({ timeout: 15_000 });
-    return name;
+export async function clickIqiyiButton(
+  page: Page,
+  names: readonly string[],
+  options: { timeoutMs?: number; pollIntervalMs?: number } = {},
+) {
+  const timeoutMs = Math.max(0, options.timeoutMs ?? 0);
+  const pollIntervalMs = Math.max(50, options.pollIntervalMs ?? 500);
+  const deadline = Date.now() + timeoutMs;
+
+  while (true) {
+    for (const name of names) {
+      const button = page.getByRole("button", { name, exact: true }).filter({ visible: true }).last();
+      if (await button.count() === 0 || !await button.isEnabled().catch(() => false)) continue;
+      await button.click({ timeout: 15_000 });
+      return name;
+    }
+    if (Date.now() >= deadline) return null;
+    await throwIfIqiyiFormInvalid(page);
+    await page.waitForTimeout(Math.min(pollIntervalMs, Math.max(1, deadline - Date.now())));
   }
-  return null;
+}
+
+export async function iqiyiButtonDiagnostic(page: Page, names: readonly string[]) {
+  const targetStates: string[] = [];
+  for (const name of names) {
+    const buttons = page.getByRole("button", { name, exact: true });
+    const count = await buttons.count();
+    if (count === 0) {
+      targetStates.push(`${name}=missing`);
+      continue;
+    }
+    for (let index = 0; index < count; index += 1) {
+      const button = buttons.nth(index);
+      const [visible, enabled] = await Promise.all([
+        button.isVisible().catch(() => false),
+        button.isEnabled().catch(() => false),
+      ]);
+      targetStates.push(`${name}[${index}]=visible:${visible},enabled:${enabled}`);
+    }
+  }
+  const visibleButtons = (await page.locator("button:visible,[role='button']:visible")
+    .allInnerTexts().catch(() => []))
+    .map(normalizeText)
+    .filter(Boolean)
+    .slice(0, 30);
+  return `targets=${targetStates.join(" | ") || "(none)"}; `
+    + `visibleButtons=${visibleButtons.join(" | ") || "(none)"}`;
 }

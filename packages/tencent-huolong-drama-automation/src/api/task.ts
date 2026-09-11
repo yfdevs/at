@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import {
   claimedTencentHuolongDramaTaskSchema,
   type ClaimedTencentHuolongDramaTask,
@@ -198,6 +198,12 @@ export async function reportTencentHuolongDramaTask(
   },
 ) {
   if (options.status === "FAILED" && isBrowserClosedError(options.errorMessage)) return;
+  const errorMessage =
+    options.status === "FAILED"
+      ? formatAutomationErrorReport(options.errorMessage, {
+          fallbackMessage: "腾讯火龙漫剧任务提交失败，未获取到具体错误原因",
+        })
+      : options.errorMessage;
   if (useLocalMockTaskSource) {
     // 本地模拟模式没有远端任务，因此不需要回写任务状态。
     return;
@@ -207,7 +213,7 @@ export async function reportTencentHuolongDramaTask(
       accountTaskId: options.accountTaskId,
       rpaStatus: options.status,
       failStage: options.failStage,
-      errorMessage: options.errorMessage,
+      errorMessage,
       resultJson: options.resultJson ?? {},
     }),
   );

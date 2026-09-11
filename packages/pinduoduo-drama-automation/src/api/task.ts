@@ -1,5 +1,5 @@
 import { z } from "zod";
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import { createLogger } from "../shared/logger.js";
 import { PINDUODUO_DEFAULT_COPYRIGHT_EXPIRE_TIME } from "../shared/constants.js";
 import {
@@ -372,13 +372,16 @@ export async function reportPinduoduoDramaTaskErrorApi(
   report: PinduoduoDramaTaskErrorReport,
 ): Promise<void> {
   if (isBrowserClosedError(report.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(report.errorMessage, {
+    fallbackMessage: "拼多多任务提交失败，未获取到具体错误原因",
+  });
   const failStage = z.enum(pinduoduoDramaTaskFailStageValues).parse(report.failStage);
   if (shouldUseMockTaskApi(report)) {
     logger.info("mock fail callback skipped", {
       accountTaskId: report.accountTaskId,
       dramaId: report.dramaId,
       failStage,
-      errorMessage: report.errorMessage,
+      errorMessage,
       resultJson: report.resultJson,
     });
     return;
@@ -390,7 +393,7 @@ export async function reportPinduoduoDramaTaskErrorApi(
     accountTaskId: report.accountTaskId,
     failStage,
     resultJson: report.resultJson ?? {},
-    errorMessage: report.errorMessage,
+    errorMessage,
   };
 
   logger.info("fail callback request", {
@@ -398,7 +401,7 @@ export async function reportPinduoduoDramaTaskErrorApi(
     accountTaskId: report.accountTaskId,
     dramaId: report.dramaId,
     failStage,
-    errorMessage: report.errorMessage,
+    errorMessage,
     resultJson: requestPayload.resultJson,
   });
   const rawPayload = await client.post<unknown>(endpoints.failCallback, requestPayload);

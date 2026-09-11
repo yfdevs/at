@@ -1,5 +1,6 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import type { Page } from "playwright";
 import {
@@ -23,7 +24,11 @@ import {
   log,
   warn,
 } from "../shared/logger.js";
-import { baiduDramaLocalRoot, baiduDramaResourceName, prepareBaiduDramaResources } from "../shared/resources.js";
+import {
+  baiduDramaLocalRoot,
+  baiduDramaResourceName,
+  prepareBaiduDramaResources,
+} from "../shared/resources.js";
 import type {
   BaiduDramaRuntime,
   BaiduDramaRuntimeOptions,
@@ -39,7 +44,8 @@ function errorMessage(error: unknown) {
 function failStage(error: unknown): BaiduDramaTaskFailStage {
   const message = errorMessage(error);
   if (/LOGIN/i.test(message)) return "LOGIN";
-  if (/FILE|UPLOAD|VIDEO|COVER|POSTER|文件|上传|视频|封面|海报/i.test(message)) return "UPLOAD_FILE";
+  if (/FILE|UPLOAD|VIDEO|COVER|POSTER|文件|上传|视频|封面|海报/i.test(message))
+    return "UPLOAD_FILE";
   if (/FORM|FIELD|LOCATOR|STRICT MODE|SELECT|OPTION|表单|字段|填写|选择/i.test(message)) {
     return "FILL_FORM";
   }
@@ -140,7 +146,9 @@ async function runTask(
       "task",
     );
   } catch (error) {
-    const message = errorMessage(error);
+    const message = formatAutomationErrorReport(error, {
+      fallbackMessage: "百度任务提交失败，未获取到具体错误原因",
+    });
     const stage = failStage(error);
     await reportBaiduDramaTaskErrorApi({
       runtimeOptions: options,
@@ -172,7 +180,9 @@ async function runTask(
 export async function startBaiduDramaRuntime(
   options: BaiduDramaRuntimeOptions = {},
 ): Promise<BaiduDramaRuntime> {
-  const userDataDir = options.userDataDir ?? path.resolve(process.cwd(), ".drama-runs/baidu-drama/auth/chromium-profile");
+  const userDataDir =
+    options.userDataDir ??
+    path.resolve(process.cwd(), ".drama-runs/baidu-drama/auth/chromium-profile");
   await cleanupOldBaiduDramaLogFiles(options).catch(() => undefined);
   log(
     options,
@@ -204,19 +214,18 @@ export async function startBaiduDramaRuntime(
           apiConfig: options.apiConfig,
         });
         if (task) {
-          await runTask(page, task, options, (value) => { lastTask = value; });
+          await runTask(page, task, options, (value) => {
+            lastTask = value;
+          });
           continue;
         }
       } catch (error) {
-        warn(
-          options,
-          `[baidu-drama] 任务轮询失败：${errorMessage(error)}`,
-          { error },
-          "polling",
-        );
+        warn(options, `[baidu-drama] 任务轮询失败：${errorMessage(error)}`, { error }, "polling");
       }
       if (!running) break;
-      await new Promise((resolve) => setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000)));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000)),
+      );
     }
   };
   void pollLoop();

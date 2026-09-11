@@ -1,5 +1,6 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import type { Page } from "playwright";
 import {
@@ -143,7 +144,9 @@ async function runTask(
       "task",
     );
   } catch (error) {
-    const message = errorMessage(error);
+    const message = formatAutomationErrorReport(error, {
+      fallbackMessage: "抖音任务提交失败，未获取到具体错误原因",
+    });
     const stage = failStage(error);
     await reportDouyinDramaTaskErrorApi({
       runtimeOptions: options,
@@ -172,10 +175,9 @@ async function runTask(
 export async function startDouyinDramaRuntime(
   options: DouyinDramaRuntimeOptions = {},
 ): Promise<DouyinDramaRuntime> {
-  const userDataDir = options.userDataDir ?? path.resolve(
-    process.cwd(),
-    ".drama-runs/douyin-drama/auth/chromium-profile",
-  );
+  const userDataDir =
+    options.userDataDir ??
+    path.resolve(process.cwd(), ".drama-runs/douyin-drama/auth/chromium-profile");
   await cleanupOldDouyinDramaLogFiles(options).catch(() => undefined);
   log(
     options,
@@ -203,17 +205,18 @@ export async function startDouyinDramaRuntime(
       try {
         const task = await claimNextDouyinDramaTaskApi({ runtimeOptions: options });
         if (task) {
-          await runTask(page, task, options, (value) => { lastTask = value; });
+          await runTask(page, task, options, (value) => {
+            lastTask = value;
+          });
           continue;
         }
       } catch (error) {
         warn(options, `[douyin-drama] 任务轮询失败：${errorMessage(error)}`, { error }, "polling");
       }
       if (!running) break;
-      await new Promise((resolve) => setTimeout(
-        resolve,
-        Math.max(1_000, options.taskPollIntervalMs ?? 10_000),
-      ));
+      await new Promise((resolve) =>
+        setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000)),
+      );
     }
   };
   void pollLoop();

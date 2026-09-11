@@ -1,4 +1,4 @@
-import { isBrowserClosedError } from "@drama/automation-logging";
+import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import type { ClaimedAccountTask } from "../shared/types.js";
 import type { RpaFailStage } from "../shared/errors.js";
 import type { VideoAccount } from "./video-accounts.js";
@@ -161,12 +161,15 @@ export async function claimNextTaskForVideoAccountApi(
     return null;
   }
   if (!payload.data.accountTaskId || !payload.data.originalTitle || !payload.data.payloadJson) {
-    throw new Error("Claim task response data.accountTaskId, data.originalTitle and data.payloadJson are required.");
+    throw new Error(
+      "Claim task response data.accountTaskId, data.originalTitle and data.payloadJson are required.",
+    );
   }
 
-  const playlet = typeof payload.data.payloadJson === "string"
-    ? JSON.parse(payload.data.payloadJson) as Record<string, unknown>
-    : payload.data.payloadJson;
+  const playlet =
+    typeof payload.data.payloadJson === "string"
+      ? (JSON.parse(payload.data.payloadJson) as Record<string, unknown>)
+      : payload.data.payloadJson;
   if (typeof playlet !== "object" || playlet === null || Array.isArray(playlet)) {
     throw new Error("Claim task response data.payloadJson must be a JSON object.");
   }
@@ -189,7 +192,9 @@ export async function claimNextTaskForVideoAccountApi(
   return task;
 }
 
-export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSuccessReport): Promise<void> {
+export async function reportClaimedTaskSuccessApi(
+  successReport: ClaimedTaskSuccessReport,
+): Promise<void> {
   const url = "/dramaAiRpa/rpa/successCallback";
   const requestPayload = {
     accountTaskId: successReport.accountTaskId,
@@ -210,14 +215,19 @@ export async function reportClaimedTaskSuccessApi(successReport: ClaimedTaskSucc
   });
 }
 
-export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorReport): Promise<void> {
+export async function reportClaimedTaskErrorApi(
+  errorReport: ClaimedTaskErrorReport,
+): Promise<void> {
   if (isBrowserClosedError(errorReport.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(errorReport.errorMessage, {
+    fallbackMessage: "微信视频号任务提交失败，未获取到具体错误原因",
+  });
   const url = "/dramaAiRpa/rpa/failCallback";
   const requestPayload = {
     accountTaskId: errorReport.accountTaskId,
     failStage: errorReport.failStage,
     resultJson: errorReport.resultJson ?? {},
-    errorMessage: errorReport.errorMessage,
+    errorMessage,
   };
   logger.info("fail callback request", {
     url,
@@ -225,7 +235,7 @@ export async function reportClaimedTaskErrorApi(errorReport: ClaimedTaskErrorRep
     dramaId: errorReport.dramaId,
     failStage: errorReport.failStage,
     videoAccountId: errorReport.videoAccountId,
-    errorMessage: errorReport.errorMessage,
+    errorMessage,
     resultJson: requestPayload.resultJson,
   });
   const payload = await httpClient.post<TaskCallbackResponse>(url, requestPayload);

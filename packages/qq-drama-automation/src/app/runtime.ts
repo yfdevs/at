@@ -1,4 +1,5 @@
 import type { BrowserContext, Page } from "playwright";
+import { formatAutomationErrorReport } from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { QQ_DRAMA_ADD_URL, QQ_DRAMA_LOGIN_URL, QQ_DRAMA_PLATFORM } from "../shared/constants.js";
 import {
@@ -257,7 +258,9 @@ async function runTask(
     });
     log(options, `[qq-drama] task succeeded: accountTaskId=${task.accountTaskId}`);
   } catch (error) {
-    const message = errorMessage(error);
+    const message = formatAutomationErrorReport(error, {
+      fallbackMessage: "QQ 任务提交失败，未获取到具体错误原因",
+    });
     const failStage = classifyFailStage(error, "FILL_FORM");
     setLastTask({
       accountTaskId: task.accountTaskId,
