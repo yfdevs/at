@@ -1,5 +1,8 @@
 import { chromium, type BrowserContext, type Page } from "playwright";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { KUAISHOU_DRAMA_PLATFORM } from "../shared/constants.js";
 import { parseTaskConfig } from "../shared/task-config.js";
@@ -252,8 +255,23 @@ export async function startKuaishouDramaRuntime(
         const message = formatAutomationErrorReport(error, {
           fallbackMessage: "快手任务提交失败，未获取到具体错误原因",
         });
-        log(options, `[kuaishou-drama] task failed: ${message}`);
         const failedTask = currentClaimedTask();
+        const stage = classifyFailStage(error);
+        const diagnostics = await captureAutomationFailureDiagnostics({
+          platform: "kuaishou-drama",
+          error,
+          page: taskPage,
+          logFilePath: options.logFilePath,
+          stage,
+          task: {
+            accountTaskId: failedTask?.accountTaskId,
+            title: failedTask?.originalTitle,
+          },
+        });
+        log(
+          options,
+          `[kuaishou-drama] task failed: ${message} diagnostics=${diagnostics?.directory ?? "unavailable"}`,
+        );
         if (failedTask) {
           lastTask = {
             accountTaskId: failedTask.accountTaskId,
@@ -265,7 +283,7 @@ export async function startKuaishouDramaRuntime(
           await options
             .reportTaskError?.({
               accountTaskId: failedTask.accountTaskId,
-              failStage: classifyFailStage(error),
+              failStage: stage,
               errorMessage: message,
             })
             .catch((reportError) => {

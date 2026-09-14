@@ -1,5 +1,8 @@
 import type { BrowserContext, Page } from "playwright";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import {
   TENCENT_HUOLONG_DRAMA_ADD_URL,
@@ -132,6 +135,15 @@ async function runTask(
     const message = formatAutomationErrorReport(error, {
       fallbackMessage: "腾讯火龙漫剧任务提交失败，未获取到具体错误原因",
     });
+    const stage = failStage(error);
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "tencent-huolong-drama",
+      error,
+      page,
+      logFilePath: options.logFilePath,
+      stage,
+      task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
+    });
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -143,11 +155,15 @@ async function runTask(
       ...options,
       accountTaskId: task.accountTaskId,
       status: "FAILED",
-      failStage: failStage(error),
+      failStage: stage,
       errorMessage: message,
       resultJson: { activeUrl: page.url(), accountId: task.accountId },
     }).catch((reportError) =>
       errorLog(options, `[tencent-huolong-drama] 失败回调异常：${errorMessage(reportError)}`),
+    );
+    errorLog(
+      options,
+      `[tencent-huolong-drama] 失败诊断目录：${diagnostics?.directory ?? "不可用"}`,
     );
     throw error;
   }

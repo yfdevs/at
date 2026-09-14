@@ -454,3 +454,7 @@ export function registerPinduoduoDramaPlatformHandlers() {
 export function stopPinduoduoDramaPlatformRuntime() {
   runtimeController.stopInBackground();
 }
+
+export function stopPinduoduoDramaPlatformService() {
+  return runtimeController.stop();
+}

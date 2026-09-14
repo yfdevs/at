@@ -282,6 +282,7 @@ export class TaskService {
       try {
         const browserContext = await this.browserContexts.getOrLaunch(taskRecord.channelId);
         await runPlayletTask({
+          accountTaskId: taskRecord.accountTaskId,
           playletConfig,
           preparedEpisodeVideos,
           dramaAiRpaId: taskRecord.dramaAiRpaId,

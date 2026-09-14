@@ -13,6 +13,7 @@ import {
 } from "../storage/baidu-netdisk";
 import {
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
   getConfiguredAiImageModel,
   getConfiguredBaiduNetdiskDownloadTimeoutMs,
   isAiPosterFallbackEnabled,
@@ -1246,6 +1247,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
         const poster = await ensureAiPoster({
           client: createConfiguredAiClient(),
           model: getConfiguredAiImageModel(),
+          retryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
           localMaterialRoot: request.localEpisodeVideoRoot,
           resourceName: request.resourceName,
           title: request.posterFallback?.title || request.resourceName,

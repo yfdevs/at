@@ -1,5 +1,5 @@
 import { mkdirSync } from "node:fs";
-import { mkdir, readdir, stat, unlink } from "node:fs/promises";
+import { mkdir, readdir, rm, stat, unlink, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
   createLogger as createWinstonLogger,
@@ -73,12 +73,23 @@ const errorCodeDescriptions: Readonly<Record<string, string>> = {
   IQIYI_DRAMA_AI_COVER_GENERATION_FAILED: "爱奇艺 AI 横版封面生成失败",
   IQIYI_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: "AI 横版封面文字验收未通过",
   IQIYI_DRAMA_AI_RECOMMENDATION_INVALID: "爱奇艺 AI 分类推荐结果无效",
+  IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: "爱奇艺上传前发现页面存在旧视频",
+  IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_CLEAR_FAILED: "爱奇艺上传前清理页面旧视频失败",
   BAIDU_DRAMA_AI_COVER_GENERATION_FAILED: "百度 AI 封面生成失败",
   BAIDU_DRAMA_AI_COVER_RESPONSE_MISSING: "百度 AI 封面生成服务未返回图片",
   BAIDU_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: "百度 AI 封面文字验收未通过",
+  BAIDU_DRAMA_COVER_CONFIRM_NOT_READY:
+    "百度封面上传未完成，图片选择后仍显示 0 张上传成功，请检查网络或平台上传状态",
+  BAIDU_DRAMA_COVER_CONFIRM_NOT_CLOSED: "百度封面确认后弹窗未关闭，平台页面可能响应异常",
+  BAIDU_DRAMA_COVER_FILE_INPUT_NOT_FOUND: "百度封面上传弹窗中未找到有效的图片选择控件",
+  BAIDU_DRAMA_COVER_FILE_NOT_SELECTED: "百度封面文件未能写入图片选择控件",
+  BAIDU_DRAMA_COVER_UPLOAD_TRANSIENT_FAILURE: "百度封面上传遇到临时故障",
+  BAIDU_DRAMA_COVER_UPLOAD_REJECTED: "百度拒绝上传封面图片",
   KUAISHOU_DRAMA_AI_COVER_GENERATION_FAILED: "快手 AI 封面生成失败",
   KUAISHOU_DRAMA_AI_COVER_RESPONSE_MISSING: "快手 AI 封面生成服务未返回图片",
   KUAISHOU_DRAMA_AI_COVER_VALIDATION_FAILED: "快手 AI 封面验收未通过",
+  TENCENT_HUOLONG_DRAMA_AI_COVER_GENERATION_FAILED: "腾讯火龙 AI 封面生成失败",
+  AI_POSTER_GENERATION_FAILED: "AI 海报生成失败",
   AI_POSTER_IMAGE_EMPTY: "AI 海报生成服务未返回图片",
   AI_POSTER_IMAGE_INVALID: "AI 生成的海报图片无效",
   AI_POSTER_SUMMARY_REQUIRED: "生成 AI 海报需要剧目简介",
@@ -386,6 +397,7 @@ export type CreateAutomationLoggerOptions = {
 };
 
 const cleanupKeys = new Set<string>();
+const failureCleanupTimers = new Map<string, ReturnType<typeof setInterval>>();
 const winstonSinkCache = new Map<string, WinstonSink>();
 const secretKeyPattern = /(authorization|cookie|password|passwd|secret|token|api[-_]?key|webhook)/i;
 const legacyPlatformTags = new Set([
@@ -415,6 +427,16 @@ consoleColorizer.addColors({
 let lastConsoleLogAt: number | undefined;
 
 export function createAutomationLogger(options: CreateAutomationLoggerOptions): AutomationLogger {
+  if (options.logFilePath) {
+    const runDataDir = resolveAutomationRunDataDir({
+      platform: options.platform,
+      logFilePath: options.logFilePath,
+    });
+    scheduleAutomationFailureCleanup(
+      path.join(runDataDir, failureDirectoryName),
+      defaultFailureRetentionDays,
+    );
+  }
   // Automation services run in the Electron main process. Keep their structured
   // logs visible in an attached terminal by default; callers can still opt out
   // explicitly with `console: false`.
@@ -483,6 +505,202 @@ export function createAutomationLogger(options: CreateAutomationLoggerOptions): 
   });
 
   return build(options.scope ?? "runtime", options.context ?? {});
+}
+
+export type AutomationFailurePage = {
+  isClosed(): boolean;
+  url(): string;
+  title(): Promise<string>;
+  screenshot(options: { path: string; fullPage: boolean }): Promise<unknown>;
+};
+
+export type CaptureAutomationFailureOptions = {
+  platform: string;
+  error: unknown;
+  page?: AutomationFailurePage | null;
+  runDataDir?: string;
+  logFilePath?: string;
+  retentionDays?: number;
+  stage?: string;
+  task?: AutomationLogFields;
+  details?: AutomationLogFields;
+};
+
+export type AutomationFailureDiagnostic = {
+  directory: string;
+  recordFile: string;
+  screenshotFile?: string;
+  screenshotError?: string;
+};
+
+const failureDirectoryName = "failures";
+const defaultFailureRetentionDays = 7;
+const failureCleanupIntervalMs = 6 * 60 * 60 * 1_000;
+
+/**
+ * Saves a task failure record and, when a live Playwright-like page is available,
+ * a full-page screenshot. Diagnostics are intentionally best-effort so they can
+ * never replace the original automation error.
+ */
+export async function captureAutomationFailureDiagnostics(
+  options: CaptureAutomationFailureOptions,
+): Promise<AutomationFailureDiagnostic | undefined> {
+  try {
+    const runDataDir = resolveAutomationRunDataDir(options);
+    const capturedAt = new Date();
+    const failureRoot = path.join(runDataDir, failureDirectoryName);
+    scheduleAutomationFailureCleanup(failureRoot, options.retentionDays);
+    await cleanupAutomationFailureDirectory(failureRoot, options.retentionDays).catch(
+      () => undefined,
+    );
+
+    const taskId = safePathSegment(
+      primitiveErrorValue(options.task?.accountTaskId ?? options.task?.taskId) || "runtime",
+    );
+    const timestamp = formatFailureTimestamp(capturedAt);
+    const directory = path.join(
+      failureRoot,
+      formatDateKey(capturedAt),
+      `${timestamp}-${process.pid}-${taskId}`,
+    );
+    await mkdir(directory, { recursive: true });
+
+    let pageUrl = "";
+    let pageTitle = "";
+    let screenshotFile: string | undefined;
+    let screenshotError: string | undefined;
+    if (options.page && !options.page.isClosed()) {
+      pageUrl = safePageValue(() => options.page?.url() ?? "");
+      pageTitle = await options.page.title().catch(() => "");
+      screenshotFile = path.join(directory, "page.png");
+      await options.page.screenshot({ path: screenshotFile, fullPage: true }).catch((error) => {
+        screenshotError = sanitizeErrorMessage(errorValueMessage(error));
+        screenshotFile = undefined;
+      });
+    } else {
+      screenshotError = "任务页面已关闭或不可用，无法截图";
+    }
+
+    const report = formatAutomationErrorReport(options.error);
+    const recordFile = path.join(directory, "error.json");
+    const record = {
+      version: 1,
+      capturedAt: capturedAt.toISOString(),
+      platform: options.platform,
+      ...(options.stage ? { stage: options.stage } : {}),
+      task: redactFields(options.task ?? {}),
+      page: { url: pageUrl, title: pageTitle },
+      error: serializeFailureError(options.error, report),
+      screenshot: screenshotFile
+        ? { status: "saved", file: path.basename(screenshotFile) }
+        : { status: "unavailable", error: screenshotError },
+      details: redactFields(options.details ?? {}),
+    };
+    await writeFile(recordFile, `${JSON.stringify(record, null, 2)}\n`, "utf8");
+    return { directory, recordFile, screenshotFile, screenshotError };
+  } catch {
+    return undefined;
+  }
+}
+
+export async function cleanupAutomationFailureDiagnostics(options: {
+  platform: string;
+  runDataDir?: string;
+  logFilePath?: string;
+  retentionDays?: number;
+}) {
+  const failureRoot = path.join(resolveAutomationRunDataDir(options), failureDirectoryName);
+  scheduleAutomationFailureCleanup(failureRoot, options.retentionDays);
+  await cleanupAutomationFailureDirectory(failureRoot, options.retentionDays);
+}
+
+function resolveAutomationRunDataDir(options: {
+  platform: string;
+  runDataDir?: string;
+  logFilePath?: string;
+}) {
+  if (options.runDataDir?.trim()) return path.resolve(options.runDataDir);
+  if (options.logFilePath?.trim()) return path.dirname(path.dirname(path.resolve(options.logFilePath)));
+  return path.resolve(process.cwd(), ".drama-runs", safePathSegment(options.platform));
+}
+
+function scheduleAutomationFailureCleanup(failureRoot: string, retentionDays?: number) {
+  const resolvedRoot = path.resolve(failureRoot);
+  if (failureCleanupTimers.has(resolvedRoot)) return;
+  const clean = () =>
+    void cleanupAutomationFailureDirectory(resolvedRoot, retentionDays).catch(() => undefined);
+  clean();
+  const timer = setInterval(clean, failureCleanupIntervalMs);
+  timer.unref?.();
+  failureCleanupTimers.set(resolvedRoot, timer);
+}
+
+async function cleanupAutomationFailureDirectory(failureRoot: string, retentionDays?: number) {
+  const resolvedRoot = path.resolve(failureRoot);
+  await mkdir(resolvedRoot, { recursive: true });
+  const cutoff = Date.now() - Math.max(1, retentionDays ?? defaultFailureRetentionDays) * 86_400_000;
+  for (const dateEntry of await readdir(resolvedRoot, { withFileTypes: true }).catch(() => [])) {
+    if (!dateEntry.isDirectory() || !/^\d{4}-\d{2}-\d{2}$/.test(dateEntry.name)) continue;
+    const dateDirectory = path.resolve(resolvedRoot, dateEntry.name);
+    if (path.dirname(dateDirectory) !== resolvedRoot) continue;
+    for (const failureEntry of await readdir(dateDirectory, { withFileTypes: true }).catch(() => [])) {
+      if (!failureEntry.isDirectory()) continue;
+      const failureDirectory = path.resolve(dateDirectory, failureEntry.name);
+      if (path.dirname(failureDirectory) !== dateDirectory) continue;
+      const failureStat = await stat(failureDirectory).catch(() => undefined);
+      if (failureStat && failureStat.mtimeMs < cutoff) {
+        await rm(failureDirectory, { recursive: true, force: true }).catch(() => undefined);
+      }
+    }
+    const remaining = await readdir(dateDirectory).catch(() => ["unavailable"]);
+    if (remaining.length === 0) await rm(dateDirectory, { recursive: false }).catch(() => undefined);
+  }
+}
+
+function serializeFailureError(error: unknown, report: string) {
+  const causes: Array<Record<string, unknown>> = [];
+  const seen = new Set<unknown>();
+  let current = error;
+  for (let depth = 0; depth < 8 && current !== undefined && current !== null; depth += 1) {
+    if (seen.has(current)) break;
+    seen.add(current);
+    if (current instanceof Error) {
+      causes.push(
+        redactFields({
+          name: current.name,
+          message: sanitizeErrorMessage(current.message),
+          stack: current.stack,
+        }),
+      );
+      current = "cause" in current ? current.cause : undefined;
+      continue;
+    }
+    causes.push(redactFields({ message: errorValueMessage(current) }));
+    break;
+  }
+  return { report, causes };
+}
+
+function safePageValue(read: () => string) {
+  try {
+    return read();
+  } catch {
+    return "";
+  }
+}
+
+function safePathSegment(value: string) {
+  const normalized = value.trim().replace(/[^a-z0-9._-]+/gi, "-").replace(/^-+|-+$/g, "");
+  return normalized.slice(0, 80) || "unknown";
+}
+
+function formatFailureTimestamp(date: Date) {
+  return [
+    String(date.getHours()).padStart(2, "0"),
+    String(date.getMinutes()).padStart(2, "0"),
+    String(date.getSeconds()).padStart(2, "0"),
+    String(date.getMilliseconds()).padStart(3, "0"),
+  ].join("");
 }
 
 export function normalizeAutomationLogInput(

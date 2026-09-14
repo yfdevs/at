@@ -1,29 +1,35 @@
 import path from "node:path";
-import { randomInt } from "node:crypto";
-import { rm, stat } from "node:fs/promises";
+import { stat } from "node:fs/promises";
 import {
-  composeOwnershipMaterialsIntoTwo,
+  findOwnershipProjectProofFiles,
   listLocalOwnershipMaterials,
-  safeEpisodeFileBaseName,
   type LocalOwnershipMaterialFile,
 } from "@drama/drama-media-assets";
 import { prepareUploadFiles } from "../automation/upload/upload-helpers.js";
-import {
-  mingxingshuoContractSubject,
-  normalizeContractSubject,
-  resolveFromRoot,
-  resolveRunDataPath,
-} from "./config.js";
+import { resolveFromRoot } from "./config.js";
 import { getWechatVideoRuntimeSettings } from "./runtime-settings.js";
-import { booleanSetting } from "./settings-value.js";
 import type { Config } from "./types.js";
 
-export const wechatOwnershipRequirements = {
-  minimumImages: 1,
-} as const;
-
 const contractImageExtensions = new Set([".png", ".jpg", ".jpeg", ".bmp"]);
-const mingxingshuoMaximumOwnershipFiles = 8;
+type OwnershipAiClient = NonNullable<Parameters<typeof findOwnershipProjectProofFiles>[0]["aiClient"]>;
+
+function positiveProofCount(value: string) {
+  const count = Number(value);
+  return Number.isSafeInteger(count) && count > 0 ? count : 4;
+}
+
+export function getWechatOwnershipProofCounts() {
+  const settings = getWechatVideoRuntimeSettings();
+  return {
+    jianying: positiveProofCount(settings.jianyingOwnershipProofCount),
+    juchuang: positiveProofCount(settings.juchuangOwnershipProofCount),
+  };
+}
+
+export function getWechatOwnershipRequirements() {
+  const counts = getWechatOwnershipProofCounts();
+  return { minimumImages: counts.jianying + counts.juchuang };
+}
 
 async function isValidContractImage(file: string) {
   if (!contractImageExtensions.has(path.extname(file).toLowerCase())) return false;
@@ -39,11 +45,12 @@ async function resolveContractFiles(config: Config) {
 
   const errors: string[] = [];
   const resolved: string[] = [];
-  for (const candidate of candidates.slice(0, 2)) {
+  for (const candidate of candidates) {
     try {
       const files = await prepareUploadFiles([candidate], resolveFromRoot, `${config.playlet.name}-contract`);
       if (files[0] && await isValidContractImage(files[0])) {
         resolved.push(files[0]);
+        if (resolved.length === 2) break;
         continue;
       }
       errors.push(`${candidate}: 文件不存在或不支持`);
@@ -58,28 +65,6 @@ async function resolveContractFiles(config: Config) {
   );
 }
 
-function isMingxingshuoContractSubject(contractSubject?: string) {
-  return Boolean(
-    contractSubject
-    && normalizeContractSubject(contractSubject) === mingxingshuoContractSubject,
-  );
-}
-
-export function selectRandomOwnershipFiles(
-  files: string[],
-  maximumCount = mingxingshuoMaximumOwnershipFiles,
-) {
-  const shuffled = [...files];
-  const selectedCount = Math.min(Math.max(0, maximumCount), shuffled.length);
-  if (selectedCount >= shuffled.length) return shuffled;
-
-  for (let index = 0; index < selectedCount; index += 1) {
-    const selectedIndex = randomInt(index, shuffled.length);
-    [shuffled[index], shuffled[selectedIndex]] = [shuffled[selectedIndex], shuffled[index]];
-  }
-  return shuffled.slice(0, selectedCount);
-}
-
 export async function loadWechatOwnershipMaterials(
   config: Config,
 ): Promise<LocalOwnershipMaterialFile[]> {
@@ -88,10 +73,11 @@ export async function loadWechatOwnershipMaterials(
     root: localEpisodeVideoRoot,
     resourceName: config.originalTitle,
   });
-  if (ownership.length < wechatOwnershipRequirements.minimumImages) {
+  const required = getWechatOwnershipRequirements().minimumImages;
+  if (ownership.length < required) {
     throw new Error(
-      `[production-proof-invalid] 微信视频号权属材料不足：未找到工程或权属目录下的图片；` +
-        `扫描目录=${localEpisodeVideoRoot}`,
+      `[production-proof-invalid] 微信视频号权属材料不足：至少需要${required}张非竖图工程截图，` +
+        `实际找到${ownership.length}张；扫描目录=${localEpisodeVideoRoot}`,
     );
   }
   return ownership;
@@ -99,45 +85,20 @@ export async function loadWechatOwnershipMaterials(
 
 export async function prepareWechatProductionProofMaterials(
   config: Config,
-  contractSubject?: string,
-  preparedOwnership?: readonly LocalOwnershipMaterialFile[],
+  aiClient: OwnershipAiClient,
 ) {
-  const ownership = preparedOwnership?.length
-    ? [...preparedOwnership]
-    : await loadWechatOwnershipMaterials(config);
-
-  if (isMingxingshuoContractSubject(contractSubject)) {
-    config.playlet.copyright.productionProofFiles = selectRandomOwnershipFiles(
-      ownership.map((file) => file.file),
-    );
-    return config.playlet.copyright.productionProofFiles;
-  }
-
   const contractFiles = await resolveContractFiles(config);
-  const ownershipFiles = ownership;
-  const uploadOwnershipFiles = booleanSetting(
-    getWechatVideoRuntimeSettings().mergeOwnershipMaterials,
-  )
-    ? await composeOwnershipMaterialsIntoTwo({
-      files: ownershipFiles,
-      outputDir: resolveRunDataPath("production-proof-composites"),
-      resourceName: config.playlet.name,
-    })
-    : [];
+  const localEpisodeVideoRoot = getWechatVideoRuntimeSettings().localEpisodeVideoRoot.trim();
+  const ownership = await findOwnershipProjectProofFiles({
+    root: localEpisodeVideoRoot,
+    resourceName: config.originalTitle,
+    aiClient,
+    filesPerKind: getWechatOwnershipProofCounts(),
+  });
   config.playlet.copyright.productionProofFiles = [
-    ...contractFiles.slice(0, 2),
-    ...(uploadOwnershipFiles.length ? uploadOwnershipFiles : ownershipFiles.slice(0, 2).map((file) => file.file)),
+    ...contractFiles,
+    ...ownership.files,
   ];
 
   return config.playlet.copyright.productionProofFiles;
-}
-
-export async function cleanupWechatProductionProofMaterials(config: Config) {
-  if (!booleanSetting(getWechatVideoRuntimeSettings().mergeOwnershipMaterials)) return;
-  const baseName = `${safeEpisodeFileBaseName(config.playlet.name)}-权属工程文件合成`;
-  const dir = resolveRunDataPath("production-proof-composites");
-  await Promise.all([
-    rm(path.join(dir, `${baseName}1.jpg`), { force: true }),
-    rm(path.join(dir, `${baseName}2.jpg`), { force: true }),
-  ]);
 }

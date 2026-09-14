@@ -18,6 +18,7 @@ import { createElectronPlatformLogger } from '../platform-logger'
 import { registerRuntimeAssetCleanupRoot } from '../runtime-asset-cleanup'
 import {
   assertGlobalDirectoriesConfigured,
+  createConfiguredAiClient,
   resolveGlobalPlatformDirectories,
 } from '../global-app-config'
 
@@ -65,7 +66,8 @@ export type WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: string
   remoteFileDownloadTimeoutSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
-  mergeOwnershipMaterials: string
+  jianyingOwnershipProofCount: string
+  juchuangOwnershipProofCount: string
   materialPreparationConcurrency: string
   taskPrefetchPerAccount: string
   videoTranscodeConcurrency: string
@@ -104,7 +106,8 @@ const defaultWechatVideoConfig: WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: '600',
   remoteFileDownloadTimeoutSeconds: '120',
   baiduNetdiskDownloadRetryAttempts: '3',
-  mergeOwnershipMaterials: 'true',
+  jianyingOwnershipProofCount: '4',
+  juchuangOwnershipProofCount: '4',
   materialPreparationConcurrency: '3',
   taskPrefetchPerAccount: '2',
   videoTranscodeConcurrency: '2',
@@ -299,7 +302,8 @@ function normalizeConfig(
     basicInfoStepTimeoutSeconds: config.basicInfoStepTimeoutSeconds ?? defaultWechatVideoConfig.basicInfoStepTimeoutSeconds,
     remoteFileDownloadTimeoutSeconds: config.remoteFileDownloadTimeoutSeconds ?? defaultWechatVideoConfig.remoteFileDownloadTimeoutSeconds,
     baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts ?? defaultWechatVideoConfig.baiduNetdiskDownloadRetryAttempts,
-    mergeOwnershipMaterials: config.mergeOwnershipMaterials ?? defaultWechatVideoConfig.mergeOwnershipMaterials,
+    jianyingOwnershipProofCount: normalizeOwnershipProofCount(config.jianyingOwnershipProofCount),
+    juchuangOwnershipProofCount: normalizeOwnershipProofCount(config.juchuangOwnershipProofCount),
     materialPreparationConcurrency: config.materialPreparationConcurrency ?? defaultWechatVideoConfig.materialPreparationConcurrency,
     taskPrefetchPerAccount: config.taskPrefetchPerAccount ?? defaultWechatVideoConfig.taskPrefetchPerAccount,
     videoTranscodeConcurrency: config.videoTranscodeConcurrency ?? defaultWechatVideoConfig.videoTranscodeConcurrency,
@@ -312,6 +316,20 @@ function normalizeConfig(
     episodeUploadWaitTimeoutSeconds: config.episodeUploadWaitTimeoutSeconds ?? defaultWechatVideoConfig.episodeUploadWaitTimeoutSeconds,
     episodeUploadFailedRetryAttempts: config.episodeUploadFailedRetryAttempts ?? defaultWechatVideoConfig.episodeUploadFailedRetryAttempts,
     feishuBotWebhookUrl: config.feishuBotWebhookUrl ?? defaultWechatVideoConfig.feishuBotWebhookUrl,
+  }
+}
+
+function normalizeOwnershipProofCount(value: string | undefined) {
+  const count = Number(value)
+  return Number.isSafeInteger(count) && count > 0 ? String(count) : '4'
+}
+
+function assertOwnershipProofCounts(config: WechatVideoConfig) {
+  if (
+    normalizeOwnershipProofCount(config.jianyingOwnershipProofCount) !== config.jianyingOwnershipProofCount
+    || normalizeOwnershipProofCount(config.juchuangOwnershipProofCount) !== config.juchuangOwnershipProofCount
+  ) {
+    throw new Error('剪映和剧创权属图片数量必须分别填写正整数。')
   }
 }
 
@@ -477,6 +495,7 @@ async function startRuntime() {
   const { startWechatVideoRuntime } = await import('@drama/wechat-drama-automation')
   return startWechatVideoRuntime({
     settings: readConfig(),
+    ownershipAiClient: createConfiguredAiClient(),
     ensureBaiduNetdiskResource: (request) => ensureBaiduNetdiskShareDownloaded({
       ...request,
       requesterPlatform: "wechat-drama",
@@ -495,6 +514,7 @@ export function registerWechatVideoPlatformHandlers() {
   }))
 
   ipcMain.handle('wechat-drama:config:save', async (_event, config: WechatVideoConfig) => {
+    assertOwnershipProofCounts(config)
     const nextConfig = normalizeConfig(config)
     writeConfig(nextConfig)
     registerWechatRuntimeAssetCleanup(readConfig())
@@ -566,4 +586,8 @@ export function registerWechatVideoPlatformHandlers() {
 
 export function stopWechatVideoPlatformRuntime() {
   runtimeController.stopInBackground()
+}
+
+export function stopWechatVideoPlatformService() {
+  return runtimeController.stop()
 }

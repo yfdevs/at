@@ -30,7 +30,6 @@ const contractSubjectAliases: Record<string, string> = {
 };
 // 兼容后端历史数据：contractSubject=0 表示未写入有效主体枚举，精确匹配不到时兜底使用。
 const legacyUnscopedContractSubjects = new Set(["0"]);
-export const mingxingshuoContractSubject = "MINGXINGSHUO";
 
 export function normalizeContractSubject(value: string): string {
   const trimmedValue = value.trim();
@@ -174,17 +173,13 @@ export async function loadServiceConfig(): Promise<ServiceConfig> {
   };
 }
 
-function validatePlayletConfig(playletConfig: Config, contractSubject?: string): Config {
+function validatePlayletConfig(playletConfig: Config): Config {
   if (!playletConfig.originalTitle) throw new Error("data.originalTitle is required");
   if (!playletConfig.playlet?.name) throw new Error("data.playlet.name is required");
   if (!playletConfig.playlet.summary) throw new Error("data.playlet.summary is required");
   if (!playletConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
   const productionProofFileCount = playletConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
-  const isMingxingshuo = Boolean(
-    contractSubject
-    && normalizeContractSubject(contractSubject) === mingxingshuoContractSubject,
-  );
-  if (!isMingxingshuo && productionProofFileCount < 1) {
+  if (productionProofFileCount < 1) {
     throw new Error("data.playlet.copyright.productionProofFiles must contain at least 1 contract file.");
   }
 
@@ -201,7 +196,7 @@ function parseDataJson(dataJson: unknown): Config {
   throw new Error("dramaAiRpa detail response data.dataJson is required.");
 }
 
-export function normalizeClaimedTaskConfig(task: ClaimedAccountTask, contractSubject?: string): Config {
+export function normalizeClaimedTaskConfig(task: ClaimedAccountTask): Config {
   const taskPlaylet = task.playlet as Config["playlet"] & Partial<Config>;
   const aiContent = typeof taskPlaylet.aiContent === "boolean" ? taskPlaylet.aiContent : true;
   const playlet = {
@@ -219,7 +214,7 @@ export function normalizeClaimedTaskConfig(task: ClaimedAccountTask, contractSub
     ...(accountTask as object),
     originalTitle: task.originalTitle,
     playlet,
-  } as Config, contractSubject);
+  } as Config);
 }
 
 export async function loadConfigFromDramaAiRpa(id: string): Promise<Config> {

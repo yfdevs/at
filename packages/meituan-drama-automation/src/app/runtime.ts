@@ -1,5 +1,5 @@
 import path from "node:path";
-import { mkdir } from "node:fs/promises";
+import { mkdir, stat } from "node:fs/promises";
 import {
   chromium,
   type BrowserContext,
@@ -144,8 +144,14 @@ export async function startMeituanCreationRuntime(
     for (const account of options.accounts) {
       const browserOptions = accountRuntimeOptions(options, account);
       const userDataDir = browserOptions.userDataDir!;
+      const existingProfile = await stat(path.join(userDataDir, "Default"))
+        .then((entry) => entry.isDirectory())
+        .catch(() => false);
       await mkdir(userDataDir, { recursive: true });
-      log(browserOptions, "[meituan-drama] starting account browser");
+      log(
+        browserOptions,
+        `[meituan-drama] starting account browser: userDataDir=${userDataDir} existingProfile=${existingProfile}`,
+      );
       const context = await chromium.launchPersistentContext(userDataDir, {
         headless: options.config?.browser?.headless ?? false,
         slowMo: options.config?.browser?.slowMo ?? 20,

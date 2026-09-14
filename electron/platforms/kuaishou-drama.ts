@@ -8,6 +8,7 @@ import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -488,6 +489,7 @@ async function startRuntime() {
         taskPollIntervalMs,
         aiClient,
         aiImageModel,
+        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
         apiConfig: apiOptions.apiConfig,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
@@ -632,4 +634,8 @@ export function registerKuaishouDramaPlatformHandlers() {
 
 export function stopKuaishouDramaPlatformRuntime() {
   runtimeController.stopInBackground();
+}
+
+export function stopKuaishouDramaPlatformService() {
+  return runtimeController.stop();
 }

@@ -36,7 +36,8 @@ export type WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: string
   remoteFileDownloadTimeoutSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
-  mergeOwnershipMaterials: string
+  jianyingOwnershipProofCount: string
+  juchuangOwnershipProofCount: string
   materialPreparationConcurrency: string
   taskPrefetchPerAccount: string
   videoTranscodeConcurrency: string

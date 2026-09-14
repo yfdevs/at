@@ -124,7 +124,12 @@ export type AppUpdateStatus = {
   lastCheckedAt?: string;
   nextCheckAt?: string;
   retryAttempt?: number;
+  runningPlatformCount: number;
   updatedAt: string;
+};
+
+export type AppUpdateInstallOptions = {
+  stopRunningServices?: boolean;
 };
 
 type AppUpdateSourceHealth = {
@@ -143,6 +148,7 @@ type AppUpdateStore = {
 
 type RegisterAppUpdaterHandlersOptions = {
   getRunningPlatformCount?: () => number;
+  stopAllPlatformServices?: () => Promise<void>;
 };
 
 let configured = false;
@@ -152,6 +158,7 @@ let downloadedUpdateInfo: UpdateInfo | null = null;
 let downloadedUpdateProgress: AppUpdateProgress | undefined;
 let status: AppUpdateStatus | null = null;
 let getRunningPlatformCount: () => number = () => 0;
+let stopAllPlatformServices: (() => Promise<void>) | null = null;
 let autoUpdaterLoadError: string | null = null;
 let autoUpdaterInstance:
   | typeof import("electron-updater").autoUpdater
@@ -434,13 +441,16 @@ export function registerAppUpdaterHandlers(options: RegisterAppUpdaterHandlersOp
 
   registered = true;
   getRunningPlatformCount = options.getRunningPlatformCount ?? getRunningPlatformCount;
+  stopAllPlatformServices = options.stopAllPlatformServices ?? stopAllPlatformServices;
   configureAutoUpdater();
 
   ipcMain.handle("app:update:status", () => getAppUpdateStatus());
   ipcMain.handle("app:update:check", () => checkForAppUpdate());
   ipcMain.handle("app:update:download", () => downloadAppUpdate());
   ipcMain.handle("app:update:download:cancel", () => cancelAppUpdateDownload());
-  ipcMain.handle("app:update:install", () => installAppUpdate());
+  ipcMain.handle("app:update:install", (_event, options?: AppUpdateInstallOptions) =>
+    installAppUpdate(options),
+  );
   ipcMain.handle("app:update:source:set", (_event, selection: AppUpdateSourceSelection) =>
     setAppUpdateSource(selection),
   );
@@ -735,7 +745,7 @@ function cancelAppUpdateDownload() {
   });
 }
 
-function installAppUpdate() {
+async function installAppUpdate(options: AppUpdateInstallOptions = {}) {
   const disabledReason = readDisabledReason();
 
   if (disabledReason) {
@@ -750,9 +760,37 @@ function installAppUpdate() {
 
   const runningPlatformCount = getRunningPlatformCount();
   if (runningPlatformCount > 0) {
-    const message = `请先停止正在运行的 ${runningPlatformCount} 个平台服务，再重启安装更新。`;
-    setStatus({ state: "downloaded", error: message });
-    throw new Error(message);
+    if (!options.stopRunningServices) {
+      const message = `有 ${runningPlatformCount} 个平台服务正在运行。可以停止全部服务后重启安装。`;
+      setStatus({ state: "downloaded", error: message });
+      throw new Error(message);
+    }
+
+    if (!stopAllPlatformServices) {
+      const message = "暂时无法自动停止平台服务，请手动停止后再重启安装。";
+      setStatus({ state: "downloaded", error: message });
+      throw new Error(message);
+    }
+
+    setStatus({ state: "downloaded", error: undefined });
+    logMain("info", "Stopping all platform services before update installation", {
+      runningPlatformCount,
+    });
+
+    try {
+      await stopAllPlatformServices();
+    } catch (error) {
+      const message = `未能停止全部平台服务：${readableError(error)} 请稍后重试，或手动停止服务。`;
+      setStatus({ state: "downloaded", error: message });
+      throw new Error(message);
+    }
+
+    const remainingPlatformCount = getRunningPlatformCount();
+    if (remainingPlatformCount > 0) {
+      const message = `仍有 ${remainingPlatformCount} 个平台服务未停止，请稍后重试或手动停止。`;
+      setStatus({ state: "downloaded", error: message });
+      throw new Error(message);
+    }
   }
 
   clearAutomaticUpdateTimer();
@@ -941,6 +979,7 @@ function normalizeStatus(nextStatus: AppUpdateStatus) {
     sourceMode: getUpdateSourceMode(),
     source,
     sources: [...appUpdateSources],
+    runningPlatformCount: getRunningPlatformCount(),
     updatedAt: nextStatus.updatedAt || new Date().toISOString(),
   };
 }
@@ -955,6 +994,7 @@ function createStatus(state: AppUpdateState): AppUpdateStatus {
     sourceMode: getUpdateSourceMode(),
     source: getSelectedUpdateSource(),
     sources: [...appUpdateSources],
+    runningPlatformCount: getRunningPlatformCount(),
     updatedAt: new Date().toISOString(),
   });
 }

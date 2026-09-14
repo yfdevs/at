@@ -30,6 +30,10 @@ type BaiduAutomationAction = <T>(name: string, action: () => Promise<T>) => Prom
 
 const episodeUploadPollIntervalMs = 5_000;
 const postSubmitSettleMs = 10_000;
+const submitResultTimeoutMs = 60_000;
+const manualCaptchaTimeoutMs = 10 * 60_000;
+const submitPollIntervalMs = 500;
+const baiduReviewHomePath = /\/builder\/rc\/playletPlat\/home(?:[/?#]|$)/;
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -365,6 +369,97 @@ async function uploadEpisodes(
   }
 }
 
+async function hasVisibleBaiduCaptcha(page: Page) {
+  for (const frame of page.frames()) {
+    if (await frame.locator(".passMod_dialog-container").first().isVisible().catch(() => false)) {
+      return true;
+    }
+  }
+  return false;
+}
+
+export async function submitBaiduDramaForReview(
+  page: Page,
+  options: BaiduDramaRuntimeOptions,
+  timing: {
+    settleMs?: number;
+    resultTimeoutMs?: number;
+    captchaTimeoutMs?: number;
+    pollIntervalMs?: number;
+  } = {},
+) {
+  const settleMs = timing.settleMs ?? postSubmitSettleMs;
+  const resultTimeoutMs = timing.resultTimeoutMs ?? submitResultTimeoutMs;
+  const captchaTimeoutMs = timing.captchaTimeoutMs ?? manualCaptchaTimeoutMs;
+  const pollIntervalMs = timing.pollIntervalMs ?? submitPollIntervalMs;
+  const namedSubmitButton = page
+    .getByRole("button", { name: /^(提交审核|提交)$/ })
+    .filter({ visible: true })
+    .last();
+  const iconSubmitButton = page
+    .locator('button.cheetah-btn-circle.cheetah-btn-primary.cheetah-btn-icon-only[class*="-alwaysBlue"]')
+    .filter({ visible: true })
+    .last();
+  const submitButton = (await namedSubmitButton.count()) > 0 ? namedSubmitButton : iconSubmitButton;
+  await submitButton.waitFor({ state: "visible", timeout: 15_000 });
+  await submitButton.scrollIntoViewIfNeeded();
+  await submitButton.click({ timeout: 15_000 });
+
+  let lastSubmitActionAt = Date.now();
+  let resultDeadline = lastSubmitActionAt + resultTimeoutMs;
+  let confirmationClicked = false;
+  let captchaWasVisible = false;
+
+  while (Date.now() < resultDeadline) {
+    if (page.isClosed()) throw new Error("BAIDU_DRAMA_SUBMIT_PAGE_CLOSED: 提交结果确认前页面已关闭");
+
+    if (await hasVisibleBaiduCaptcha(page)) {
+      if (!captchaWasVisible) {
+        captchaWasVisible = true;
+        log(options, "[baidu-drama] 百度安全验证已出现，请在当前浏览器中手动完成；任务正在等待，不会提前报成功。", undefined, "automation");
+        await page.bringToFront().catch(() => undefined);
+      }
+      const captchaDeadline = Date.now() + captchaTimeoutMs;
+      while (await hasVisibleBaiduCaptcha(page)) {
+        if (page.isClosed()) throw new Error("BAIDU_DRAMA_SUBMIT_PAGE_CLOSED: 安全验证期间页面已关闭");
+        if (Date.now() >= captchaDeadline) {
+          throw new Error("BAIDU_DRAMA_CAPTCHA_MANUAL_VERIFICATION_TIMEOUT: 百度安全验证未在规定时间内完成");
+        }
+        await page.waitForTimeout(pollIntervalMs);
+      }
+      log(options, "[baidu-drama] 百度安全验证弹窗已关闭，继续确认审核提交结果。", undefined, "automation");
+      resultDeadline = Date.now() + resultTimeoutMs;
+      lastSubmitActionAt = Date.now();
+    }
+
+    if (!confirmationClicked) {
+      const confirmation = page
+        .locator('.cheetah-modal:visible, .cheetah-modal-wrap:visible, [role="dialog"]:visible')
+        .filter({ hasText: /提交|审核/ })
+        .getByRole("button", { name: /^(确定|确认提交|提交审核)$/ })
+        .filter({ visible: true })
+        .last();
+      if (await confirmation.isVisible().catch(() => false)) {
+        await confirmation.click({ timeout: 5_000 });
+        confirmationClicked = true;
+        lastSubmitActionAt = Date.now();
+        resultDeadline = lastSubmitActionAt + resultTimeoutMs;
+      }
+    }
+
+    await assertNoBaiduFormError(page, "提交短剧审核");
+    if (baiduReviewHomePath.test(new URL(page.url()).pathname)) {
+      if (Date.now() - lastSubmitActionAt >= settleMs && !(await hasVisibleBaiduCaptcha(page))) {
+        log(options, "[baidu-drama] 已进入短剧管理页，且提交后安全等待期已结束。", { url: page.url() }, "automation");
+        return;
+      }
+    }
+    await page.waitForTimeout(pollIntervalMs);
+  }
+
+  throw new Error(`BAIDU_DRAMA_SUBMIT_NOT_CONFIRMED: 未观察到提交审核后的短剧管理页；url=${page.url()}`);
+}
+
 export async function runBaiduDramaPublishTask(
   page: Page,
   task: ClaimedBaiduDramaTask,
@@ -391,43 +486,9 @@ export async function runBaiduDramaPublishTask(
     await uploadEpisodes(page, task, options, runAction);
 
     if (!task.playlet.submit) {
-      log(
-        options,
-        "[baidu-drama] 发布脚本完成：submit=false，已填写并上传，未提交审核。",
-        { accountTaskId: task.accountTaskId, submitted: false },
-        "publish",
-      );
-      return;
+      throw new Error("BAIDU_DRAMA_SUBMIT_DISABLED: 任务设置为不提交审核，不能报告为提交成功");
     }
-    await runAction("提交短剧审核", async () => {
-      const submitButton = page
-        .locator(
-          'button.cheetah-btn-circle.cheetah-btn-primary.cheetah-btn-icon-only[class*="-alwaysBlue"]',
-        )
-        .filter({ visible: true })
-        .last();
-      await submitButton.waitFor({ state: "visible", timeout: 15_000 });
-      await submitButton.scrollIntoViewIfNeeded();
-      await submitButton.click({ timeout: 15_000 });
-
-      const confirm = page
-        .getByRole("button", { name: /确定|确认提交/ })
-        .filter({ visible: true })
-        .last();
-      const confirmationVisible = await confirm
-        .waitFor({ state: "visible", timeout: 3_000 })
-        .then(() => true)
-        .catch(() => false);
-      if (confirmationVisible) await confirm.click();
-      log(
-        options,
-        `[baidu-drama] 已点击提交审核，等待${postSubmitSettleMs / 1_000}秒后关闭任务标签页。`,
-        undefined,
-        "automation",
-      );
-      await page.waitForTimeout(postSubmitSettleMs);
-      await assertNoBaiduFormError(page, "提交短剧审核");
-    });
+    await runAction("提交短剧审核并确认结果", () => submitBaiduDramaForReview(page, options));
     log(
       options,
       "[baidu-drama] 发布脚本完成：已提交审核。",

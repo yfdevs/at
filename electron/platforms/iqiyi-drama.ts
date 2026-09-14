@@ -6,6 +6,7 @@ import path from "node:path";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -376,6 +377,7 @@ async function startRuntime() {
         closeFailedTaskPages: config.closeFailedTaskPages === "true",
         aiClient,
         aiImageModel,
+        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
           requesterPlatform: "iqiyi-drama",
@@ -488,4 +490,8 @@ export function registerIqiyiDramaPlatformHandlers() {
 
 export function stopIqiyiDramaPlatformRuntime() {
   runtimeController.stopInBackground();
+}
+
+export function stopIqiyiDramaPlatformService() {
+  return runtimeController.stop();
 }

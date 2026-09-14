@@ -13,6 +13,7 @@ import {
   getWechatVideoRunningPlatformCount,
   openWechatVideoLogDir,
   registerWechatVideoPlatformHandlers,
+  stopWechatVideoPlatformService,
   stopWechatVideoPlatformRuntime,
 } from "./platforms/wechat-drama";
 import {
@@ -21,6 +22,7 @@ import {
   getWechatMiniProgramRunningPlatformCount,
   openWechatMiniProgramLogDir,
   registerWechatMiniProgramPlatformHandlers,
+  stopWechatMiniProgramPlatformService,
   stopWechatMiniProgramPlatformRuntime,
 } from "./platforms/wechat-miniprogram-drama";
 import {
@@ -29,6 +31,7 @@ import {
   getMeituanCreationRunningPlatformCount,
   openMeituanCreationLogDir,
   registerMeituanCreationPlatformHandlers,
+  stopMeituanCreationPlatformService,
   stopMeituanCreationPlatformRuntime,
 } from "./platforms/meituan-drama";
 import {
@@ -37,6 +40,7 @@ import {
   getKuaishouDramaRunningPlatformCount,
   openKuaishouDramaLogDir,
   registerKuaishouDramaPlatformHandlers,
+  stopKuaishouDramaPlatformService,
   stopKuaishouDramaPlatformRuntime,
 } from "./platforms/kuaishou-drama";
 import {
@@ -45,6 +49,7 @@ import {
   getQqDramaRunningPlatformCount,
   openQqDramaLogDir,
   registerQqDramaPlatformHandlers,
+  stopQqDramaPlatformService,
   stopQqDramaPlatformRuntime,
 } from "./platforms/qq-drama";
 import {
@@ -53,6 +58,7 @@ import {
   getTencentHuolongDramaRunningPlatformCount,
   openTencentHuolongDramaLogDir,
   registerTencentHuolongDramaPlatformHandlers,
+  stopTencentHuolongDramaPlatformService,
   stopTencentHuolongDramaPlatformRuntime,
 } from "./platforms/tencent-huolong-drama";
 import {
@@ -61,6 +67,7 @@ import {
   getIqiyiDramaRunningPlatformCount,
   openIqiyiDramaLogDir,
   registerIqiyiDramaPlatformHandlers,
+  stopIqiyiDramaPlatformService,
   stopIqiyiDramaPlatformRuntime,
 } from "./platforms/iqiyi-drama";
 import {
@@ -69,6 +76,7 @@ import {
   getTiktokDramaCenterRunningPlatformCount,
   openTiktokDramaCenterLogDir,
   registerTiktokDramaCenterPlatformHandlers,
+  stopTiktokDramaCenterPlatformService,
   stopTiktokDramaCenterPlatformRuntime,
 } from "./platforms/tiktok-drama";
 import {
@@ -77,6 +85,7 @@ import {
   getPinduoduoDramaRunningPlatformCount,
   openPinduoduoDramaLogDir,
   registerPinduoduoDramaPlatformHandlers,
+  stopPinduoduoDramaPlatformService,
   stopPinduoduoDramaPlatformRuntime,
 } from "./platforms/pinduoduo-drama";
 import {
@@ -85,6 +94,7 @@ import {
   getBaiduDramaRunningPlatformCount,
   openBaiduDramaLogDir,
   registerBaiduDramaPlatformHandlers,
+  stopBaiduDramaPlatformService,
   stopBaiduDramaPlatformRuntime,
 } from "./platforms/baidu-drama";
 import {
@@ -93,6 +103,7 @@ import {
   getDouyinDramaRunningPlatformCount,
   openDouyinDramaLogDir,
   registerDouyinDramaPlatformHandlers,
+  stopDouyinDramaPlatformService,
   stopDouyinDramaPlatformRuntime,
 } from "./platforms/douyin-drama";
 import {
@@ -271,6 +282,7 @@ app.whenReady().then(() => {
     startRuntimeAssetCleanupMonitor();
     registerAppUpdaterHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
+      stopAllPlatformServices,
     });
     ensureBaiduNetdiskCdpReadyInBackground();
 
@@ -439,4 +451,31 @@ function getGlobalRunningPlatformStatus() {
     }, 0),
     total: counters.length,
   };
+}
+
+async function stopAllPlatformServices() {
+  const services = [
+    { label: "微信视频号", stop: stopWechatVideoPlatformService },
+    { label: "微信小程序", stop: stopWechatMiniProgramPlatformService },
+    { label: "美团短剧", stop: stopMeituanCreationPlatformService },
+    { label: "快手短剧", stop: stopKuaishouDramaPlatformService },
+    { label: "QQ 短剧", stop: stopQqDramaPlatformService },
+    { label: "腾讯火龙", stop: stopTencentHuolongDramaPlatformService },
+    { label: "爱奇艺短剧", stop: stopIqiyiDramaPlatformService },
+    { label: "百度短剧", stop: stopBaiduDramaPlatformService },
+    { label: "抖音短剧", stop: stopDouyinDramaPlatformService },
+    { label: "TikTok 短剧", stop: stopTiktokDramaCenterPlatformService },
+    { label: "拼多多短剧", stop: stopPinduoduoDramaPlatformService },
+  ];
+  const results = await Promise.allSettled(services.map(({ stop }) => stop()));
+  const failures = results.flatMap((result, index) => {
+    if (result.status !== "rejected") return [];
+    const label = services[index]?.label ?? `平台 ${index + 1}`;
+    logMain("error", `Failed to stop ${label} before update installation`, result.reason);
+    return [label];
+  });
+
+  if (failures.length > 0) {
+    throw new Error(`${failures.join("、")}停止失败。`);
+  }
 }

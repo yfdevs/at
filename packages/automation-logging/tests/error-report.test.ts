@@ -43,6 +43,14 @@ test("keeps an existing Chinese error detail and appends its diagnostic code", (
   );
 });
 
+test("explains a Baidu cover upload that never becomes confirmable", () => {
+  const report = formatAutomationErrorReport(
+    'BAIDU_DRAMA_COVER_CONFIRM_NOT_READY: file=cover.jpg dialog="本地图片 0张上传成功 去编辑 确认"',
+  );
+  assert.match(report, /^百度封面上传未完成，图片选择后仍显示 0 张上传成功/);
+  assert.match(report, /错误码：BAIDU_DRAMA_COVER_CONFIRM_NOT_READY/);
+});
+
 test("removes unknown internal prefixes and remains stable when formatted twice", () => {
   const formatted = formatAutomationErrorReport("[local-video-invalid] 第 3 集视频不存在");
   assert.equal(formatted, "任务执行失败：第 3 集视频不存在（错误码：local-video-invalid）");

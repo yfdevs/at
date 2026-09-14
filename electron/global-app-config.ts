@@ -23,6 +23,8 @@ const RECOMMENDED_AI_BASE_URL = "https://ark.cn-beijing.volces.com/api/v3";
 const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
 const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
 const DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES = "60";
+const DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS = "3";
+const MAX_AI_COVER_GENERATION_RETRY_ATTEMPTS = 10;
 export const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
 
 export type GlobalAppConfig = {
@@ -30,6 +32,7 @@ export type GlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  aiCoverGenerationRetryAttempts: string;
   aiPosterFallbackEnabled: boolean;
   baiduNetdiskDownloadTimeoutMinutes: string;
   runDataRoot: string;
@@ -41,6 +44,7 @@ type StoredGlobalAppConfig = {
   aiBaseURL: string;
   aiModel: string;
   aiImageModel: string;
+  aiCoverGenerationRetryAttempts?: string;
   aiPosterFallbackEnabled?: boolean;
   baiduNetdiskDownloadTimeoutMinutes?: string;
   runDataRoot?: string;
@@ -56,6 +60,7 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiBaseURL: RECOMMENDED_AI_BASE_URL,
   aiModel: RECOMMENDED_AI_MODEL,
   aiImageModel: RECOMMENDED_AI_IMAGE_MODEL,
+  aiCoverGenerationRetryAttempts: DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS,
   aiPosterFallbackEnabled: true,
   baiduNetdiskDownloadTimeoutMinutes: DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
   runDataRoot: "",
@@ -97,6 +102,16 @@ function normalizePositiveNumberText(value: string | undefined, fallback: string
   return Number.isFinite(number) && number > 0 ? normalized : fallback;
 }
 
+function normalizeAiCoverGenerationRetryAttempts(value: string | undefined) {
+  const normalized = value?.trim();
+  if (!normalized) return DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS;
+  const parsed = Number(normalized);
+  if (!Number.isFinite(parsed)) return DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS;
+  return String(
+    Math.min(MAX_AI_COVER_GENERATION_RETRY_ATTEMPTS, Math.max(0, Math.floor(parsed))),
+  );
+}
+
 function normalizeBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -135,6 +150,9 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel?.trim() ?? "",
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    aiCoverGenerationRetryAttempts: normalizeAiCoverGenerationRetryAttempts(
+      config.aiCoverGenerationRetryAttempts,
+    ),
     aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
@@ -161,6 +179,9 @@ export function readGlobalAppConfig(): GlobalAppConfig {
     aiBaseURL: normalizeBaseURL(config.aiBaseURL),
     aiModel: config.aiModel.trim(),
     aiImageModel: config.aiImageModel?.trim() || RECOMMENDED_AI_IMAGE_MODEL,
+    aiCoverGenerationRetryAttempts: normalizeAiCoverGenerationRetryAttempts(
+      config.aiCoverGenerationRetryAttempts,
+    ),
     aiPosterFallbackEnabled: normalizeBoolean(config.aiPosterFallbackEnabled, true),
     baiduNetdiskDownloadTimeoutMinutes: normalizePositiveNumberText(
       config.baiduNetdiskDownloadTimeoutMinutes,
@@ -191,6 +212,7 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiBaseURL: normalized.aiBaseURL,
     aiModel: normalized.aiModel,
     aiImageModel: normalized.aiImageModel,
+    aiCoverGenerationRetryAttempts: normalized.aiCoverGenerationRetryAttempts,
     aiPosterFallbackEnabled: normalized.aiPosterFallbackEnabled,
     baiduNetdiskDownloadTimeoutMinutes: normalized.baiduNetdiskDownloadTimeoutMinutes,
     runDataRoot: normalized.runDataRoot,
@@ -289,6 +311,15 @@ export function getConfiguredAiImageModel() {
   return model;
 }
 
+export function getConfiguredAiCoverGenerationRetryAttempts() {
+  return Number.parseInt(
+    normalizeAiCoverGenerationRetryAttempts(
+      getStore().get("config").aiCoverGenerationRetryAttempts,
+    ),
+    10,
+  );
+}
+
 async function testAiConfig(config: Partial<GlobalAppConfig>) {
   const client = createOpenAiCompatibleClient(aiClientOptions(normalizeGlobalAppConfig(config)));
   const testImage = await sharp({
@@ -326,9 +357,12 @@ export function registerGlobalAppConfigHandlers(options: {
     const directoryChanged =
       previous.runDataRoot !== saved.runDataRoot ||
       previous.localMaterialRoot !== saved.localMaterialRoot;
+    const runtimeConfigChanged =
+      directoryChanged ||
+      previous.aiCoverGenerationRetryAttempts !== saved.aiCoverGenerationRetryAttempts;
     return configResult(
       saved,
-      directoryChanged && (options.getRunningPlatformCount?.() ?? 0) > 0,
+      runtimeConfigChanged && (options.getRunningPlatformCount?.() ?? 0) > 0,
     );
   });
   ipcMain.handle("app:config:test", (_event, config: Partial<GlobalAppConfig>) => {

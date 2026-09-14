@@ -284,7 +284,7 @@ test("ignores an empty default upload row", {
   }
 });
 
-test("rejects a real video row left on the upload page", {
+test("deletes a real video row left on the upload page before selecting current files", {
   timeout: 20_000,
 }, async () => {
   const browser = await chromium.launch({
@@ -302,18 +302,34 @@ test("rejects a real video row left on the upload page", {
           <div class="catalog-item-form">
             <div class="catalog-form-text">上次任务-第1集.mp4</div>
             <div class="file-status"><svg data-upload-status="success"></svg></div>
+            <button class="item-del-video" type="button">删除</button>
+            <div class="cancel-confirm" style="display:none">
+              <p>确定删除该视频？</p>
+              <button type="button">确定</button>
+            </div>
           </div>
         </div>
       </div>
+      <script>
+        const oldRow = document.querySelector('.catalog-item-form');
+        const confirmation = oldRow.querySelector('.cancel-confirm');
+        oldRow.querySelector('.item-del-video').addEventListener('click', () => {
+          confirmation.style.display = 'block';
+        });
+        confirmation.querySelector('button').addEventListener('click', () => oldRow.remove());
+        ${uploadFixtureScript("success")}
+      </script>
     `);
 
-    await assert.rejects(
-      () => uploadIqiyiEpisodeVideos(page, taskWithTwoEpisodes(), {
-        localMaterialRoot,
-        assetDownloadDir,
-        videoUploadTimeoutMinutes: 1,
-      }),
-      /IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: rows=1 visibleRows=1/u,
+    await uploadIqiyiEpisodeVideos(page, taskWithTwoEpisodes(), {
+      localMaterialRoot,
+      assetDownloadDir,
+      videoUploadTimeoutMinutes: 1,
+    });
+
+    assert.deepEqual(
+      await page.locator(".catalog-form-text").allInnerTexts(),
+      ["正片上传测试剧-第1集.mp4", "正片上传测试剧-第2集.mp4"],
     );
   } finally {
     await browser.close();

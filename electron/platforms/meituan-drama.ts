@@ -439,3 +439,7 @@ export function registerMeituanCreationPlatformHandlers() {
 export function stopMeituanCreationPlatformRuntime() {
   runtimeController.stopInBackground();
 }
+
+export function stopMeituanCreationPlatformService() {
+  return runtimeController.stop();
+}

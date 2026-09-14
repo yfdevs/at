@@ -19,6 +19,7 @@ import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -407,7 +408,14 @@ async function startRuntime() {
   let running = true;
 
   try {
-    for (const account of accounts) {
+    baiduDramaPlatformLogger("browser").info("Starting account browsers in parallel", {
+      accountCount: accounts.length,
+      accounts: accounts.map((account) => ({
+        accountId: account.accountId,
+        accountName: account.accountName,
+      })),
+    });
+    const startupResults = await Promise.allSettled(accounts.map(async (account) => {
       const accountProfileName = account.rpaProfileKey?.trim() || account.accountId;
       const paths = storagePaths(config, accountProfileName);
       ensureStorageDirectories(paths);
@@ -426,6 +434,7 @@ async function startRuntime() {
         taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1000,
         createAiClient: createConfiguredAiClient,
         aiImageModel: getConfiguredAiImageModel(),
+        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
         apiConfig: { baseUrl: config.apiBaseUrl },
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
@@ -438,7 +447,16 @@ async function startRuntime() {
           },
         },
       });
-      accountRuntimes.push({ account, runtime });
+      return { account, runtime };
+    }));
+    for (const result of startupResults) {
+      if (result.status === "fulfilled") accountRuntimes.push(result.value);
+    }
+    const startupFailure = startupResults.find(
+      (result): result is PromiseRejectedResult => result.status === "rejected",
+    );
+    if (startupFailure) {
+      throw startupFailure.reason;
     }
   } catch (error) {
     running = false;
@@ -558,4 +576,8 @@ export function registerBaiduDramaPlatformHandlers() {
 
 export function stopBaiduDramaPlatformRuntime() {
   runtimeController.stopInBackground();
+}
+
+export function stopBaiduDramaPlatformService() {
+  return runtimeController.stop();
 }

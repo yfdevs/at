@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { analyzeImagesAsJson } from "@drama/ai";
 import {
+  evaluateCommercialPosterTextValidation,
   findOwnershipProjectProofFiles,
   listLocalPosterImages,
   validateLocalEpisodeVideos,
@@ -19,19 +20,21 @@ import type {
   IqiyiDramaTaskPayload,
 } from "./types.js";
 
-const landscapePromptVersion = "iqiyi-landscape-v4-text-safety";
-const landscapeGenerationAttempts = 3;
+const landscapePromptVersion = "iqiyi-landscape-v5-poster-text";
 const iqiyiCoverMaximumBytes = 4_900_000;
 const iqiyiProofMaximumBytes = 20 * 1024 * 1024;
 
 const iqiyiLandscapeCoverValidationSchema = z.object({
-  titleTextExact: z.boolean(),
-  titleOccursOnce: z.boolean(),
-  unrelatedTextFree: z.boolean(),
-  noWatermarkOrTechnicalOverlay: z.boolean(),
+  titlePresent: z.boolean(),
+  titleReadable: z.boolean(),
+  titleSeverelyIncorrect: z.boolean(),
+  hasProhibitedOverlay: z.boolean(),
+  hasClearlyUnrelatedOrGibberishText: z.boolean(),
   detectedTexts: z.array(z.string().trim().max(100)).max(30).default([]),
-  issues: z.array(z.string().trim().max(300)).max(20).default([]),
+  blockingIssues: z.array(z.string().trim().max(300)).max(20).default([]),
+  warnings: z.array(z.string().trim().max(300)).max(20).default([]),
 });
+type IqiyiLandscapeCoverValidation = z.infer<typeof iqiyiLandscapeCoverValidationSchema>;
 
 export type PreparedIqiyiMaterials = {
   verticalCover: string;
@@ -76,15 +79,15 @@ export function buildIqiyiLandscapeCoverPrompt(playlet: IqiyiDramaTaskPayload) {
     "将竖版画面自然扩展到左右两侧，补全真实一致的场景，不要简单拉伸、镜像、拼接或加边框。",
     "主体位于安全区域，人物面部和关键道具完整清晰，适合宽屏展示。",
     "【剧名文字是必须完成的主视觉元素】必须由图片生成模型直接在海报画面中绘制完整中文剧名，不留空白标题区，不交给后期添加。",
-    `画面中唯一允许出现的主标题文字是：“${playlet.title}”。必须严格逐字使用该中文原文，不改字、不漏字、不增加字、不使用拼音或英文替代。`,
+    `主标题文字是：“${playlet.title}”。必须严格逐字使用该中文原文，不改字、不漏字、不使用拼音或英文替代；标点可按艺术排版省略或调整。`,
     "把剧名设计成专业影视海报的核心艺术字或标题标志，占据明确的视觉层级；禁止使用普通默认字体、办公字体、无描边纯色字或像界面文本一样平铺。",
     `本剧字效设计方向：${iqiyiTitleArtDirection(playlet)}`,
     "艺术字必须包含与题材协调的字形设计、渐变或材质、清晰描边、立体层次、投影或环境光效，并与场景光线和画面元素自然融合。",
     "长剧名可以合理分成 2 至 3 行并调整字号，但文字顺序必须保持不变，所有汉字必须完整、醒目、清晰可辨；不能遮挡人物面部和关键道具。",
-    "参考图已有片名时，应以这里提供的准确剧名原文重新设计字效和排版；最终画面只保留一次完整剧名，删除错误、重复、残缺或普通样式的旧标题。",
-    "【文字硬性限制】整张图只能出现一处上述准确剧名；除剧名外，严禁出现任何文字、字母、数字或类似文字的符号。",
-    "尤其不得出现任何画幅比例、尺寸或分辨率标注，也不得出现演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间、相机参数、平台或品牌标志、水印、角标、二维码、信息栏和伪界面。",
-    "参考图若含剧名以外的文字，必须在新图中删除，不得复制、改写或补全；不要在底部或其他位置预留演员名、字幕或署名排版区域。",
+    "参考图已有片名时，应以这里提供的准确剧名原文重新设计字效和排版；允许为艺术效果重复局部标题字样，但主标题必须完整清晰。",
+    "【文字要求】允许出现符合影视封面的正常辅助文案，例如地点、年代、人物身份、剧情氛围词、简短宣传语或装饰性小字；这些文字必须与本剧画面和题材有关，不能喧宾夺主。",
+    "严禁出现其他作品名称、随机乱码、联系方式、账号、广告引流、二维码、平台或品牌标志、水印，以及画幅比例、尺寸、分辨率、相机参数、操作按钮、信息栏等技术或伪界面文字。",
+    "参考图中的合理海报文案可以保留或重新设计；无法确认含义的装饰纹理不要强行生成为文字。",
     `剧名原文：${playlet.title}`,
     `剧情与题材参考：${playlet.summary}`,
   ].join("\n");
@@ -98,18 +101,21 @@ async function validateIqiyiLandscapeCover(
   const completion = await analyzeImagesAsJson(options.aiClient!, {
     images: [{ type: "file", path: imageFile, detail: "high" }],
     prompt: [
-      "你是短剧封面文字质检员。请检查待验收图片中的全部可见文字、字母、数字和类似文字的符号。",
-      `画面唯一允许出现的文字是准确剧名：“${title}”。该剧名必须完整、准确且只出现一次。`,
-      "演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间，以及任何画幅比例、尺寸、分辨率或相机参数都属于不允许的无关文字。",
-      "平台或品牌标志、水印、角标、二维码、信息栏、字幕条、取景框和其他伪界面元素也不允许出现。",
-      "列出实际识别到的文字，并逐项严格判断。装饰纹理不应误判为文字。",
+      "你是影视封面质量验收员。请检查主标题是否可辨认，以及是否存在明显不属于商业影视海报的内容。不要把规则执行得过严。",
+      `目标剧名是：“${title}”。允许分行、竖排、艺术字、局部重复和省略或替换标点；只要全部剧名文字完整可辨、字序正确，就应判定标题存在且可读。`,
+      "允许正常的封面辅助文案，例如地点、年代、人物身份、剧情氛围词、简短宣传语、演员或角色信息和装饰性小字。像“扬州”“京城”“民国”这样的地点或背景词属于合理文案，不能仅因它不是剧名就判失败。",
+      "只有以下情况才是阻断问题：主标题缺失或存在明显错字漏字；出现另一部作品的名称；出现与画面毫无关系的随机乱码；出现联系方式、账号、广告引流、二维码、平台水印；出现分辨率、尺寸、相机参数、操作按钮或伪界面等技术文字。",
+      "不确定某段小字是否相关时放入 warnings，不要放入 blockingIssues，也不要因此设置阻断字段。装饰纹理不应误判为文字。",
+      "请列出实际识别到的文字。titleSeverelyIncorrect 只表示明确的错字、漏字或完全不同的标题，不包括标点差异、分行或重复。",
       "只返回 JSON 对象，不要 Markdown 或解释。格式：" + JSON.stringify({
-        titleTextExact: true,
-        titleOccursOnce: true,
-        unrelatedTextFree: true,
-        noWatermarkOrTechnicalOverlay: true,
+        titlePresent: true,
+        titleReadable: true,
+        titleSeverelyIncorrect: false,
+        hasProhibitedOverlay: false,
+        hasClearlyUnrelatedOrGibberishText: false,
         detectedTexts: [title],
-        issues: [],
+        blockingIssues: [],
+        warnings: [],
       }),
     ].join("\n"),
     systemPrompt: "你只输出符合用户指定结构的 JSON 对象。",
@@ -117,14 +123,14 @@ async function validateIqiyiLandscapeCover(
     temperature: 0,
   });
   const validation = iqiyiLandscapeCoverValidationSchema.parse(completion.data);
-  const failures = [
-    !validation.titleTextExact && "剧名不准确",
-    !validation.titleOccursOnce && "剧名不是只出现一次",
-    !validation.unrelatedTextFree && "检测到剧名以外的文字",
-    !validation.noWatermarkOrTechnicalOverlay && "检测到水印或技术标注",
-    ...validation.issues,
-  ].filter((issue): issue is string => Boolean(issue));
-  return { passed: failures.length === 0, failures };
+  return evaluateIqiyiLandscapeCoverValidation(title, validation);
+}
+
+export function evaluateIqiyiLandscapeCoverValidation(
+  title: string,
+  validation: IqiyiLandscapeCoverValidation,
+) {
+  return evaluateCommercialPosterTextValidation(title, validation);
 }
 
 function materialRoot(options: IqiyiDramaRuntimeOptions) {
@@ -227,13 +233,18 @@ async function prepareCopyrightProofFiles(
   options: IqiyiDramaRuntimeOptions,
 ) {
   log(options, "[iqiyi-drama] preparing copyright proof screenshots");
+  if (!options.aiClient) {
+    throw new Error("[ownership-project-proof-ai-required] 权属工程截图需要 AI 按图片内容识别，请先配置 AI 服务。");
+  }
   const selection = await findOwnershipProjectProofFiles({
     root,
     resourceName,
     aiClient: options.aiClient,
     onClassificationProgress: (progress) => log(
       options,
-      "[iqiyi-drama] classified copyright proof screenshot",
+      progress.fallback
+        ? "[iqiyi-drama] reclassified copyright proof screenshot from image content"
+        : "[iqiyi-drama] classified copyright proof screenshot",
       {
         completed: progress.completed,
         file: path.basename(progress.file),
@@ -283,7 +294,11 @@ async function generateLandscapeCover(
   }
 
   let lastError: unknown;
-  for (let attempt = 1; attempt <= landscapeGenerationAttempts; attempt += 1) {
+  const generationAttempts = Math.max(
+    1,
+    Math.min(11, Math.floor(options.aiCoverGenerationRetryAttempts ?? 3) + 1),
+  );
+  for (let attempt = 1; attempt <= generationAttempts; attempt += 1) {
     const temporaryOutput = path.join(
       outputDir,
       `.iqiyi-landscape-${process.pid}-${Date.now()}-${attempt}.jpg`,
@@ -292,10 +307,10 @@ async function generateLandscapeCover(
       log(
         options,
         `[iqiyi-drama] generating landscape cover with AI model=${model} ` +
-          `attempt=${attempt}/${landscapeGenerationAttempts}`,
+          `attempt=${attempt}/${generationAttempts}`,
       );
       const retryInstruction = attempt > 1
-        ? "\n\n上一张图片未通过文字验收。请重新生成，严格确保画面除唯一且准确的剧名外没有任何文字、字母、数字、署名、字幕或技术标注。"
+        ? "\n\n上一张图片未通过验收。请重新生成，重点确保主剧名完整清晰且没有错字，并去除其他作品名、乱码、广告引流、二维码、水印或技术界面文字；正常的地点、年代、人物身份、剧情氛围词和简短海报文案可以保留。"
         : "";
       const result = await options.aiClient.generateImage({
         model,
@@ -323,6 +338,11 @@ async function generateLandscapeCover(
           `IQIYI_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: ${validation.failures.join("；")}`,
         );
       }
+      if (validation.warnings.length > 0) {
+        log(options, "[iqiyi-drama] AI landscape cover text validation warnings", {
+          warnings: validation.warnings,
+        });
+      }
       await rename(temporaryOutput, output);
       log(options, `[iqiyi-drama] AI landscape cover passed text validation: ${output}`);
       return output;
@@ -331,7 +351,7 @@ async function generateLandscapeCover(
       log(
         options,
         `[iqiyi-drama] AI landscape cover attempt failed: ` +
-          `${attempt}/${landscapeGenerationAttempts} ${error instanceof Error ? error.message : String(error)}`,
+          `${attempt}/${generationAttempts} ${error instanceof Error ? error.message : String(error)}`,
       );
     } finally {
       await rm(temporaryOutput, { force: true }).catch(() => undefined);

@@ -207,6 +207,7 @@ export type IqiyiDramaRuntimeOptions = {
   closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
+  aiCoverGenerationRetryAttempts?: number;
   config?: {
     browser?: {
       headless?: boolean;

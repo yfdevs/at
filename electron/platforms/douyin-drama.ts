@@ -331,3 +331,7 @@ export function registerDouyinDramaPlatformHandlers() {
 export function stopDouyinDramaPlatformRuntime() {
   runtimeController.stopInBackground();
 }
+
+export function stopDouyinDramaPlatformService() {
+  return runtimeController.stop();
+}

@@ -33,17 +33,29 @@ export async function selectFormItem(page: Page, label: string, value: string) {
 }
 
 async function dropdownTriggerValue(trigger: Locator) {
+  return trigger.evaluate((element) => {
+    const selectRoot = element.closest(".cheetah-select") ?? element;
+    const selectionItem = selectRoot.querySelector(".cheetah-select-selection-item");
+    const inputValue = element instanceof HTMLInputElement || element instanceof HTMLTextAreaElement
+      ? element.value
+      : "";
+    return [
+      inputValue,
+      element.textContent,
+      element.getAttribute("title"),
+      selectionItem?.textContent,
+      selectionItem?.getAttribute("title"),
+    ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  });
+}
+
+async function dropdownClickTarget(trigger: Locator) {
   const selectRoot = trigger.locator(
     "xpath=ancestor-or-self::*[contains(concat(' ', normalize-space(@class), ' '), ' cheetah-select ')][1]",
   );
-  const selectionItem = selectRoot.locator(".cheetah-select-selection-item").first();
-  return [
-    await trigger.inputValue().catch(() => ""),
-    await trigger.textContent().catch(() => ""),
-    await trigger.getAttribute("title").catch(() => ""),
-    await selectionItem.textContent().catch(() => ""),
-    await selectionItem.getAttribute("title").catch(() => ""),
-  ].filter(Boolean).join(" ").replace(/\s+/g, " ").trim();
+  if (!(await selectRoot.count())) return trigger;
+  const selector = selectRoot.locator(".cheetah-select-selector").first();
+  return (await selector.count()) ? selector : selectRoot.first();
 }
 
 async function findVirtualizedDropdownOption(
@@ -85,8 +97,10 @@ async function findVirtualizedDropdownOption(
 export async function selectDropdownOption(page: Page, trigger: Locator, value: string) {
   const currentValue = await dropdownTriggerValue(trigger);
   if (currentValue.trim() === value || currentValue.split(/\s+/).includes(value)) return;
-  if (await trigger.getAttribute("aria-expanded").catch(() => "false") !== "true") {
-    await trigger.click();
+  const clickTarget = await dropdownClickTarget(trigger);
+  await clickTarget.waitFor({ state: "visible", timeout: 10_000 });
+  if (await trigger.getAttribute("aria-expanded", { timeout: 1_000 }).catch(() => "false") !== "true") {
+    await clickTarget.click({ timeout: 5_000 });
   }
   const dropdown = page.locator(".cheetah-select-dropdown:visible").last();
   await dropdown.waitFor({ state: "visible", timeout: 10_000 });
@@ -267,25 +281,143 @@ async function waitForCoverSlotReady(
   return current;
 }
 
+async function currentBaiduCoverDialog(page: Page) {
+  const modalWrap = page.locator(".cheetah-modal-wrap:visible").last();
+  if (await modalWrap.isVisible().catch(() => false)) return modalWrap;
+  const roleDialog = page.locator('[role="dialog"]:visible').last();
+  if (await roleDialog.isVisible().catch(() => false)) return roleDialog;
+  return page.locator(".cheetah-modal-content:visible").last();
+}
+
+async function activateBaiduLocalCoverPanel(page: Page, dialog: Locator) {
+  const localImageTab = dialog.getByText("本地图片", { exact: true }).last();
+  if (!(await localImageTab.isVisible().catch(() => false))) return;
+  const selected = await localImageTab.evaluate((element) => {
+    const target = element.closest('[role="tab"], .cheetah-tabs-tab') ?? element;
+    return target.getAttribute("aria-selected") === "true"
+      || /(?:^|\s)(?:active|selected|cheetah-tabs-tab-active)(?:\s|$)/i.test(target.className);
+  }).catch(() => false);
+  if (!selected) {
+    await localImageTab.click();
+    await page.waitForTimeout(300);
+  }
+}
+
+async function activeBaiduCoverFileInput(dialog: Locator) {
+  const inputs = dialog.locator('input[type="file"]');
+  const candidates = await inputs.evaluateAll((elements) =>
+    elements
+      .map((element, index) => {
+        const input = element as HTMLInputElement;
+        const accept = input.accept.toLowerCase();
+        const acceptsImage =
+          !accept || /image\//.test(accept) || /\.(?:jpe?g|png|webp|bmp)/.test(accept);
+        let activePanel = true;
+        let parent = input.parentElement;
+        while (parent && !parent.matches('[role="dialog"], .cheetah-modal-wrap')) {
+          const style = getComputedStyle(parent);
+          if (
+            parent.hidden
+            || parent.getAttribute("aria-hidden") === "true"
+            || style.display === "none"
+            || style.visibility === "hidden"
+          ) {
+            activePanel = false;
+            break;
+          }
+          parent = parent.parentElement;
+        }
+        return {
+          index,
+          score: (activePanel ? 100 : 0) + (acceptsImage ? 20 : 0) + (!input.disabled ? 10 : 0),
+          usable: activePanel && acceptsImage && !input.disabled,
+        };
+      })
+      .filter((candidate) => candidate.usable)
+      .sort((left, right) => right.score - left.score || right.index - left.index),
+  );
+  const selected = candidates[0];
+  if (!selected) throw new Error("BAIDU_DRAMA_COVER_FILE_INPUT_NOT_FOUND");
+  return inputs.nth(selected.index);
+}
+
+async function baiduCoverFileInputDetails(dialog: Locator) {
+  return dialog.locator('input[type="file"]').evaluateAll((elements) =>
+    elements.map((element) => {
+      const input = element as HTMLInputElement;
+      return {
+        accept: input.accept,
+        disabled: input.disabled,
+        files: input.files?.length ?? 0,
+        parentHidden: Boolean(input.parentElement && (
+          input.parentElement.hidden
+          || input.parentElement.getAttribute("aria-hidden") === "true"
+          || getComputedStyle(input.parentElement).display === "none"
+        )),
+      };
+    }),
+  ).catch(() => []);
+}
+
+async function closeBaiduCoverDialog(page: Page) {
+  const dialog = await currentBaiduCoverDialog(page);
+  if (!(await dialog.isVisible().catch(() => false))) return;
+  await page.keyboard.press("Escape").catch(() => undefined);
+  if (await dialog.isVisible().catch(() => false)) {
+    const closeButton = dialog
+      .locator(
+        '.cheetah-modal-close, button[aria-label="Close"], button[aria-label="关闭"], [class*="modal-close"]',
+      )
+      .last();
+    if (await closeButton.isVisible().catch(() => false)) {
+      await closeButton.click().catch(() => undefined);
+    }
+  }
+  await dialog.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => undefined);
+}
+
 async function uploadCoverSlotAttempt(page: Page, slot: Locator, file: string) {
   await slot.click();
-  const dialog = page
-    .locator('[role="dialog"]:visible, .cheetah-modal-wrap:visible, .cheetah-modal-content:visible')
-    .last();
+  const dialog = await currentBaiduCoverDialog(page);
   await dialog.waitFor({ state: "visible", timeout: 10_000 });
-  const input = dialog.locator('input[type="file"][accept*="image"]').last();
+  await activateBaiduLocalCoverPanel(page, dialog);
+  await dialog.locator('input[type="file"]').first().waitFor({ state: "attached", timeout: 10_000 });
+  const input = await activeBaiduCoverFileInput(dialog);
   await input.waitFor({ state: "attached", timeout: 10_000 });
   await input.setInputFiles(file);
+  // The Baidu upload component consumes the change event and may immediately clear or
+  // replace the file input so the same file can be selected again. Reading files.length
+  // here therefore produces a false zero even though the uploader accepted the file.
+  // Treat the upload result and enabled confirm button below as the authoritative signal.
 
   const confirm = dialog.getByRole("button", { name: "确认", exact: true }).last();
   await confirm.waitFor({ state: "visible", timeout: 10_000 });
   const confirmDeadline = Date.now() + 60_000;
   while (!(await confirm.isEnabled().catch(() => false))) {
+    const dialogText = await dialog.innerText().catch(() => "");
+    const normalizedDialogText = dialogText.replace(/\s+/g, " ").trim();
+    const transientFailure = normalizedDialogText.match(/(?:上传失败|上传出错|网络异常)/)?.[0];
+    if (transientFailure) {
+      throw new Error(
+        `BAIDU_DRAMA_COVER_UPLOAD_TRANSIENT_FAILURE: file=${file} reason=${transientFailure} ` +
+          `dialog=${JSON.stringify(normalizedDialogText.slice(0, 300))}`,
+      );
+    }
+    const rejection = normalizedDialogText.match(
+      /(?:图片格式不支持|不支持的图片格式|图片过大|图片尺寸不符)/,
+    )?.[0];
+    if (rejection) {
+      throw new Error(
+        `BAIDU_DRAMA_COVER_UPLOAD_REJECTED: file=${file} reason=${rejection} ` +
+          `dialog=${JSON.stringify(normalizedDialogText.slice(0, 300))}`,
+      );
+    }
     if (Date.now() >= confirmDeadline) {
-      const dialogText = await dialog.innerText().catch(() => "");
+      const inputs = await baiduCoverFileInputDetails(dialog);
       throw new Error(
         `BAIDU_DRAMA_COVER_CONFIRM_NOT_READY: file=${file} ` +
-          `dialog=${JSON.stringify(dialogText.replace(/\s+/g, " ").trim().slice(0, 300))}`,
+          `dialog=${JSON.stringify(normalizedDialogText.slice(0, 300))} ` +
+          `inputs=${JSON.stringify(inputs).slice(0, 500)}`,
       );
     }
     await page.waitForTimeout(500);
@@ -314,7 +446,23 @@ export async function uploadCoverSlot(
 
   const maximumAttempts = Math.max(1, options.maxAttempts ?? 3);
   for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
-    await uploadCoverSlotAttempt(page, slot, file);
+    try {
+      await uploadCoverSlotAttempt(page, slot, file);
+    } catch (error) {
+      const message = error instanceof Error ? error.message : String(error);
+      const retryable =
+        /BAIDU_DRAMA_COVER_(?:CONFIRM_NOT_(?:READY|CLOSED)|FILE_(?:INPUT_NOT_FOUND|NOT_SELECTED)|UPLOAD_TRANSIENT_FAILURE)/.test(
+          message,
+        );
+      if (!retryable || attempt === maximumAttempts) throw error;
+      options.onRetry?.(
+        `封面上传未完成，准备重新打开上传弹窗：槽位=${options.label ?? "未知"} ` +
+          `attempt=${attempt + 1}/${maximumAttempts}`,
+      );
+      await closeBaiduCoverDialog(page);
+      await page.waitForTimeout(1_000);
+      continue;
+    }
     const state = await waitForCoverSlotReady(page, slot, 15_000);
     if (state.ready) return { slot, file };
     if (attempt === maximumAttempts) {

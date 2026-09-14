@@ -12,7 +12,7 @@ import { createLogger, runWithLogContext } from "../shared/logger.js";
 import { attachFailStage } from "../shared/errors.js";
 import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { booleanSetting, secondsSettingToMs } from "../shared/settings-value.js";
-import { cleanupWechatProductionProofMaterials } from "../shared/production-proof-materials.js";
+import { captureAutomationFailureDiagnostics } from "@drama/automation-logging";
 
 const publishLogger = createLogger("publish");
 
@@ -153,11 +153,28 @@ async function runPlayletTaskInContext(runOptions: TaskRunOptions, managedBrowse
     }
   } catch (error) {
     failed = true;
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "wechat-drama",
+      error,
+      page,
+      runDataDir: resolveRunDataPath(),
+      stage:
+        typeof error === "object" && error && "failStage" in error
+          ? String(error.failStage)
+          : undefined,
+      task: {
+        accountTaskId: runOptions.accountTaskId,
+        title: playletConfig?.playlet.name,
+        videoAccountId: runOptions.channelId,
+        videoAccountName: runOptions.videoAccountName,
+      },
+    });
+    publishLogger.error("失败诊断已保存", {
+      diagnosticDir: diagnostics?.directory,
+      screenshotFile: diagnostics?.screenshotFile,
+    });
     throw error;
   } finally {
-    if (playletConfig) {
-      await cleanupWechatProductionProofMaterials(playletConfig).catch(() => undefined);
-    }
     if (ownsBrowserContext) {
       await saveStorageState(browserContext, standaloneStateFile).catch(() => undefined);
       if (playletConfig) {

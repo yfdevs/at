@@ -8,7 +8,22 @@ import {
   ensureBaiduNetdiskEpisodeVideos,
   resolveBaiduNetdiskAssetCompletionRequirements,
 } from "../src/baidu-netdisk.js";
-import { isOwnershipDirectoryName, listLocalOwnershipMaterials } from "../src/index.js";
+import {
+  isNonRetryableBaiduNetdiskResourceError,
+  isOwnershipDirectoryName,
+  listLocalOwnershipMaterials,
+} from "../src/index.js";
+
+test("expired and deleted Baidu shares do not retry on platform runtimes", () => {
+  assert.equal(
+    isNonRetryableBaiduNetdiskResourceError(new Error("分享链接不可用：分享文件已过期")),
+    true,
+  );
+  assert.equal(
+    isNonRetryableBaiduNetdiskResourceError(new Error("分享链接不可用：分享的文件已经被删除")),
+    true,
+  );
+});
 
 test("optional remotely discovered ownership does not block a poster-only platform", () => {
   assert.deepEqual(
@@ -67,7 +82,7 @@ test("strict mode waits for every remotely discovered optional asset", () => {
 });
 
 test("local ownership directory recognition matches the remote scanner", () => {
-  for (const name of ["工程文件", "权属", "主体资质", "版权证明", " 版 权 资料 "]) {
+  for (const name of ["工程文件", "权属", "主体资质", "版权证明", " 版 权 资料 ", "剪映", "剧创", "AI生成记录", "AI 创作过程"]) {
     assert.equal(isOwnershipDirectoryName(name), true, name);
   }
   assert.equal(isOwnershipDirectoryName("海报封面"), false);
@@ -85,6 +100,25 @@ test("ownership images under qualification and copyright directories are scanned
 
     const materials = await listLocalOwnershipMaterials({ root, resourceName });
     assert.equal(materials.length, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("unnamed leaf folders with multiple screenshots enter AI proof candidates", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-unnamed-ownership-scan-"));
+  const resourceName = "测试短剧";
+  const candidate = path.join(root, resourceName, "随意命名资料A");
+  const poster = path.join(root, resourceName, "封面");
+  try {
+    await Promise.all([mkdir(candidate, { recursive: true }), mkdir(poster, { recursive: true })]);
+    await Promise.all([
+      writeFile(path.join(candidate, "one.png"), Buffer.from([1])),
+      writeFile(path.join(candidate, "two.png"), Buffer.from([2])),
+      writeFile(path.join(poster, "cover.png"), Buffer.from([3])),
+    ]);
+    const materials = await listLocalOwnershipMaterials({ root, resourceName });
+    assert.deepEqual(materials.map((item) => item.name), ["one.png", "two.png"]);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

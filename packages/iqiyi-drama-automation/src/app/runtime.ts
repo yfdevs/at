@@ -1,5 +1,8 @@
 import type { BrowserContext, Page } from "playwright";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 
 import {
@@ -205,6 +208,19 @@ async function executeTask(
     const errorMessage = formatAutomationErrorReport(error, {
       fallbackMessage: "爱奇艺任务提交失败，未获取到具体错误原因",
     });
+    const stage = failStage(error, "FILL_FORM");
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "iqiyi-drama",
+      error,
+      page,
+      logFilePath: options.logFilePath,
+      stage,
+      task: {
+        accountTaskId: task.accountTaskId,
+        title: task.originalTitle,
+        dramaType: task.playlet.dramaType,
+      },
+    });
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -219,7 +235,7 @@ async function executeTask(
           apiConfig: options.apiConfig,
           runtimeOptions: options,
           accountTaskId: task.accountTaskId,
-          failStage: failStage(error, "FILL_FORM"),
+          failStage: stage,
           errorMessage,
           resultJson: { activeUrl: page.url(), dramaType: task.playlet.dramaType },
         }),
@@ -227,6 +243,7 @@ async function executeTask(
         errorLog(options, `[iqiyi-drama] fail callback failed: ${message(reportError)}`);
       });
     }
+    errorLog(options, `[iqiyi-drama] failure diagnostics: ${diagnostics?.directory ?? "unavailable"}`);
     throw error;
   }
 }

@@ -39,6 +39,7 @@ export type ConfigTextField<TConfig> = {
   suffix?: string;
   directory?: boolean;
   min?: number;
+  max?: number;
   step?: number | string;
 };
 
@@ -344,6 +345,7 @@ function ConfigFieldControl<TConfig extends object>({
             className="text-[13px] md:text-[13px]"
             id={field.key}
             min={field.min ?? (field.type === "number" ? 0 : undefined)}
+            max={field.max}
             step={field.step}
             type={field.type ?? "text"}
             value={value}

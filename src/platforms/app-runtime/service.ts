@@ -76,7 +76,12 @@ export type AppUpdateStatus = {
   lastCheckedAt?: string;
   nextCheckAt?: string;
   retryAttempt?: number;
+  runningPlatformCount: number;
   updatedAt: string;
+};
+
+export type AppUpdateInstallOptions = {
+  stopRunningServices?: boolean;
 };
 
 function requireIpcRenderer(action: string) {
@@ -125,9 +130,10 @@ export function cancelAppUpdateDownload() {
   ) as Promise<AppUpdateStatus>;
 }
 
-export function installAppUpdate() {
+export function installAppUpdate(options?: AppUpdateInstallOptions) {
   return requireIpcRenderer("安装应用更新").invoke(
     "app:update:install",
+    options,
   ) as Promise<AppUpdateStatus>;
 }
 

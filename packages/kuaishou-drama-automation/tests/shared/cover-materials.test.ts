@@ -74,9 +74,9 @@ void test("keeps technical dimensions out of model-visible generation prompts", 
   assert.match(dramaPrompt, /“测试短剧”/);
   assert.doesNotMatch(dramaPrompt, /414:258|2208x1376/);
   assert.doesNotMatch(episodePrompt, /224:300|1792x2400/);
-  assert.match(dramaPrompt, /演员姓名、演员表、职员表/);
+  assert.match(dramaPrompt, /地点、年代、人物身份/);
   assert.match(dramaPrompt, /画幅比例、分辨率/);
-  assert.match(dramaPrompt, /参考图若含剧名以外的文字，必须删除/);
+  assert.doesNotMatch(dramaPrompt, /最终成图只能出现一处|除剧名外，严禁/);
 });
 
 void test("generates only the missing landscape cover and shares prepared files across variants", async () => {
@@ -106,14 +106,17 @@ void test("generates only the missing landscape cover and shares prepared files 
         text: JSON.stringify({
           mainSubjectsComplete: true,
           facesIntact: true,
-          titleTextExact: true,
+          titlePresent: true,
+          titleReadable: true,
+          titleSeverelyIncorrect: false,
           titleInsideSafeArea: true,
-          unrelatedTextFree: true,
-          noWatermarkOrTechnicalOverlay: true,
+          hasProhibitedOverlay: false,
+          hasClearlyUnrelatedOrGibberishText: false,
           noMirroringOrTiling: true,
           referenceSimilarityConfidence: 0.98,
-          detectedTitleText: "竖版补横版测试剧",
-          issues: [],
+          detectedTexts: ["竖版补横版测试剧"],
+          blockingIssues: [],
+          warnings: ["存在辅助地点文字“扬州”"],
         }),
       }),
     } as unknown as DramaAiClient;

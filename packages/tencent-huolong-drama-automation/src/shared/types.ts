@@ -82,6 +82,7 @@ export type TencentHuolongRuntimeOptions = {
   closeFailedTaskPages?: boolean;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
+  aiCoverGenerationRetryAttempts?: number;
   config?: { browser?: { headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;
   ensureBaiduNetdiskResource?: (request: {

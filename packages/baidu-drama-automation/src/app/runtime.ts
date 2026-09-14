@@ -1,6 +1,9 @@
 import path from "node:path";
 import { mkdir } from "node:fs/promises";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import type { Page } from "playwright";
 import {
@@ -49,7 +52,7 @@ function failStage(error: unknown): BaiduDramaTaskFailStage {
   if (/FORM|FIELD|LOCATOR|STRICT MODE|SELECT|OPTION|表单|字段|填写|选择/i.test(message)) {
     return "FILL_FORM";
   }
-  if (/SUBMIT|提交/i.test(message)) return "SUBMIT";
+  if (/SUBMIT|CAPTCHA|安全验证|提交/i.test(message)) return "SUBMIT";
   return "OTHER";
 }
 
@@ -150,6 +153,14 @@ async function runTask(
       fallbackMessage: "百度任务提交失败，未获取到具体错误原因",
     });
     const stage = failStage(error);
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "baidu-drama",
+      error,
+      page: taskPage,
+      logFilePath: options.logFilePath,
+      stage,
+      task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
+    });
     await reportBaiduDramaTaskErrorApi({
       runtimeOptions: options,
       apiConfig: options.apiConfig,
@@ -169,7 +180,13 @@ async function runTask(
       options,
       `[baidu-drama] 任务失败：taskId=${task.accountTaskId}，阶段=${stage}，` +
         `剧名=${task.originalTitle}，错误=${message}`,
-      { accountTaskId: task.accountTaskId, title: task.originalTitle, failStage: stage, error },
+      {
+        accountTaskId: task.accountTaskId,
+        title: task.originalTitle,
+        failStage: stage,
+        diagnosticDir: diagnostics?.directory,
+        error,
+      },
       "task",
     );
   } finally {

@@ -292,3 +292,7 @@ export function registerTiktokDramaCenterPlatformHandlers() {
 export function stopTiktokDramaCenterPlatformRuntime() {
   runtimeController.stopInBackground();
 }
+
+export function stopTiktokDramaCenterPlatformService() {
+  return runtimeController.stop();
+}

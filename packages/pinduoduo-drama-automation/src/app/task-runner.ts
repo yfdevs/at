@@ -1,5 +1,8 @@
 import type { Page } from "playwright";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { PINDUODUO_SHORTPLAY_APPLY_EDIT_URL } from "../shared/constants.js";
 import {
@@ -51,6 +54,27 @@ function claimOptions(
     pinduoduoAccountName: options.accountProfileName,
     rpaStatus,
   };
+}
+
+async function capturePinduoduoFailure(
+  page: Page | undefined,
+  options: PinduoduoDramaRuntimeOptions,
+  error: unknown,
+  stage: string,
+  task: { accountTaskId: number; dramaId?: number; title?: string },
+) {
+  const diagnostics = await captureAutomationFailureDiagnostics({
+    platform: "pinduoduo-drama",
+    error,
+    page,
+    logFilePath: options.logFilePath,
+    stage,
+    task,
+  });
+  log(options, "error", "runtime", "failure diagnostics saved", {
+    accountTaskId: task.accountTaskId,
+    diagnosticDir: diagnostics?.directory,
+  });
 }
 
 async function claimAndSubmitApplyTask(
@@ -121,6 +145,11 @@ async function claimAndSubmitApplyTask(
   } catch (error) {
     const errorMessage = formatAutomationErrorReport(error, {
       fallbackMessage: "拼多多短剧申报提交失败，未获取到具体错误原因",
+    });
+    await capturePinduoduoFailure(page, options, error, "SUBMIT_SHORTPLAY", {
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      title: task.playlet.title,
     });
     log(options, "error", "runtime", "failed to submit shortplay apply edit", {
       accountTaskId: task.accountTaskId,
@@ -266,6 +295,11 @@ async function reportAndUpdateAuditRecord(
     const errorMessage = formatAutomationErrorReport(error, {
       fallbackMessage: "拼多多短剧审核状态检查失败，未获取到具体错误原因",
     });
+    await capturePinduoduoFailure(page, options, error, "CHECK_AUDIT", {
+      accountTaskId: trackedRecord.accountTaskId,
+      dramaId: trackedRecord.dramaId,
+      title: trackedRecord.title,
+    });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,
       accountTaskId: trackedRecord.accountTaskId,
@@ -357,6 +391,11 @@ async function prepareLocalVideoResourceTask(
     const errorMessage = formatAutomationErrorReport(error, {
       fallbackMessage: "拼多多视频素材准备失败，未获取到具体错误原因",
     });
+    await capturePinduoduoFailure(undefined, options, error, "PREPARE_VIDEO_RESOURCE", {
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      title: task.playlet.title,
+    });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,
       accountTaskId: task.accountTaskId,
@@ -398,6 +437,11 @@ async function runApprovedShortplayFlowTask(
   } catch (error) {
     const errorMessage = formatAutomationErrorReport(error, {
       fallbackMessage: "拼多多视频上传失败，未获取到具体错误原因",
+    });
+    await capturePinduoduoFailure(page, options, error, "UPLOAD_VIDEO", {
+      accountTaskId: task.accountTaskId,
+      dramaId: task.dramaId,
+      title: task.playlet.title,
     });
     await reportPinduoduoDramaTaskErrorApi({
       apiConfig: options.config?.api,

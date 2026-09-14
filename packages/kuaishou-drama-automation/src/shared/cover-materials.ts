@@ -4,6 +4,7 @@ import path from "node:path";
 
 import { analyzeImagesAsJson } from "@drama/ai";
 import {
+  evaluateCommercialPosterTextValidation,
   prepareContainedImageVariant,
   readImageDimensions,
   type LocalPosterImageFile,
@@ -28,7 +29,7 @@ export const KUAISHOU_EPISODE_COVER_SIZE = {
 
 type KuaishouCoverKind = "drama" | "episode";
 
-const promptVersion = "kuaishou-cover-counterpart-v3-text-safety";
+const promptVersion = "kuaishou-cover-counterpart-v4-commercial-copy";
 const normalizationVersion = "kuaishou-cover-contain-v1";
 const maximumFileBytes = 9_500_000;
 const activeGenerations = new Map<string, Promise<string>>();
@@ -36,14 +37,17 @@ const activeGenerations = new Map<string, Promise<string>>();
 export const kuaishouGeneratedCoverValidationSchema = z.object({
   mainSubjectsComplete: z.boolean(),
   facesIntact: z.boolean(),
-  titleTextExact: z.boolean(),
+  titlePresent: z.boolean(),
+  titleReadable: z.boolean(),
+  titleSeverelyIncorrect: z.boolean(),
   titleInsideSafeArea: z.boolean(),
-  unrelatedTextFree: z.boolean(),
-  noWatermarkOrTechnicalOverlay: z.boolean(),
+  hasProhibitedOverlay: z.boolean(),
+  hasClearlyUnrelatedOrGibberishText: z.boolean(),
   noMirroringOrTiling: z.boolean(),
   referenceSimilarityConfidence: z.coerce.number().finite().min(0).max(1),
-  detectedTitleText: z.string().trim().max(200).optional(),
-  issues: z.array(z.string().trim().max(300)).max(20).default([]),
+  detectedTexts: z.array(z.string().trim().max(100)).max(30).default([]),
+  blockingIssues: z.array(z.string().trim().max(300)).max(20).default([]),
+  warnings: z.array(z.string().trim().max(300)).max(20).default([]),
 });
 
 export type KuaishouGeneratedCoverValidation = z.infer<
@@ -106,15 +110,18 @@ export function buildKuaishouCounterpartCoverPrompt(options: {
     composition,
     "不得简单拉伸、镜像、重复拼接、添加边框，不得裁断人脸、头部、主要人物或关键道具。",
     "所有主要人物和剧名放在画面中央区域，四周留出充足的纯场景背景，确保发布裁剪后仍能完整展示。",
-    `剧名必须严格保持为“${options.title}”，不改字、不漏字、不重复；参考图中已有剧名时优先保留或准确重建。`,
-    "最终成图只能出现一处上述剧名；除剧名外，严禁出现任何文字、字母、数字或类似文字的符号。",
-    "尤其不得出现演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间、画幅比例、分辨率、相机参数、标志、水印、角标、二维码、信息栏或伪界面。",
-    "参考图若含剧名以外的文字，必须删除，不得复制、改写或补全；不要预留演员名或字幕排版区域。",
+    `剧名必须完整准确地展示为“${options.title}”，不改字、不漏字；允许分行、竖排、标点调整，以及符合海报设计的局部标题重复。`,
+    "允许与作品相关的正常海报辅助文案，例如地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字；这些文案不能喧宾夺主。",
+    "不得出现其他作品名称、随机乱码、联系方式、账号、广告引流、二维码、平台或品牌水印，以及画幅比例、分辨率、尺寸、相机参数、操作按钮、信息栏等技术或伪界面文字。",
+    "参考图中的合理海报文案可以保留或重新设计；无法确认含义的装饰纹理不要强行生成为文字。",
     "直接输出干净的成品海报，不要输出设计稿、模板、制作说明或界面预览。",
   ].join("\n");
 }
 
-function buildValidationRetryGuidance(validation: KuaishouGeneratedCoverValidation) {
+function buildValidationRetryGuidance(
+  title: string,
+  validation: KuaishouGeneratedCoverValidation,
+) {
   const guidance = new Set<string>();
   if (!validation.mainSubjectsComplete) {
     guidance.add("完整呈现所有主要人物和关键道具，不要让其被边缘裁断。");
@@ -122,14 +129,15 @@ function buildValidationRetryGuidance(validation: KuaishouGeneratedCoverValidati
   if (!validation.facesIntact) {
     guidance.add("保持参考人物的面部特征，确保人脸自然、完整、无遮挡。");
   }
-  if (!validation.titleTextExact) {
-    guidance.add("只写一处准确剧名，逐字核对，不得改字、漏字或重复。");
+  const textValidation = evaluateCommercialPosterTextValidation(title, validation);
+  if (textValidation.failures.some((failure) => /剧名/.test(failure))) {
+    guidance.add("完整清晰地展示准确剧名，逐字核对，不得改字或漏字。");
   }
   if (!validation.titleInsideSafeArea) {
     guidance.add("把剧名移入中央区域，与画面边缘留出明显背景空间。");
   }
-  if (!validation.unrelatedTextFree || !validation.noWatermarkOrTechnicalOverlay) {
-    guidance.add("成品中除准确剧名外不要出现任何文字、符号、标记或界面装饰。");
+  if (validation.hasProhibitedOverlay || validation.hasClearlyUnrelatedOrGibberishText) {
+    guidance.add("删除其他作品名、乱码、广告引流、二维码、水印或技术界面文字；正常海报辅助文案可以保留。");
   }
   if (!validation.noMirroringOrTiling) {
     guidance.add("自然延展场景，不要镜像、重复或拼贴背景。");
@@ -140,18 +148,16 @@ function buildValidationRetryGuidance(validation: KuaishouGeneratedCoverValidati
   return [...guidance].join("\n");
 }
 
-function validationFailure(validation: KuaishouGeneratedCoverValidation) {
+function validationFailure(title: string, validation: KuaishouGeneratedCoverValidation) {
+  const textValidation = evaluateCommercialPosterTextValidation(title, validation);
   const failedChecks = [
     ["main-subjects-incomplete", validation.mainSubjectsComplete],
     ["faces-damaged", validation.facesIntact],
-    ["title-text-inexact", validation.titleTextExact],
     ["title-outside-safe-area", validation.titleInsideSafeArea],
-    ["unrelated-text-detected", validation.unrelatedTextFree],
-    ["watermark-or-technical-overlay", validation.noWatermarkOrTechnicalOverlay],
     ["mirroring-or-tiling", validation.noMirroringOrTiling],
     ["reference-similarity-low", validation.referenceSimilarityConfidence >= 0.75],
   ].filter(([, passed]) => !passed).map(([name]) => name);
-  return [...failedChecks, ...validation.issues].join("; ");
+  return [...failedChecks, ...textValidation.failures].join("; ");
 }
 
 async function validateGeneratedCover(options: {
@@ -171,21 +177,25 @@ async function validateGeneratedCover(options: {
       "你是快手短剧封面质检员。第 1 张是参考原图，第 2 张是待验收的生成图。",
       `待验收图用于${detail.label}，目标比例为${detail.ratioLabel}。`,
       `准确剧名是：${options.title}。`,
-      "请逐项判断：主要人物是否完整；人脸是否无畸变和遮挡；剧名是否逐字准确且与四周边界至少保持约 5% 安全距离。",
-      "除准确剧名外，是否存在随机文字、坐标、尺寸、时间戳、相机参数、取景框、水印、二维码、平台标识等伪界面元素。",
+      "请逐项判断：主要人物是否完整；人脸是否无畸变和遮挡；剧名是否完整可读且与四周边界至少保持约 5% 安全距离。剧名允许分行、竖排、标点调整和局部重复。",
+      "允许地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字，不得仅因不是剧名就判失败。",
+      "只把其他作品名、随机乱码、联系方式、账号、广告引流、二维码、平台水印、坐标、尺寸、时间戳、相机参数、取景框或伪界面元素判为文字阻断问题。不确定的小字放入 warnings。",
       "检查背景是否有明显镜像、重复拼接或边框，以及生成图与参考图的人物和作品辨识度是否一致。",
       "只返回 JSON 对象，不要 Markdown 或解释。布尔字段必须严格填 true/false。",
       "格式：" + JSON.stringify({
         mainSubjectsComplete: true,
         facesIntact: true,
-        titleTextExact: true,
+        titlePresent: true,
+        titleReadable: true,
+        titleSeverelyIncorrect: false,
         titleInsideSafeArea: true,
-        unrelatedTextFree: true,
-        noWatermarkOrTechnicalOverlay: true,
+        hasProhibitedOverlay: false,
+        hasClearlyUnrelatedOrGibberishText: false,
         noMirroringOrTiling: true,
         referenceSimilarityConfidence: 0.95,
-        detectedTitleText: options.title,
-        issues: [],
+        detectedTexts: [options.title],
+        blockingIssues: [],
+        warnings: [],
       }),
     ].join("\n"),
     systemPrompt: "你只输出符合用户指定结构的 JSON 对象。",
@@ -193,9 +203,11 @@ async function validateGeneratedCover(options: {
     temperature: 0,
   });
   const validation = kuaishouGeneratedCoverValidationSchema.parse(completion.data);
+  const textValidation = evaluateCommercialPosterTextValidation(options.title, validation);
   return {
     validation,
-    failure: validationFailure(validation),
+    failure: validationFailure(options.title, validation),
+    warnings: textValidation.warnings,
     model: completion.model,
     requestId: completion.requestId,
   };
@@ -316,7 +328,7 @@ async function generateMissingCover(options: {
     const target = coverDetails[options.kind].target;
     const attempts = Math.max(
       1,
-      Math.min(3, Math.floor(options.runtime.coverAiGenerationAttempts ?? 3)),
+      Math.min(11, Math.floor(options.runtime.aiCoverGenerationRetryAttempts ?? 3) + 1),
     );
     let lastError: unknown;
     let previousFailure: string | undefined;
@@ -361,8 +373,15 @@ async function generateMissingCover(options: {
           runtime: options.runtime,
         });
         if (validated.failure) {
-          retryGuidance = buildValidationRetryGuidance(validated.validation);
+          retryGuidance = buildValidationRetryGuidance(options.title, validated.validation);
           throw new Error(`KUAISHOU_DRAMA_AI_COVER_VALIDATION_FAILED: ${validated.failure}`);
+        }
+        if (validated.warnings.length > 0) {
+          log(
+            options.runtime,
+            `[kuaishou-drama] AI ${options.kind} cover validation warnings (non-blocking): ` +
+              validated.warnings.join("; "),
+          );
         }
         await writeFile(metadataFile, JSON.stringify({
           cacheKey,

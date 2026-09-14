@@ -72,6 +72,7 @@ export interface ClaimedAccountTask {
 }
 
 export interface TaskRunOptions {
+  accountTaskId?: number;
   playletConfig?: Config;
   preparedEpisodeVideos?: PreparedEpisodeVideo[];
   dramaAiRpaId?: string;

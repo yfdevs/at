@@ -87,10 +87,10 @@ async function readIqiyiVideoUploadSnapshot(
         fileName,
         uploading,
         failed,
-        terminal: Boolean(statusIcon) && !uploading,
+        terminal: Boolean(fileName) && Boolean(statusIcon) && !uploading,
         errorText,
       };
-      return fileName || uploading || failed || row.terminal || errorText ? [row] : [];
+      return fileName || uploading || failed || errorText ? [row] : [];
     })
   );
   const globalErrors = (await page.locator([
@@ -104,6 +104,92 @@ async function readIqiyiVideoUploadSnapshot(
     .map(normalizeText)
     .filter(Boolean);
   return { rows, globalErrors: [...new Set(globalErrors)] };
+}
+
+async function existingIqiyiVideoRow(root: Locator) {
+  const rows = root.locator(".catalog-item-form:visible");
+  for (let index = 0; index < await rows.count(); index += 1) {
+    const row = rows.nth(index);
+    const fileName = normalizeText(await row.locator(".catalog-form-text").textContent().catch(() => ""));
+    const hasUploadActivity = await row.locator(
+      ".file-status .left,.file-status .right,.file-status .leftcircle,.file-status .rightcircle",
+    ).count() > 0;
+    const hasVisibleError = await row.locator(
+      ".mp-form-item__error:visible,.file-message-list:visible [class*='error'],[class*='upload-fail']:visible",
+    ).count() > 0;
+    if (fileName || hasUploadActivity || hasVisibleError) return { fileName, row };
+  }
+  return undefined;
+}
+
+async function waitForIqiyiVideoRowRemoval(
+  page: Page,
+  root: Locator,
+  previousRowCount: number,
+) {
+  const deadline = Date.now() + 15_000;
+  while (Date.now() < deadline) {
+    const snapshot = await readIqiyiVideoUploadSnapshot(page, root);
+    if (snapshot.rows.length < previousRowCount) return true;
+    await page.waitForTimeout(250);
+  }
+  return false;
+}
+
+async function clearExistingIqiyiVideoRows(
+  page: Page,
+  root: Locator,
+  options: IqiyiDramaRuntimeOptions,
+) {
+  let cleared = 0;
+  while (cleared < 500) {
+    const snapshot = await readIqiyiVideoUploadSnapshot(page, root);
+    if (snapshot.rows.length === 0) return cleared;
+    const existing = await existingIqiyiVideoRow(root);
+    if (!existing) {
+      throw new Error(
+        `IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_CLEAR_FAILED: reason=row-not-locatable rows=${snapshot.rows.length}`,
+      );
+    }
+
+    const deleteControl = existing.row.locator(".item-del-video:visible").first();
+    const fallbackDeleteControl = existing.row.getByText("删除", { exact: true }).last();
+    const target = await deleteControl.count() > 0 ? deleteControl : fallbackDeleteControl;
+    if (await target.count() === 0) {
+      throw new Error(
+        `IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_CLEAR_FAILED: reason=delete-control-not-found ` +
+          `file=${existing.fileName || "unknown"} rows=${snapshot.rows.length}`,
+      );
+    }
+
+    log(
+      options,
+      `[iqiyi-drama] removing video already present before upload: ` +
+        `${existing.fileName || `row-${cleared + 1}`}`,
+    );
+    await target.click({ timeout: 10_000 });
+    const confirmation = page.locator([
+      ".cancel-confirm:visible",
+      ".mp-message-box:visible",
+      ".el-message-box:visible",
+    ].join(",")).filter({ hasText: "确定删除该视频" }).last();
+    const confirmationVisible = await confirmation
+      .waitFor({ state: "visible", timeout: 2_000 })
+      .then(() => true, () => false);
+    if (confirmationVisible) {
+      await confirmation.getByRole("button", { name: "确定", exact: true })
+        .last()
+        .click({ timeout: 10_000 });
+    }
+    if (!await waitForIqiyiVideoRowRemoval(page, root, snapshot.rows.length)) {
+      throw new Error(
+        `IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_CLEAR_FAILED: reason=delete-timeout ` +
+          `file=${existing.fileName || "unknown"} rows=${snapshot.rows.length}`,
+      );
+    }
+    cleared += 1;
+  }
+  throw new Error("IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_CLEAR_FAILED: reason=too-many-rows");
 }
 
 function expectedFileMatched(row: IqiyiVideoUploadRow, file: string) {
@@ -310,10 +396,8 @@ export async function uploadIqiyiEpisodeVideos(
   const visibleRowCount = await root.locator(".catalog-item-form:visible").count();
   const existingSnapshot = await readIqiyiVideoUploadSnapshot(page, root);
   if (existingSnapshot.rows.length > 0) {
-    throw new Error(
-      `IQIYI_DRAMA_VIDEO_UPLOAD_PAGE_NOT_EMPTY: rows=${existingSnapshot.rows.length} `
-        + `visibleRows=${visibleRowCount}`,
-    );
+    const cleared = await clearExistingIqiyiVideoRows(page, root, options);
+    log(options, `[iqiyi-drama] cleared ${cleared} pre-existing video upload row(s)`);
   }
   if (visibleRowCount > 0) {
     log(options, `[iqiyi-drama] ignored ${visibleRowCount} empty video upload placeholder row(s)`);

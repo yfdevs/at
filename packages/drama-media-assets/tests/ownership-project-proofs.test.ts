@@ -20,19 +20,22 @@ import {
 const liveOwnershipProofDirectory =
   "D:\\BaiduNetdiskDownload\\装够了，本宫天下无敌\\权属文件";
 
-function cloudAiClassifier(hasJianying: boolean): DramaAiClient {
+function cloudAiClassifier(kind: "jianying" | "juchuang" | "unknown"): DramaAiClient {
   return {
     analyzeImages: async (options) => {
-      assert.equal(options.images.length, 1);
-      const image = options.images[0];
-      assert.equal(image?.type, "data-url");
-      if (image?.type === "data-url") {
-        assert.match(image.dataUrl, /^data:image\/jpeg;base64,/u);
+      assert.equal(options.images.length, 3);
+      assert.match(options.prompt, /Seedance 2\.0 Fast VIP/u);
+      assert.match(options.prompt, /AI 分镜\/视频生成工程工作区/u);
+      for (const image of options.images) {
+        assert.equal(image.type, "data-url");
+        if (image.type === "data-url") {
+          assert.match(image.dataUrl, /^data:image\/jpeg;base64,/u);
+        }
       }
       return {
         finishReason: "stop",
         model: "test-vision-model",
-        text: JSON.stringify({ hasJianying }),
+        text: JSON.stringify({ kind, evidence: "test" }),
       };
     },
     generateImage: async () => { throw new Error("not used"); },
@@ -59,6 +62,9 @@ test("prefers explicit proof source names", () => {
   assert.equal(classifyOwnershipProjectProofName("剧创1.png"), "juchuang");
   assert.equal(classifyOwnershipProjectProofName("即梦 2.png"), "juchuang");
   assert.equal(classifyOwnershipProjectProofName("jimeng-3.webp"), "juchuang");
+  assert.equal(classifyOwnershipProjectProofName("Seedance 2.0 工程截图.png"), "juchuang");
+  assert.equal(classifyOwnershipProjectProofName("seedream-workspace.webp"), "juchuang");
+  assert.equal(classifyOwnershipProjectProofName("剪映和剧创/工程1.png"), undefined);
   assert.equal(classifyOwnershipProjectProofName("测试剧 - 权属工程文件1.png"), undefined);
 });
 
@@ -129,15 +135,15 @@ test("uses cloud AI for valid screenshots and rejects non-screenshots", async ()
     ]);
 
     assert.equal(
-      await classifyOwnershipProjectProof(darkScreenshot, undefined, cloudAiClassifier(true)),
+      await classifyOwnershipProjectProof(darkScreenshot, undefined, cloudAiClassifier("jianying")),
       "jianying",
     );
     assert.equal(
-      await classifyOwnershipProjectProof(lightScreenshot, undefined, cloudAiClassifier(false)),
+      await classifyOwnershipProjectProof(lightScreenshot, undefined, cloudAiClassifier("juchuang")),
       "juchuang",
     );
     assert.equal(
-      await classifyOwnershipProjectProof(portraitLikeImage, undefined, cloudAiClassifier(false)),
+      await classifyOwnershipProjectProof(portraitLikeImage, undefined, cloudAiClassifier("unknown")),
       "unknown",
     );
   } finally {
@@ -169,7 +175,7 @@ test(
           await classifyOwnershipProjectProof(
             neutralFile,
             path.basename(neutralFile),
-            cloudAiClassifier(fixture.expected === "jianying"),
+            cloudAiClassifier(fixture.expected),
           ),
           fixture.expected,
           fixture.source,
@@ -199,6 +205,42 @@ test("selects the first two numbered screenshots from each proof source", () => 
     "D:\\素材\\测试剧 - 权属工程文件2.png",
     "D:\\素材\\测试剧 - 权属工程文件4.png",
   ]);
+});
+
+test("selects four original screenshots from each proof source when requested", () => {
+  const selection = selectOwnershipProjectProofFiles([
+    ...Array.from({ length: 5 }, (_, index) => proof(index + 1, "jianying")),
+    ...Array.from({ length: 5 }, (_, index) => proof(index + 6, "juchuang")),
+  ], 4);
+
+  assert.deepEqual(selection.jianying.map((item) => item.index), [1, 2, 3, 4]);
+  assert.deepEqual(selection.juchuang.map((item) => item.index), [6, 7, 8, 9]);
+  assert.equal(selection.files.length, 8);
+  assert.ok(selection.files.every((file) => /权属工程文件\d+\.png$/u.test(file)));
+});
+
+test("requires four classified screenshots from both sources", () => {
+  assert.throws(
+    () => selectOwnershipProjectProofFiles([
+      ...Array.from({ length: 4 }, (_, index) => proof(index + 1, "jianying")),
+      ...Array.from({ length: 3 }, (_, index) => proof(index + 5, "juchuang")),
+    ], 4),
+    /剪映=4\/4，剧创=3\/4/u,
+  );
+});
+
+test("supports different required counts for 剪映 and 剧创", () => {
+  const classified = [
+    ...Array.from({ length: 3 }, (_, index) => proof(index + 1, "jianying")),
+    ...Array.from({ length: 4 }, (_, index) => proof(index + 4, "juchuang")),
+  ];
+  const selection = selectOwnershipProjectProofFiles(classified, { jianying: 2, juchuang: 3 });
+  assert.deepEqual(selection.jianying.map((item) => item.index), [1, 2]);
+  assert.deepEqual(selection.juchuang.map((item) => item.index), [4, 5, 6]);
+  assert.throws(
+    () => selectOwnershipProjectProofFiles(classified, { jianying: 4, juchuang: 3 }),
+    /剪映=3\/4，剧创=4\/3/u,
+  );
 });
 
 test("stops classifying screenshots after both required proof sources are satisfied", async () => {
@@ -240,6 +282,97 @@ test("stops classifying screenshots after both required proof sources are satisf
     assert.deepEqual(progress, [1, 2, 3, 4]);
     assert.deepEqual(selection.jianying.map((item) => item.index), [1, 3]);
     assert.deepEqual(selection.juchuang.map((item) => item.index), [2, 4]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("finds AI creation workspace proofs beside a generic engineering directory", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ownership-separate-ai-records-"));
+  const resourceName = "计量台上见人心";
+  const resourceDir = path.join(root, resourceName);
+  const engineeringDir = path.join(resourceDir, "工程文件");
+  const aiRecordsDir = path.join(resourceDir, "AI生成记录");
+  await Promise.all([
+    mkdir(engineeringDir, { recursive: true }),
+    mkdir(aiRecordsDir, { recursive: true }),
+  ]);
+  const fixtures = [
+    ...Array.from({ length: 10 }, (_, index) => ({ dir: engineeringDir, name: `${index + 1}.png` })),
+    ...["alpha.png", "beta.png", "gamma.png", "delta.png"].map((name) => ({ dir: aiRecordsDir, name })),
+  ];
+  let calls = 0;
+  const aiClient: DramaAiClient = {
+    analyzeImages: async (options) => {
+      assert.match(options.prompt, /LiblibTV/u);
+      return {
+        finishReason: "stop",
+        model: "test-vision-model",
+        text: JSON.stringify({ kind: calls++ < 2 ? "jianying" : "juchuang", evidence: "test" }),
+      };
+    },
+    generateImage: async () => { throw new Error("not used"); },
+    generateText: async () => { throw new Error("not used"); },
+  };
+
+  try {
+    await Promise.all(fixtures.map(({ dir, name }, index) =>
+      sharp({
+        create: {
+          width: 1_920,
+          height: 1_080,
+          channels: 3,
+          background: { r: 25 + index * 15, g: 40, b: 60 },
+        },
+      }).png().toFile(path.join(dir, name))
+    ));
+    const selection = await findOwnershipProjectProofFiles({ root, resourceName, aiClient });
+    assert.equal(calls, 4);
+    assert.equal(selection.jianying.length, 2);
+    assert.equal(selection.juchuang.length, 2);
+    assert.ok(selection.jianying.every((item) => path.dirname(item.file) === engineeringDir));
+    assert.ok(
+      selection.juchuang.every((item) => path.dirname(item.file) === aiRecordsDir),
+      selection.juchuang.map((item) => item.file).join(", "),
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("reclassifies misleading mixed-directory names from image content when one kind is missing", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ownership-project-proof-fallback-"));
+  const resourceName = "混合目录测试剧";
+  const misleadingDir = path.join(root, resourceName, "权属文件", "剪映");
+  await mkdir(misleadingDir, { recursive: true });
+  const kinds = ["jianying", "jianying", "juchuang", "juchuang"] as const;
+  let calls = 0;
+  const aiClient: DramaAiClient = {
+    analyzeImages: async () => ({
+      finishReason: "stop",
+      model: "test-vision-model",
+      text: JSON.stringify({ kind: kinds[calls++] ?? "unknown", evidence: "test" }),
+    }),
+    generateImage: async () => { throw new Error("not used"); },
+    generateText: async () => { throw new Error("not used"); },
+  };
+
+  try {
+    await Promise.all(kinds.map((_kind, index) =>
+      sharp({
+        create: {
+          width: 1_920,
+          height: 1_080,
+          channels: 3,
+          background: { r: 30 + index * 20, g: 30, b: 30 },
+        },
+      }).png().toFile(path.join(misleadingDir, `${resourceName} - 权属工程文件${index + 1}.png`))
+    ));
+
+    const selection = await findOwnershipProjectProofFiles({ root, resourceName, aiClient });
+    assert.equal(calls, 4);
+    assert.equal(selection.jianying.length, 2);
+    assert.equal(selection.juchuang.length, 2);
   } finally {
     await rm(root, { recursive: true, force: true });
   }

@@ -5,6 +5,67 @@ import { BAIDU_DRAMA_CREATE_URL, BAIDU_DRAMA_LOGIN_URL } from "../shared/constan
 import { log } from "../shared/logger.js";
 import type { BaiduDramaLoginState, BaiduDramaRuntimeOptions } from "../shared/types.js";
 
+type BaiduDramaTitleWindow = Window & {
+  __baiduDramaFixedTitle?: string;
+  __baiduDramaFixedTitleInstalled?: boolean;
+};
+
+export function baiduDramaBrowserPageTitle(options: BaiduDramaRuntimeOptions) {
+  const accountName = options.baiduAccountName?.trim();
+  const accountId = options.baiduAccountId?.trim();
+  const profileName = options.accountProfileName?.trim();
+  const accountLabel = accountName && accountId && accountName !== accountId
+    ? `${accountName}（${accountId}）`
+    : accountName || accountId || profileName || "默认账号";
+  return `[百度短剧] ${accountLabel}`;
+}
+
+function installFixedBaiduDramaPageTitle(fixedTitle: string) {
+  const pageWindow = window as BaiduDramaTitleWindow;
+  pageWindow.__baiduDramaFixedTitle = fixedTitle;
+
+  const applyTitle = () => {
+    const title = pageWindow.__baiduDramaFixedTitle ?? fixedTitle;
+    if (document.title !== title) document.title = title;
+  };
+  const watchTitle = () => {
+    applyTitle();
+    const titleElement = document.querySelector("title")
+      ?? document.head?.appendChild(document.createElement("title"));
+    if (!titleElement || titleElement.dataset.fixedBaiduDramaTitle === "true") return;
+    titleElement.dataset.fixedBaiduDramaTitle = "true";
+    new MutationObserver(applyTitle).observe(titleElement, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+  };
+
+  if (pageWindow.__baiduDramaFixedTitleInstalled) {
+    applyTitle();
+    return;
+  }
+  pageWindow.__baiduDramaFixedTitleInstalled = true;
+  watchTitle();
+  window.addEventListener("DOMContentLoaded", watchTitle);
+  window.addEventListener("load", watchTitle);
+  window.setInterval(applyTitle, 1_000);
+}
+
+async function installBaiduDramaBrowserPageTitles(
+  context: BrowserContext,
+  options: BaiduDramaRuntimeOptions,
+) {
+  const title = baiduDramaBrowserPageTitle(options);
+  await context.addInitScript(installFixedBaiduDramaPageTitle, title);
+
+  const applyToPage = (page: Page) => {
+    void page.evaluate(installFixedBaiduDramaPageTitle, title).catch(() => undefined);
+  };
+  context.on("page", applyToPage);
+  for (const page of context.pages()) applyToPage(page);
+}
+
 export function baiduDramaLoginStateFromUrl(url: string | undefined): BaiduDramaLoginState {
   if (!url || url === "about:blank") return "unknown";
   try {
@@ -21,7 +82,7 @@ export async function launchBaiduDramaBrowserContext(
   userDataDir: string,
   options: BaiduDramaRuntimeOptions,
 ) {
-  return chromium.launchPersistentContext(userDataDir, {
+  const context = await chromium.launchPersistentContext(userDataDir, {
     args: ["--disable-blink-features=AutomationControlled"],
     extraHTTPHeaders: { "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" },
     headless: options.config?.browser?.headless ?? false,
@@ -31,6 +92,8 @@ export async function launchBaiduDramaBrowserContext(
     timezoneId: "Asia/Shanghai",
     viewport: null,
   });
+  await installBaiduDramaBrowserPageTitles(context, options);
+  return context;
 }
 
 export async function saveBaiduDramaCredentialState(

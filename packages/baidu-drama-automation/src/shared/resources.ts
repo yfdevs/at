@@ -3,6 +3,7 @@ import { createHash } from "node:crypto";
 import path from "node:path";
 import { mkdir, readFile, rename, rm, stat, writeFile } from "node:fs/promises";
 import {
+  evaluateCommercialPosterTextValidation,
   listLocalPosterImages,
   prepareCroppedImageVariant,
   readImageDimensions,
@@ -24,18 +25,20 @@ export const BAIDU_DRAMA_PORTRAIT_COVER_SIZE = {
 
 type BaiduCoverKind = "landscape" | "portrait";
 
-const baiduAiCoverPromptVersion = "baidu-counterpart-cover-v2-text-safety";
-const baiduAiCoverGenerationAttempts = 3;
+const baiduAiCoverPromptVersion = "baidu-counterpart-cover-v3-commercial-copy";
 const baiduAiTransientRetryAttempts = 5;
 const baiduAiTransientRetryBaseDelayMs = 1_000;
 const activeAiCoverGenerations = new Map<string, Promise<string>>();
 
 const baiduAiCoverValidationSchema = z.object({
-  titleTextExact: z.boolean(),
-  titleOccursOnce: z.boolean(),
-  unrelatedTextFree: z.boolean(),
-  noWatermarkOrTechnicalOverlay: z.boolean(),
-  issues: z.array(z.string().trim().max(300)).max(20).default([]),
+  titlePresent: z.boolean(),
+  titleReadable: z.boolean(),
+  titleSeverelyIncorrect: z.boolean(),
+  hasProhibitedOverlay: z.boolean(),
+  hasClearlyUnrelatedOrGibberishText: z.boolean(),
+  detectedTexts: z.array(z.string().trim().max(100)).max(30).default([]),
+  blockingIssues: z.array(z.string().trim().max(300)).max(20).default([]),
+  warnings: z.array(z.string().trim().max(300)).max(20).default([]),
 });
 
 const baiduCoverDetails = {
@@ -201,9 +204,10 @@ function baiduCounterpartCoverPrompt(options: {
     "保持参考图中的核心人物、人物关系、服饰、时代背景、色彩气质和作品辨识度。",
     `重新构图并自然扩展画面，使最终画面适合${target.promptLabel}展示；不要简单拉伸、镜像、重复拼接、裁掉主体或添加边框。`,
     "人物面部、关键道具和剧名位于安全区域，画面完整清晰。",
-    "画面中只能出现一处准确作品名；除作品名外，严禁出现任何文字、字母、数字或类似文字的符号。",
-    "尤其不得出现演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间、画幅比例、分辨率、相机参数、平台标志、水印、角标、二维码、信息栏或伪界面。",
-    "参考图若含作品名以外的文字，必须删除，不得复制、改写或补全；不要预留演员名或字幕排版区域。",
+    "作品名必须完整准确、清晰可读；允许分行、竖排、标点调整，以及符合海报设计的局部标题重复。",
+    "允许与作品相关的正常海报辅助文案，例如地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字；这些文案不能喧宾夺主。",
+    "不得出现其他作品名称、随机乱码、联系方式、账号、广告引流、二维码、平台或品牌水印，以及画幅比例、分辨率、尺寸、相机参数、操作按钮、信息栏等技术或伪界面文字。",
+    "参考图中的合理海报文案可以保留或重新设计；无法确认含义的装饰纹理不要强行生成为文字。",
     `作品名：${options.title}。`,
   ].join("\n");
 }
@@ -216,16 +220,20 @@ async function validateBaiduGeneratedCover(options: {
   const completion = await analyzeImagesAsJson(options.aiClient, {
     images: [{ type: "file", path: options.generatedFile, detail: "high" }],
     prompt: [
-      "你是短剧封面文字质检员。检查图片中的全部可见文字、字母、数字和类似文字的符号。",
-      `唯一允许的文字是准确作品名：“${options.title}”，必须完整准确且只出现一次。`,
-      "演员姓名、演员表、职员表、署名、字幕、副标题、宣传语、集数、日期、时间，以及任何画幅比例、尺寸、分辨率或相机参数都不允许出现。",
-      "平台标志、水印、角标、二维码、信息栏、字幕条、取景框和其他伪界面元素也不允许出现。",
+      "你是影视封面质量验收员。检查主标题是否可辨认，以及是否存在明显不属于商业影视海报的内容。不要把规则执行得过严。",
+      `目标作品名是：“${options.title}”。允许分行、竖排、艺术字、局部重复和省略或替换标点；只要全部作品名文字完整可辨、字序正确，就应判定标题存在且可读。`,
+      "允许地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字。像“扬州”“京城”“民国”这样的合理背景词不能仅因不是作品名就判失败。",
+      "只有主标题缺失或明显错字漏字、其他作品名称、随机乱码、联系方式、账号、广告引流、二维码、平台水印，以及分辨率、尺寸、相机参数、操作按钮或伪界面文字属于阻断问题。",
+      "不确定的小字放入 warnings，不要放入 blockingIssues。请列出实际识别到的文字。",
       "只返回 JSON 对象，不要 Markdown 或解释。格式：" + JSON.stringify({
-        titleTextExact: true,
-        titleOccursOnce: true,
-        unrelatedTextFree: true,
-        noWatermarkOrTechnicalOverlay: true,
-        issues: [],
+        titlePresent: true,
+        titleReadable: true,
+        titleSeverelyIncorrect: false,
+        hasProhibitedOverlay: false,
+        hasClearlyUnrelatedOrGibberishText: false,
+        detectedTexts: [options.title],
+        blockingIssues: [],
+        warnings: [],
       }),
     ].join("\n"),
     systemPrompt: "你只输出符合用户指定结构的 JSON 对象。",
@@ -233,14 +241,7 @@ async function validateBaiduGeneratedCover(options: {
     temperature: 0,
   });
   const validation = baiduAiCoverValidationSchema.parse(completion.data);
-  const failures = [
-    !validation.titleTextExact && "作品名不准确",
-    !validation.titleOccursOnce && "作品名不是只出现一次",
-    !validation.unrelatedTextFree && "检测到作品名以外的文字",
-    !validation.noWatermarkOrTechnicalOverlay && "检测到水印或技术标注",
-    ...validation.issues,
-  ].filter((issue): issue is string => Boolean(issue));
-  return { passed: failures.length === 0, failures };
+  return evaluateCommercialPosterTextValidation(options.title, validation);
 }
 
 async function generateMissingBaiduCover(options: {
@@ -250,6 +251,7 @@ async function generateMissingBaiduCover(options: {
   title: string;
   cacheDir: string;
   aiImageModel: string;
+  aiCoverGenerationRetryAttempts?: number;
   getAiClient: () => DramaAiClient;
   onLog?: (message: string) => void;
 }) {
@@ -280,9 +282,13 @@ async function generateMissingBaiduCover(options: {
     );
     const aiClient = options.getAiClient();
     const basePrompt = baiduCounterpartCoverPrompt(options);
+    const generationAttempts = Math.max(
+      1,
+      Math.min(11, Math.floor(options.aiCoverGenerationRetryAttempts ?? 3) + 1),
+    );
     let lastError: unknown;
     let previousValidationFailure: string | undefined;
-    for (let attempt = 1; attempt <= baiduAiCoverGenerationAttempts; attempt += 1) {
+    for (let attempt = 1; attempt <= generationAttempts; attempt += 1) {
       const nonce = `${process.pid}-${Date.now()}-${attempt}`;
       const temporarySource = path.join(
         cacheDirectory,
@@ -295,7 +301,7 @@ async function generateMissingBaiduCover(options: {
       try {
         const retryInstruction = previousValidationFailure
           ? `\n\n上一张图片未通过文字验收，原因：${previousValidationFailure.slice(0, 600)}。` +
-            "请重新生成并逐项修正，严格确保除唯一且准确的作品名外没有任何文字、字母、数字、署名、字幕或技术标注。"
+            "请重新生成并逐项修正，重点保证作品名完整清晰，并删除其他作品名、乱码、广告引流、二维码、水印或技术界面文字；正常海报辅助文案可以保留。"
           : "";
         const result = await runBaiduAiWithTransientRetries({
           action: "封面生成",
@@ -336,6 +342,11 @@ async function generateMissingBaiduCover(options: {
             `BAIDU_DRAMA_AI_COVER_TEXT_VALIDATION_FAILED: ${previousValidationFailure}`,
           );
         }
+        if (validation.warnings.length > 0) {
+          options.onLog?.(
+            `[baidu-cover-ai] 封面文字验收警告（不阻断）：${validation.warnings.join("；")}`,
+          );
+        }
         await rm(output, { force: true });
         await rename(temporaryOutput, output);
         options.onLog?.(
@@ -345,7 +356,7 @@ async function generateMissingBaiduCover(options: {
       } catch (error) {
         lastError = error;
         options.onLog?.(
-          `[baidu-cover-ai] AI 封面生成或文字验收失败：${attempt}/${baiduAiCoverGenerationAttempts} ` +
+          `[baidu-cover-ai] AI 封面生成或文字验收失败：${attempt}/${generationAttempts} ` +
             errorMessage(error),
         );
         if (isBaiduAiTransientError(error)) break;
@@ -375,6 +386,7 @@ export async function prepareBaiduDramaCoverVariants(options: {
   outputDir: string;
   aiCacheDir?: string;
   aiImageModel?: string;
+  aiCoverGenerationRetryAttempts?: number;
   createAiClient?: () => DramaAiClient;
   onLog?: (message: string) => void;
 }) {
@@ -401,6 +413,7 @@ export async function prepareBaiduDramaCoverVariants(options: {
       title: options.title,
       cacheDir: aiCacheDir,
       aiImageModel: aiImageModel!,
+      aiCoverGenerationRetryAttempts: options.aiCoverGenerationRetryAttempts,
       getAiClient,
       onLog: options.onLog,
     });
@@ -412,6 +425,7 @@ export async function prepareBaiduDramaCoverVariants(options: {
       title: options.title,
       cacheDir: aiCacheDir,
       aiImageModel: aiImageModel!,
+      aiCoverGenerationRetryAttempts: options.aiCoverGenerationRetryAttempts,
       getAiClient,
       onLog: options.onLog,
     });
@@ -424,6 +438,7 @@ export async function prepareBaiduDramaCoverVariants(options: {
         title: options.title,
         cacheDir: aiCacheDir,
         aiImageModel: aiImageModel!,
+        aiCoverGenerationRetryAttempts: options.aiCoverGenerationRetryAttempts,
         getAiClient,
         onLog: options.onLog,
       }),
@@ -434,6 +449,7 @@ export async function prepareBaiduDramaCoverVariants(options: {
         title: options.title,
         cacheDir: aiCacheDir,
         aiImageModel: aiImageModel!,
+        aiCoverGenerationRetryAttempts: options.aiCoverGenerationRetryAttempts,
         getAiClient,
         onLog: options.onLog,
       }),
@@ -551,6 +567,7 @@ export async function prepareBaiduDramaResources(
       "ai-cover-cache",
     ),
     aiImageModel: options.aiImageModel,
+    aiCoverGenerationRetryAttempts: options.aiCoverGenerationRetryAttempts,
     createAiClient: options.createAiClient,
     onLog: onResizeLog,
   });

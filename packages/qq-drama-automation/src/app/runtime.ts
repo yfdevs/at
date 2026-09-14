@@ -1,5 +1,8 @@
 import type { BrowserContext, Page } from "playwright";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import { QQ_DRAMA_ADD_URL, QQ_DRAMA_LOGIN_URL, QQ_DRAMA_PLATFORM } from "../shared/constants.js";
 import {
@@ -262,6 +265,14 @@ async function runTask(
       fallbackMessage: "QQ 任务提交失败，未获取到具体错误原因",
     });
     const failStage = classifyFailStage(error, "FILL_FORM");
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "qq-drama",
+      error,
+      page,
+      logFilePath: options.logFilePath,
+      stage: failStage,
+      task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
+    });
     setLastTask({
       accountTaskId: task.accountTaskId,
       originalTitle: task.originalTitle,
@@ -294,6 +305,7 @@ async function runTask(
           `accountTaskId=${task.accountTaskId} error=${message}`,
       );
     }
+    errorLog(options, `[qq-drama] failure diagnostics: ${diagnostics?.directory ?? "unavailable"}`);
     throw error;
   }
 }

@@ -1,7 +1,11 @@
 import { mkdir } from "node:fs/promises";
 import { FeishuNotifier } from "@drama/feishu-notifier";
 import path from "node:path";
-import { formatAutomationErrorReport, formatDateKey } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+  formatDateKey,
+} from "@drama/automation-logging";
 import { chromium, type BrowserContext, type Page } from "playwright";
 import { config, configureTiktokDramaCenterRuntimeSettings, logger } from "../config.js";
 import { formatReadableLogEntry } from "@drama/automation-logging";
@@ -199,6 +203,19 @@ async function runDraftTask(
     await notifier.notifyTaskSucceeded(notificationPayload);
     log(options, `[tiktok-drama] task finished: ${scheme.id}`);
   } catch (error) {
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "tiktok-drama",
+      error,
+      page,
+      logFilePath: config.logFile,
+      task: {
+        accountTaskId: task.accountTaskId,
+        dramaId: task.dramaId,
+        taskId: scheme.id,
+        title: scheme.title,
+      },
+    });
+    logger.error({ diagnosticDir: diagnostics?.directory }, "failure diagnostics saved");
     await notifier.notifyTaskFailed({
       ...notificationPayload,
       errorMessage: formatAutomationErrorReport(error, {

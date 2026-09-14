@@ -15,7 +15,8 @@ export interface WechatVideoRuntimeSettings {
   basicInfoStepTimeoutSeconds: string;
   remoteFileDownloadTimeoutSeconds: string;
   baiduNetdiskDownloadRetryAttempts: string;
-  mergeOwnershipMaterials: string;
+  jianyingOwnershipProofCount: string;
+  juchuangOwnershipProofCount: string;
   materialPreparationConcurrency: string;
   taskPrefetchPerAccount: string;
   videoTranscodeConcurrency: string;
@@ -44,7 +45,8 @@ export const defaultWechatVideoRuntimeSettings: WechatVideoRuntimeSettings = {
   basicInfoStepTimeoutSeconds: "600",
   remoteFileDownloadTimeoutSeconds: "120",
   baiduNetdiskDownloadRetryAttempts: "3",
-  mergeOwnershipMaterials: "true",
+  jianyingOwnershipProofCount: "4",
+  juchuangOwnershipProofCount: "4",
   materialPreparationConcurrency: "3",
   taskPrefetchPerAccount: "2",
   videoTranscodeConcurrency: "2",

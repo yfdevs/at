@@ -1,6 +1,7 @@
-import { mkdir, writeFile } from "node:fs/promises";
-import { dirname, join } from "node:path";
+import { mkdir } from "node:fs/promises";
+import { dirname } from "node:path";
 import {
+  captureAutomationFailureDiagnostics,
   cleanupAutomationLogFiles,
   createAutomationLogger,
   formatReadableLogEntry,
@@ -30,10 +31,6 @@ export function log(options: MeituanCreationRuntimeOptions, message: string) {
   runtimeLogger(options).callback()(message);
 }
 
-function diagnosticPathSegment(value: string | number) {
-  return String(value).replace(/[^a-zA-Z0-9_-]/g, "_");
-}
-
 export async function saveTaskFailureDiagnostics(options: {
   page: Page | null;
   runtimeOptions: MeituanCreationRuntimeOptions;
@@ -41,15 +38,20 @@ export async function saveTaskFailureDiagnostics(options: {
   error: unknown;
 }) {
   const { page, runtimeOptions, taskId, error } = options;
-  if (!page || page.isClosed() || !runtimeOptions.logFilePath) return null;
-
-  const timestamp = new Date().toISOString().replace(/[:.]/g, "-");
-  const diagnosticDir = join(
-    dirname(runtimeOptions.logFilePath),
-    "diagnostics",
-    `${diagnosticPathSegment(taskId)}-${timestamp}`,
-  );
-  await mkdir(diagnosticDir, { recursive: true });
+  if (!page || page.isClosed()) {
+    const diagnostic = await captureAutomationFailureDiagnostics({
+      platform: "meituan-drama",
+      error,
+      page,
+      logFilePath: runtimeOptions.logFilePath,
+      task: {
+        accountTaskId: taskId,
+        accountId: runtimeOptions.meituanAccountId,
+        accountName: runtimeOptions.meituanAccountName,
+      },
+    });
+    return diagnostic?.directory ?? null;
+  }
 
   const visibleText = async (selector: string) => (
     await page.locator(selector).allInnerTexts().catch(() => [])
@@ -57,11 +59,6 @@ export async function saveTaskFailureDiagnostics(options: {
     .map((text) => text.replace(/\s+/g, " ").trim().slice(0, 500))
     .filter(Boolean);
   const details = {
-    time: new Date().toISOString(),
-    taskId,
-    url: page.url(),
-    title: await page.title().catch(() => ""),
-    error: error instanceof Error ? error.message : String(error),
     visibleDrawers: await visibleText(
       ".mtd-drawer:visible, .mtd-drawer-wrapper:visible, .mtd-drawer-container:visible",
     ),
@@ -83,12 +80,19 @@ export async function saveTaskFailureDiagnostics(options: {
       .catch(() => []),
   };
 
-  await Promise.all([
-    writeFile(join(diagnosticDir, "details.json"), JSON.stringify(details, null, 2), "utf8"),
-    page.content().then((html) => writeFile(join(diagnosticDir, "page.html"), html, "utf8")),
-    page.screenshot({ path: join(diagnosticDir, "page.png"), fullPage: true }),
-  ].map((operation) => operation.catch(() => undefined)));
-  return diagnosticDir;
+  const diagnostic = await captureAutomationFailureDiagnostics({
+    platform: "meituan-drama",
+    error,
+    page,
+    logFilePath: runtimeOptions.logFilePath,
+    task: {
+      accountTaskId: taskId,
+      accountId: runtimeOptions.meituanAccountId,
+      accountName: runtimeOptions.meituanAccountName,
+    },
+    details,
+  });
+  return diagnostic?.directory ?? null;
 }
 
 function runtimeLogger(options: MeituanCreationRuntimeOptions) {
@@ -153,21 +157,11 @@ async function isPersistentlyBlankMeituanPage(page: Page) {
   return true;
 }
 
-async function openLoginPageForExpiredSession(
+async function openLoginPageForBlankPublishPage(
   page: Page,
   options: MeituanCreationRuntimeOptions,
 ) {
-  log(options, "[meituan-drama] 检测到发布页为空，登录已失效，正在打开登录页");
-  const cleanupResults = await Promise.allSettled([
-    page.evaluate(() => {
-      window.localStorage.clear();
-      window.sessionStorage.clear();
-    }),
-    page.context().clearCookies(),
-  ]);
-  if (cleanupResults.some((result) => result.status === "rejected")) {
-    log(options, "[meituan-drama] 失效登录态未完全清理，继续打开登录页");
-  }
+  log(options, "[meituan-drama] 发布页持续为空，打开登录页检查状态；保留现有登录数据");
   await page.goto(MEITUAN_CREATION_LOGIN_URL, {
     waitUntil: "domcontentloaded",
     timeout: 60_000,
@@ -179,7 +173,7 @@ async function openLoginPageForExpiredSession(
       { cause: error },
     );
   });
-  log(options, "[meituan-drama] 登录页已打开，请重新登录");
+  log(options, "[meituan-drama] 登录页已打开；如显示登录表单，请完成登录");
 }
 
 export async function waitForLogin(
@@ -208,8 +202,17 @@ export async function waitForLogin(
         "MEITUAN_LOGIN_REQUIRED: 重新登录后发布页仍为空白，请确认登录完成后重试",
       );
     }
-    await openLoginPageForExpiredSession(page, options);
-    recoveredBlankPage = true;
+    log(options, "[meituan-drama] 发布页持续为空，先重新加载页面检查登录状态");
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+    if (await isPublishFormReady(page)) return { recoveredBlankPage };
+    if (
+      page.url().includes("/new/publishVideo")
+      && await isPersistentlyBlankMeituanPage(page)
+    ) {
+      await openLoginPageForBlankPublishPage(page, options);
+      recoveredBlankPage = true;
+    }
   }
 
   if (!page.url().includes("/new/login")) {

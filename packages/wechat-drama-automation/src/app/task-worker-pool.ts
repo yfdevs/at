@@ -1,5 +1,6 @@
 import {
   findLocalEpisodeVideos,
+  findOwnershipProjectProofFiles,
   isNonRetryableBaiduNetdiskResourceError,
   prepareEpisodeVideos,
   VideoTranscodeQueue,
@@ -7,9 +8,7 @@ import {
 } from "@drama/drama-media-assets";
 import PQueue from "p-queue";
 import {
-  mingxingshuoContractSubject,
   normalizeClaimedTaskConfig,
-  normalizeContractSubject,
   resolveRunDataPath,
   type ServiceConfig,
 } from "../shared/config.js";
@@ -29,10 +28,9 @@ import { getWechatVideoRuntimeSettings } from "../shared/runtime-settings.js";
 import { integerSetting } from "../shared/settings-value.js";
 import type { EnsureBaiduNetdiskResource } from "./runtime.js";
 import {
-  cleanupWechatProductionProofMaterials,
+  getWechatOwnershipRequirements,
   loadWechatOwnershipMaterials,
   prepareWechatProductionProofMaterials,
-  wechatOwnershipRequirements,
 } from "../shared/production-proof-materials.js";
 import { prepareWechatPosterMaterials } from "../shared/poster-materials.js";
 import {
@@ -98,6 +96,7 @@ export class TaskWorkerPool {
     private readonly taskService: TaskService,
     private readonly notifier = new FeishuNotifier(),
     private readonly ensureBaiduNetdiskResource?: EnsureBaiduNetdiskResource,
+    private readonly ownershipAiClient?: NonNullable<Parameters<typeof findOwnershipProjectProofFiles>[0]["aiClient"]>,
   ) {
     const settings = getWechatVideoRuntimeSettings();
     this.materialPreparationQueue = new PQueue({
@@ -323,14 +322,9 @@ export class TaskWorkerPool {
   private enqueueClaimedTask(worker: AccountWorkerControl, claimedAccountTask: ClaimedTask) {
     const videoAccount = worker.videoAccount;
     const videoAccountId = videoAccount.id;
-    let playletConfigForCleanup: ReturnType<typeof normalizeClaimedTaskConfig> | undefined;
     const preparation = this.materialPreparationQueue.add(
       async () => {
-        const playletConfig = normalizeClaimedTaskConfig(
-          claimedAccountTask,
-          videoAccount.contractSubject,
-        );
-        playletConfigForCleanup = playletConfig;
+        const playletConfig = normalizeClaimedTaskConfig(claimedAccountTask);
         await this.ensureBaiduNetdiskResourceReady(
           videoAccount,
           claimedAccountTask,
@@ -344,10 +338,12 @@ export class TaskWorkerPool {
           playletConfig,
           ownershipMaterials,
         );
+        if (!this.ownershipAiClient) {
+          throw new Error("[ownership-project-proof-ai-failed] 微信视频号权属截图识别需要配置云 AI。");
+        }
         const productionProofFiles = await prepareWechatProductionProofMaterials(
           playletConfig,
-          videoAccount.contractSubject,
-          ownershipMaterials,
+          this.ownershipAiClient,
         );
         logger.info("all task materials ready", {
           accountTaskId: claimedAccountTask.accountTaskId,
@@ -402,9 +398,6 @@ export class TaskWorkerPool {
     ) as Promise<void>;
 
     return lifecycle.catch(async (error) => {
-      if (playletConfigForCleanup) {
-        await cleanupWechatProductionProofMaterials(playletConfigForCleanup).catch(() => undefined);
-      }
       await this.handleClaimedTaskFailure(worker, claimedAccountTask, error);
     });
   }
@@ -529,10 +522,6 @@ export class TaskWorkerPool {
     const maxAttempts = retryAttempts + 1;
     const videoPolicy = episodeVideoSizePolicy(settings);
     const videoTranscodeCacheRootDir = resolveRunDataPath("media-cache", "video-transcodes");
-    const isMingxingshuo = Boolean(
-      videoAccount.contractSubject
-      && normalizeContractSubject(videoAccount.contractSubject) === mingxingshuoContractSubject,
-    );
     let lastError: unknown;
 
     for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
@@ -549,15 +538,12 @@ export class TaskWorkerPool {
           resourceName: claimedAccountTask.originalTitle,
           localEpisodeVideoRoot: settings.localEpisodeVideoRoot,
           episodeCount: playletConfig.playlet.episodeCount,
-          requiredOwnership: wechatOwnershipRequirements,
+          requiredOwnership: getWechatOwnershipRequirements(),
           requiredPosterImages: 1,
           posterFallback: {
             title: playletConfig.playlet.name,
             summary: playletConfig.playlet.summary,
           },
-          mergeOwnershipMaterials: !isMingxingshuo && !["false", "0", "no", "off"].includes(
-            String(settings.mergeOwnershipMaterials ?? "true").trim().toLowerCase(),
-          ),
           onStableEpisodeFiles: (files) => {
             for (const file of files) {
               if (file.size <= videoPolicy.maxFileBytes) continue;

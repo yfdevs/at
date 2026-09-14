@@ -18,6 +18,7 @@ const emptyConfig: GlobalAppConfig = {
   aiBaseURL: "https://ark.cn-beijing.volces.com/api/v3",
   aiModel: "doubao-seed-2-0-pro-260215",
   aiImageModel: "doubao-seedream-4-0-250828",
+  aiCoverGenerationRetryAttempts: "3",
   aiPosterFallbackEnabled: true,
   baiduNetdiskDownloadTimeoutMinutes: "60",
   runDataRoot: "",
@@ -84,6 +85,15 @@ const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
         key: "aiImageModel",
         label: "图片生成模型 ID",
         description: "",
+      },
+      {
+        key: "aiCoverGenerationRetryAttempts",
+        label: "封面生成失败重试",
+        description: "首次生成失败后的额外重试次数；默认 3 次，单张封面最多共尝试 4 次。",
+        type: "number",
+        suffix: "次",
+        min: 0,
+        max: 10,
       },
       {
         key: "aiBaseURL",

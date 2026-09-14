@@ -26,8 +26,12 @@ void test("classifies invalid share input without relying on callers parsing mes
 void test("classifies captcha and expired shares as extraction failures", () => {
   const captcha = classifyBaiduNetdiskAutomationError(new Error("分享页要求验证码。"));
   const expired = classifyBaiduNetdiskAutomationError(new Error("分享已过期。"));
+  const deleted = classifyBaiduNetdiskAutomationError(
+    new Error("分享链接不可用：分享的文件已经被删除"),
+  );
   assert.ok(captcha instanceof ShareExtractionError);
   assert.ok(expired instanceof ShareExtractionError);
+  assert.ok(deleted instanceof ShareExtractionError);
 });
 
 void test("preserves an existing typed automation error", () => {

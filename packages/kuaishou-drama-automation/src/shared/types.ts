@@ -341,7 +341,7 @@ export type KuaishouDramaRuntimeOptions = {
   taskPollIntervalMs?: number;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
-  coverAiGenerationAttempts?: number;
+  aiCoverGenerationRetryAttempts?: number;
   onLog?: (message: string) => void;
   /** Polled only after the initial idle page has displayed the authenticated edit form. */
   claimTask?: () => Promise<KuaishouDramaTaskInput | ClaimedKuaishouDramaTask | null>;

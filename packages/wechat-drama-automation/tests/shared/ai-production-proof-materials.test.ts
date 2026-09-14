@@ -62,14 +62,32 @@ test("normalization discards aiProductionProofFiles without inspecting its shape
       episodeCount: 1,
       aiContent: true,
       aiProductionProofFiles: { invalid: [null, 123] },
+      copyright: { productionProofFiles: ["contract.jpg"] },
+    },
+  } satisfies ClaimedAccountTask;
+
+  const normalized = normalizeClaimedTaskConfig(task);
+  assert.equal(normalized.playlet.aiContent, true);
+  assert.deepEqual(normalized.playlet.aiProductionProofFiles, []);
+});
+
+test("requires a contract for the 明星说 subject too", () => {
+  const task = {
+    accountTaskId: 3,
+    originalTitle: "合同必填测试剧",
+    videoAccountId: "channel-1",
+    videoAccountName: "明星说视频号",
+    playlet: {
+      summary: "测试简介",
+      episodeCount: 1,
       copyright: {},
     },
   } satisfies ClaimedAccountTask;
 
-  const normalized = normalizeClaimedTaskConfig(task, "MINGXINGSHUO");
-
-  assert.equal(normalized.playlet.aiContent, true);
-  assert.deepEqual(normalized.playlet.aiProductionProofFiles, []);
+  assert.throws(
+    () => normalizeClaimedTaskConfig(task),
+    /productionProofFiles must contain at least 1 contract file/u,
+  );
 });
 
 test("normalization preserves only a boolean AI declaration switch", () => {
@@ -82,11 +100,11 @@ test("normalization preserves only a boolean AI declaration switch", () => {
       summary: "测试简介",
       episodeCount: 1,
       aiContent: false,
-      copyright: {},
+      copyright: { productionProofFiles: ["contract.jpg"] },
     },
   } satisfies ClaimedAccountTask;
 
-  assert.equal(normalizeClaimedTaskConfig(task, "MINGXINGSHUO").playlet.aiContent, false);
+  assert.equal(normalizeClaimedTaskConfig(task).playlet.aiContent, false);
   task.playlet.aiContent = "false" as never;
-  assert.equal(normalizeClaimedTaskConfig(task, "MINGXINGSHUO").playlet.aiContent, true);
+  assert.equal(normalizeClaimedTaskConfig(task).playlet.aiContent, true);
 });

@@ -542,3 +542,10 @@ export function stopWechatMiniProgramPlatformRuntime() {
   runtimeController.stopInBackground()
   void directUploadCoordinator.stop()
 }
+
+export async function stopWechatMiniProgramPlatformService() {
+  await Promise.all([
+    runtimeController.stop(),
+    directUploadCoordinator.stop(),
+  ])
+}

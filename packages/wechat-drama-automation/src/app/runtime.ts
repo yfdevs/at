@@ -1,5 +1,6 @@
 import { BrowserContextManager, type VideoAccountRuntimeStatus } from "../automation/browser-context-manager.js";
 import { FeishuNotifier } from "@drama/feishu-notifier";
+import type { findOwnershipProjectProofFiles } from "@drama/drama-media-assets";
 import { loadServiceConfig } from "../shared/config.js";
 import { createLogger } from "../shared/logger.js";
 import {
@@ -23,7 +24,6 @@ export type EnsureBaiduNetdiskResourceRequest = {
   requiredPosterImages?: number;
   posterFallback?: { title?: string; summary: string };
   requiredAiProductionProofFiles?: number;
-  mergeOwnershipMaterials?: boolean;
   onStableEpisodeFiles?: (files: Array<{
     index: number;
     file: string;
@@ -50,6 +50,7 @@ export type WechatVideoRuntimeOptions = {
   onLog?: (message: string) => void;
   settings?: Partial<WechatVideoRuntimeSettings>;
   ensureBaiduNetdiskResource?: EnsureBaiduNetdiskResource;
+  ownershipAiClient?: NonNullable<Parameters<typeof findOwnershipProjectProofFiles>[0]["aiClient"]>;
 }
 
 const logger = createLogger("runtime");
@@ -77,6 +78,7 @@ export async function startWechatVideoRuntime(options: WechatVideoRuntimeOptions
     taskService,
     notifier,
     options.ensureBaiduNetdiskResource,
+    options.ownershipAiClient,
   );
   const idlePageRefreshService = new IdlePageRefreshService(serviceConfig, browserContexts, taskService);
   const videoAccountSyncService = new VideoAccountSyncService(

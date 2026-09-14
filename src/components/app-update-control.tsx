@@ -13,6 +13,17 @@ import { toast } from "sonner";
 
 import { Button, buttonVariants } from "@/components/ui/button";
 import {
+  AlertDialog,
+  AlertDialogAction,
+  AlertDialogCancel,
+  AlertDialogContent,
+  AlertDialogDescription,
+  AlertDialogFooter,
+  AlertDialogHeader,
+  AlertDialogMedia,
+  AlertDialogTitle,
+} from "@/components/ui/alert-dialog";
+import {
   Popover,
   PopoverContent,
   PopoverDescription,
@@ -107,7 +118,9 @@ function updateDescription(status: AppUpdateStatus | null) {
   }
 
   if (status.state === "downloaded") {
-    return "安装会关闭并重启应用。重启前请先停止正在运行的平台服务。";
+    return status.runningPlatformCount > 0
+      ? `${status.runningPlatformCount} 个平台服务正在运行，可一键停止后重启安装。`
+      : "更新已就绪，安装时应用会自动关闭并重启。";
   }
 
   if (status.state === "not-available") {
@@ -182,6 +195,8 @@ function UpdateStateIcon({
 export function AppUpdateControl() {
   const [status, setStatus] = useState<AppUpdateStatus | null>(null);
   const [actionPending, setActionPending] = useState<UpdateAction | null>(null);
+  const [popoverOpen, setPopoverOpen] = useState(false);
+  const [installConfirmOpen, setInstallConfirmOpen] = useState(false);
   const notifiedDownloadedVersion = useRef<string | null>(null);
 
   useEffect(() => {
@@ -281,8 +296,37 @@ export function AppUpdateControl() {
     runUpdateAction("source", () => setAppUpdateSource(selection));
   };
 
+  const changePopoverOpen = (open: boolean) => {
+    setPopoverOpen(open);
+    if (open) {
+      void getAppUpdateStatus().then(setStatus).catch(() => undefined);
+    }
+  };
+
+  const requestUpdateInstallation = () => {
+    void (async () => {
+      setActionPending("install");
+
+      try {
+        const nextStatus = await getAppUpdateStatus();
+        setStatus(nextStatus);
+        if (nextStatus.runningPlatformCount > 0) {
+          setPopoverOpen(false);
+          setInstallConfirmOpen(true);
+          return;
+        }
+
+        setStatus(await installAppUpdate());
+      } catch (error) {
+        toast.error(errorMessage(error));
+      } finally {
+        setActionPending(null);
+      }
+    })();
+  };
+
   return (
-    <Popover>
+    <Popover open={popoverOpen} onOpenChange={changePopoverOpen}>
       <Tooltip>
         <TooltipTrigger
           render={
@@ -473,7 +517,7 @@ export function AppUpdateControl() {
               type="button"
               size="xs"
               disabled={actionPending !== null}
-              onClick={() => runUpdateAction("install", installAppUpdate)}
+              onClick={requestUpdateInstallation}
             >
               <Power aria-hidden="true" />
               <span>{actionPending === "install" ? "重启中" : "重启安装"}</span>
@@ -481,6 +525,39 @@ export function AppUpdateControl() {
           ) : null}
         </div>
       </PopoverContent>
+      <AlertDialog open={installConfirmOpen} onOpenChange={setInstallConfirmOpen}>
+        <AlertDialogContent>
+          <AlertDialogHeader>
+            <AlertDialogMedia className="bg-amber-500/10 text-amber-700 dark:text-amber-400">
+              <DangerTriangle aria-hidden="true" />
+            </AlertDialogMedia>
+            <AlertDialogTitle>停止全部服务并安装更新？</AlertDialogTitle>
+            <AlertDialogDescription>
+              将停止当前运行的 {status?.runningPlatformCount ?? 0} 个平台服务。
+              正在处理的上传或发布任务会中断；随后应用将立即重启并安装
+              {status?.latestVersion ? ` v${status.latestVersion}` : "新版本"}。
+            </AlertDialogDescription>
+          </AlertDialogHeader>
+          <AlertDialogFooter>
+            <AlertDialogCancel disabled={actionPending === "install"}>
+              暂不安装
+            </AlertDialogCancel>
+            <AlertDialogAction
+              variant="destructive"
+              disabled={actionPending === "install"}
+              onClick={() => {
+                setInstallConfirmOpen(false);
+                runUpdateAction("install", () =>
+                  installAppUpdate({ stopRunningServices: true }),
+                );
+              }}
+            >
+              <Power aria-hidden="true" />
+              停止全部并重启安装
+            </AlertDialogAction>
+          </AlertDialogFooter>
+        </AlertDialogContent>
+      </AlertDialog>
     </Popover>
   );
 }

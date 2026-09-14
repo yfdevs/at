@@ -7,6 +7,7 @@ import {
   fileSetSignature,
   hasRequiredOwnershipMaterials,
   isOwnershipDirectoryName,
+  isOwnershipScreenshotCandidateDirectory,
   isCompleteEpisodeFileSet,
   listDirectLocalEpisodeFiles,
   listLocalEpisodeFiles,
@@ -385,16 +386,18 @@ async function listCurrentRawOwnershipFiles(
   ): Promise<void> => {
     if (depth > 8) return;
     const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    const currentOwnershipScope = inOwnershipDirectory
+      || isOwnershipScreenshotCandidateDirectory(entries);
     for (const entry of entries) {
       const file = path.join(directory, entry.name);
       if (entry.isDirectory()) {
         await walk(
           file,
-          inOwnershipDirectory || isOwnershipDirectoryName(entry.name),
+          currentOwnershipScope || isOwnershipDirectoryName(entry.name),
           depth + 1,
         );
       } else if (
-        inOwnershipDirectory
+        currentOwnershipScope
         && entry.isFile()
         && /\.(?:jpe?g|png|bmp|webp|pdf)$/i.test(entry.name)
       ) {

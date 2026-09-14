@@ -5,6 +5,7 @@ import path from "node:path";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
   getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -257,6 +258,7 @@ async function startRuntime(): Promise<PlatformRuntime> {
         closeFailedTaskPages: config.closeFailedTaskPages === "true",
         aiClient,
         aiImageModel,
+        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) =>
           ensureBaiduNetdiskShareDownloaded({ ...request, requesterPlatform: "tencent-huolong-drama" }),
         apiConfig: { baseUrl: config.apiBaseUrl },
@@ -385,4 +387,8 @@ export function registerTencentHuolongDramaPlatformHandlers() {
 
 export function stopTencentHuolongDramaPlatformRuntime() {
   controller.stopInBackground();
+}
+
+export function stopTencentHuolongDramaPlatformService() {
+  return controller.stop();
 }

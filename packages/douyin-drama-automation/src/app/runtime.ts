@@ -1,6 +1,9 @@
 import { mkdir } from "node:fs/promises";
 import path from "node:path";
-import { formatAutomationErrorReport } from "@drama/automation-logging";
+import {
+  captureAutomationFailureDiagnostics,
+  formatAutomationErrorReport,
+} from "@drama/automation-logging";
 import { isNonRetryableBaiduNetdiskResourceError } from "@drama/drama-media-assets";
 import type { Page } from "playwright";
 import {
@@ -148,6 +151,14 @@ async function runTask(
       fallbackMessage: "抖音任务提交失败，未获取到具体错误原因",
     });
     const stage = failStage(error);
+    const diagnostics = await captureAutomationFailureDiagnostics({
+      platform: "douyin-drama",
+      error,
+      page: taskPage,
+      logFilePath: options.logFilePath,
+      stage,
+      task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
+    });
     await reportDouyinDramaTaskErrorApi({
       runtimeOptions: options,
       accountTaskId: task.accountTaskId,
@@ -164,7 +175,13 @@ async function runTask(
     errorLog(
       options,
       `[douyin-drama] 任务失败：taskId=${task.accountTaskId}，阶段=${stage}，错误=${message}`,
-      { accountTaskId: task.accountTaskId, title: task.originalTitle, failStage: stage, error },
+      {
+        accountTaskId: task.accountTaskId,
+        title: task.originalTitle,
+        failStage: stage,
+        diagnosticDir: diagnostics?.directory,
+        error,
+      },
       "task",
     );
   } finally {

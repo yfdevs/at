@@ -688,3 +688,7 @@ export function registerQqDramaPlatformHandlers() {
 export function stopQqDramaPlatformRuntime() {
   runtimeController.stopInBackground();
 }
+
+export function stopQqDramaPlatformService() {
+  return runtimeController.stop();
+}

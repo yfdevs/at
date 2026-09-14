@@ -120,7 +120,7 @@ export function classifyBaiduNetdiskAutomationError(
   if (/必须提供 shareText|分享文本|分享链接|提取码/.test(message) && /没有找到|必须提供|解析/.test(message)) {
     return new InvalidShareInputError(details);
   }
-  if (/验证码|提取码错误|密码错误|分享不存在|分享已取消|分享已过期|没有进入分享文件列表/.test(message)) {
+  if (/验证码|提取码错误|密码错误|分享不存在|分享已取消|分享已过期|分享链接不可用|分享(?:的)?文件(?:已经|已)(?:被删除|过期)|没有进入分享文件列表/.test(message)) {
     return new ShareExtractionError(details);
   }
   if (/CDP|WebSocket|目标页面|页面已关闭|没有找到可导航/.test(message)) {

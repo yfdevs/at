@@ -52,7 +52,8 @@ const emptyConfig: WechatVideoConfig = {
   basicInfoStepTimeoutSeconds: "600",
   remoteFileDownloadTimeoutSeconds: "120",
   baiduNetdiskDownloadRetryAttempts: "3",
-  mergeOwnershipMaterials: "true",
+  jianyingOwnershipProofCount: "4",
+  juchuangOwnershipProofCount: "4",
   materialPreparationConcurrency: "3",
   taskPrefetchPerAccount: "2",
   videoTranscodeConcurrency: "2",
@@ -71,6 +72,8 @@ type TextField = {
   description?: string;
   type?: "text" | "number" | "url";
   suffix?: string;
+  min?: number;
+  step?: number;
 };
 
 type SelectField = {
@@ -247,13 +250,29 @@ const sections: Array<{
         description: "百度网盘资源准备失败后的额外重试次数，耗尽后上报任务失败。",
         suffix: "次",
       },
+    ],
+  },
+  {
+    title: "权属文件上传",
+    description: "按云 AI 识别结果选择剪映和剧创工程截图，逐张原图上传到剧目制作证明材料。",
+    fields: [
       {
-        kind: "switch",
-        key: "mergeOwnershipMaterials",
-        label: "合并权属工程图片",
-        description: "将权属目录中的全部图片平均分为两组，纵向合并为最多两张临时图片后上传，默认开启。",
-        activeLabel: "合并上传",
-        inactiveLabel: "分别上传",
+        key: "jianyingOwnershipProofCount",
+        label: "剪映权属图数量",
+        type: "number",
+        min: 1,
+        step: 1,
+        suffix: "张",
+        description: "默认 4 张；不足时任务会提示缺少的数量。",
+      },
+      {
+        key: "juchuangOwnershipProofCount",
+        label: "剧创权属图数量",
+        type: "number",
+        min: 1,
+        step: 1,
+        suffix: "张",
+        description: "默认 4 张；不与剪映截图合并拼接。",
       },
     ],
   },
@@ -577,7 +596,8 @@ function ConfigFieldControl({
             <InputGroupInput
               className="text-[13px] md:text-[13px]"
               id={field.key}
-              min={field.type === "number" ? 0 : undefined}
+              min={field.type === "number" ? field.min ?? 0 : undefined}
+              step={field.type === "number" ? field.step : undefined}
               type={field.type ?? "text"}
               value={value}
               onChange={(event) => onChange(field.key, event.target.value)}
