@@ -20,6 +20,7 @@ import {
   standardizePosterImagesToRoot,
   standardizeAiProductionProofFilesToRoot,
   type LocalEpisodeFile,
+  type SelectedEpisodeFileIdentity,
   type LocalOwnershipMaterialSet,
   type LocalPosterImageFile,
   type LocalAiProductionProofFile,
@@ -41,6 +42,10 @@ export type BaiduNetdiskShareDownloadResult = {
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
   inferredEpisodeCount?: number;
+  remoteVideos?: {
+    files: SelectedEpisodeFileIdentity[];
+    aiSelectionApplied?: boolean;
+  };
   completed: boolean;
   skippedExisting: boolean;
 };
@@ -281,6 +286,7 @@ async function listCurrentDownloadEpisodeFiles(
   localPaths: string[],
   targetRoot: string,
   resourceName: string,
+  selectedEpisodeFiles?: SelectedEpisodeFileIdentity[],
 ) {
   const candidates: Array<{ label: string; files: LocalEpisodeFile[] }> = [];
   const seenDirs = new Set<string>();
@@ -290,7 +296,10 @@ async function listCurrentDownloadEpisodeFiles(
       const key = path.resolve(dir).toLowerCase();
       if (seenDirs.has(key)) continue;
       seenDirs.add(key);
-      candidates.push({ label: dir, files: await listDirectLocalEpisodeFiles(dir, resourceName) });
+      candidates.push({
+        label: dir,
+        files: await listDirectLocalEpisodeFiles(dir, resourceName, selectedEpisodeFiles),
+      });
     }
     candidates.push({
       label: `${localPath} (recursive)`,
@@ -298,6 +307,7 @@ async function listCurrentDownloadEpisodeFiles(
         root: localPath,
         resourceName,
         allowArbitraryDir: true,
+        selectedEpisodeFiles,
       }),
     });
   }
@@ -305,7 +315,11 @@ async function listCurrentDownloadEpisodeFiles(
   if (candidates.length <= 0) {
     candidates.push({
       label: playletDir(targetRoot, resourceName),
-      files: await listLocalEpisodeFiles({ root: targetRoot, resourceName }),
+      files: await listLocalEpisodeFiles({
+        root: targetRoot,
+        resourceName,
+        selectedEpisodeFiles,
+      }),
     });
   }
 
@@ -645,6 +659,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   timeoutMs: number;
   pollIntervalMs: number;
   stableCompletePolls: number;
+  selectedEpisodeFiles?: SelectedEpisodeFileIdentity[];
   signal?: AbortSignal;
   getDownloadTaskStatus?: EnsureBaiduNetdiskEpisodeVideosOptions["getDownloadTaskStatus"];
   onStableEpisodeFiles?: EnsureBaiduNetdiskEpisodeVideosOptions["onStableEpisodeFiles"];
@@ -682,6 +697,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       localPaths,
       options.targetRoot,
       options.resourceName,
+      options.selectedEpisodeFiles,
     );
     const newlyStableFiles: LocalEpisodeFile[] = [];
     for (const file of files) {
@@ -784,6 +800,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           localPaths,
           options.targetRoot,
           options.resourceName,
+          options.selectedEpisodeFiles,
         );
         const bestLocalSummary = episodeFileSummary(files);
         complete = !options.requireEpisodeVideos
@@ -1067,6 +1084,9 @@ export async function ensureBaiduNetdiskEpisodeVideos(
       timeoutMs,
       pollIntervalMs,
       stableCompletePolls,
+      selectedEpisodeFiles: result.remoteVideos?.aiSelectionApplied
+        ? result.remoteVideos.files
+        : undefined,
       signal: options.signal,
       getDownloadTaskStatus: options.getDownloadTaskStatus,
       onStableEpisodeFiles: options.onStableEpisodeFiles,

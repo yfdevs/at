@@ -95,7 +95,7 @@ export const kuaishouDramaAuthorDeclarationValues = [
   "内容无需添加声明",
   "含AI生成内容",
 ] as const;
-export const kuaishouDramaPublishTypeValues = ["付费", "广告"] as const;
+export const kuaishouDramaPublishTypeValues = ["付费", "广告", "三个广告版本", "全部"] as const;
 export const kuaishouDramaSaleModeValues = [
   "全剧付费",
   "单集+全剧付费",
@@ -136,7 +136,9 @@ const kuaishouDramaTaskBaseSchema = z.object({
   baiduPanResourceLink: z.string().trim().optional()
     .describe("百度网盘分享文本，包含分享链接和提取码；存在时上剧前必须下载并校验全部剧集视频"),
   publishType: optionalPublishTypeSchema
-    .describe("发布版本；付费或广告，字段缺失、null 或空字符串时两个版本都发布"),
+    .describe("发布版本；留空或全部发布一付费三广告；三个广告版本仅发布三广告"),
+  adVersion2Title: z.string().trim().max(28).optional(),
+  adVersion3Title: z.string().trim().max(28).optional(),
   fullDramaPriceYuan: z.coerce.number().positive().max(9999).default(4.9)
     .describe("全剧付费版本的全剧价格，单位元"),
   localCoverFile: requiredText.optional()
@@ -197,6 +199,22 @@ const kuaishouDramaTaskBaseSchema = z.object({
       message: "AIGC剧的作者声明必须选择含AI生成内容",
     });
   }
+  if (taskConfig.publishType !== "付费" && taskConfig.publishType !== "广告") {
+    const titles = [taskConfig.adVersion2Title, taskConfig.adVersion3Title];
+    for (const [index, title] of titles.entries()) {
+      if (!title) context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: [index === 0 ? "adVersion2Title" : "adVersion3Title"],
+        message: "三个广告版本需要填写第二、第三广告版剧名",
+      });
+    }
+    const normalized = [taskConfig.title, ...titles].map((title) => title?.replace(/^《+|》+$/g, "").trim());
+    if (titles.every(Boolean) && new Set(normalized).size !== 3) context.addIssue({
+      code: z.ZodIssueCode.custom,
+      path: ["adVersion3Title"],
+      message: "三个广告版本的剧名不能重复",
+    });
+  }
 });
 
 export const kuaishouDramaTaskSchema = kuaishouDramaTaskBaseSchema.transform((taskConfig) => {
@@ -254,10 +272,11 @@ export type KuaishouDramaTaskInput = z.input<typeof kuaishouDramaTaskSchema>;
 export type KuaishouDramaTaskConfig = z.infer<typeof kuaishouDramaTaskSchema> & {
   /** Prepared locally at Kuaishou's 224:300 episode-cover ratio. */
   localEpisodeCoverFile?: string;
+  localVariantCoverFiles?: Partial<Record<"ad-unlock-2" | "ad-unlock-3", { drama: string; episode: string }>>;
 };
 
 export type KuaishouDramaPublishVariant = {
-  kind: "full-paid" | "ad-unlock";
+  kind: "full-paid" | "ad-unlock" | "ad-unlock-2" | "ad-unlock-3";
   title: string;
   saleMode: Extract<KuaishouDramaSaleMode, "全剧付费" | "观看广告解锁">;
   fullDramaPriceYuan?: number;

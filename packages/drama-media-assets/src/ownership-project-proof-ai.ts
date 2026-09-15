@@ -38,7 +38,24 @@ async function prepareWorkspaceIdentityImage(file: string, width: number, height
     .toBuffer();
 }
 
+async function prepareRightWorkspaceImage(file: string, width: number, height: number) {
+  const left = Math.max(0, Math.round(width * 0.7));
+  return sharp(file, { failOn: "error" })
+    .rotate()
+    .extract({ left, top: 0, width: width - left, height })
+    .resize({ width: 1_200, withoutEnlargement: false })
+    .flatten({ background: "white" })
+    .jpeg({ quality: 90, mozjpeg: true })
+    .toBuffer();
+}
+
 function readProofKind(data: Record<string, unknown>): OwnershipProjectProofAiKind {
+  if (typeof data.isEngineeringScreenshot === "boolean"
+    && typeof data.jianyingLabelVisible === "boolean") {
+    if (!data.isEngineeringScreenshot) return "unknown";
+    return data.jianyingLabelVisible ? "jianying" : "juchuang";
+  }
+  // Accept older model responses during a staged rollout and in existing mocks.
   if (data.kind !== "jianying" && data.kind !== "juchuang" && data.kind !== "unknown") {
     throw new Error("OWNERSHIP_PROJECT_PROOF_AI_RESPONSE_INVALID");
   }
@@ -57,34 +74,54 @@ export async function classifyOwnershipProjectProofScreenshotWithAi(
   const height = swapsOrientation ? metadata.width : metadata.height;
   if (!width || !height) return "unknown";
 
-  const [fullImage, topLeftImage, workspaceIdentityImage] = await Promise.all([
+  const [fullImage, topLeftImage, workspaceIdentityImage, rightWorkspaceImage] = await Promise.all([
     prepareFullImage(file),
     prepareTopLeftImage(file, width, height),
     prepareWorkspaceIdentityImage(file, width, height),
+    prepareRightWorkspaceImage(file, width, height),
   ]);
   try {
     const completion = await analyzeImagesAsJson(aiClient, {
-      images: [fullImage, topLeftImage, workspaceIdentityImage].map((image) => ({
+      images: [fullImage, topLeftImage, workspaceIdentityImage, rightWorkspaceImage].map((image) => ({
         type: "data-url" as const,
         dataUrl: `data:image/jpeg;base64,${image.toString("base64")}`,
         detail: "high" as const,
       })),
       prompt: [
-        "识别权属工程软件截图来源。第 1 张是完整截图，第 2 张是左上角放大区域，第 3 张是工作区中下部放大区域。",
-        "kind=jianying：明确看到“剪映”、Jianying、CapCut 标志，或能可靠确认是剪映工程编辑界面。",
-        "kind=juchuang：明确看到“剧创”“即梦”、Juchuang、Jimeng、Dreamina 标志，或能可靠确认是对应工程编辑界面。",
-        "若画面是可编辑的 AI 分镜/视频生成工程工作区，并显示 Seedance（例如 Seedance 2.0 Fast VIP）或 Seedream 模型，也归为 kind=juchuang。常见特征包括节点连线画布、角色/图片参考、镜号分镜提示词、视频生成参数或模型选择器。",
-        "LiblibTV、LiblibAI 等平台的可编辑 AI 视频生成画布，若同时具有分镜节点、提示词、模型或视频参数，也按上述 AI 剧创工程截图识别；仅有生成结果预览或平台名称不够。",
-        "仅在普通网页、宣传页或成品画面中偶然出现 Seedance/Seedream 文字，不足以判为工程截图。",
-        "kind=unknown：不是工程软件截图、文字过于模糊、两种来源都无法可靠确认，或证据互相冲突。",
-        "不能因为没有看到剪映就自动判为剧创，也不要根据文件名判断。",
-        "只返回 JSON 对象，不要解释。格式：{\"kind\":\"jianying\",\"evidence\":\"左上角可见剪映标志\"}",
+        "判断图片是否为视频/漫剧制作工程截图。第 1 张是完整截图，第 2 张是左上角放大区域，第 3 张是中下部工作区，第 4 张是右侧详情/提示词区域；它们都是同一张原图的裁剪。",
+        "第一步先看全图是否为工程界面：可见软件导航/工具栏，并有时间线、分镜/节点画布、生成任务记录、素材输入、提示词、参数、版本修改等制作过程证据。生产记录加作品详情及输入提示词也算工程界面，不要求一定能看到节点画布。",
+        "第二步只看左上角：能明确看见“剪映”、Jianying 或 CapCut，则 jianyingLabelVisible=true；否则 false。不要推测。",
+        "Guagu Studio、LiblibTV、Seedance 等只是其他工程界面的例子；不要为了识别具体平台而漏掉真实工程图。",
+        "单张海报、人物头像、成片画面、只有视频预览但没有制作过程证据的页面，以及看不清是否为工程界面的图，一律 isEngineeringScreenshot=false。不要依据文件名猜测。",
+        "只回答两个独立的布尔判断，不要自己决定剧创类别。格式：{\"isEngineeringScreenshot\":true,\"jianyingLabelVisible\":false,\"evidence\":\"可见生产记录和右侧本次输入提示词\"}。",
       ].join("\n"),
       systemPrompt: "你是工程软件截图来源识别器，只输出用户指定结构的 JSON 对象。",
       maxTokens: 120,
       temperature: 0,
     });
-    return readProofKind(completion.data);
+    const kind = readProofKind(completion.data);
+    if (kind !== "unknown") return kind;
+
+    // A first pass can miss small software labels or prompt panels. Recheck
+    // ambiguous images using the two regions that carry source and edit proof.
+    const recheck = await analyzeImagesAsJson(aiClient, {
+      images: [fullImage, topLeftImage, rightWorkspaceImage].map((image) => ({
+        type: "data-url" as const,
+        dataUrl: `data:image/jpeg;base64,${image.toString("base64")}`,
+        detail: "high" as const,
+      })),
+      prompt: [
+        "复核同一张图。第 1 张是全图，第 2 张放大左上角，第 3 张放大右侧制作详情。先判断是否有软件工具栏加制作过程证据，再分类。",
+        "生产记录、作品详情中的本次输入、提示词、参考素材、生成参数或继续修改入口，都是制作过程证据。Guagu Studio 的此类页面应判断 isEngineeringScreenshot=true。",
+        "只有海报、角色头像、成片或孤立预览，没有制作过程证据时必须判断 isEngineeringScreenshot=false；不看文件名。",
+        "仅当工程界面左上角明确写着剪映/Jianying/CapCut 时 jianyingLabelVisible=true。其他工程界面为 false。",
+        "只返回 JSON，例如 {\"isEngineeringScreenshot\":true,\"jianyingLabelVisible\":false,\"evidence\":\"生成记录及本次输入提示词可见\"}。",
+      ].join("\n"),
+      systemPrompt: "你是工程截图复核员，只输出 JSON。",
+      maxTokens: 120,
+      temperature: 0,
+    });
+    return readProofKind(recheck.data);
   } catch (error) {
     const detail = error instanceof Error ? error.message : String(error);
     throw new Error(

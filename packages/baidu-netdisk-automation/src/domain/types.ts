@@ -62,6 +62,17 @@ export type BaiduNetdiskShareDownloadOptions = {
   onTemporaryTransferCreated?: (
     transfer: BaiduNetdiskTemporaryTransfer,
   ) => void | Promise<void>;
+  selectEpisodeFiles?: (request: {
+    resourceName: string;
+    expectedEpisodeCount?: number;
+    candidates: Array<{
+      id: number;
+      index: number;
+      name: string;
+      path: string;
+      size?: number;
+    }>;
+  }) => Promise<string[]>;
 };
 
 export type BaiduNetdiskRemoteOwnershipFile = {
@@ -78,6 +89,7 @@ export type BaiduNetdiskRemoteEpisodeFile = {
   name: string;
   path: string;
   size?: number;
+  contentHash?: string;
 };
 
 export type BaiduNetdiskRemoteVideoListing = {
@@ -92,6 +104,14 @@ export type BaiduNetdiskRemoteVideoListing = {
     name: string;
     path: string;
     size?: number;
+  }>;
+  ignoredIdenticalAliases?: Array<{
+    index: number;
+    name: string;
+    path: string;
+    size?: number;
+    contentHash?: string;
+    keptPath: string;
   }>;
   scannedDirs?: Array<{
     path: string;
@@ -113,6 +133,7 @@ export type BaiduNetdiskRemoteVideoListing = {
   }>;
   duplicateIndexes: number[];
   missingIndexes?: number[];
+  aiSelectionApplied?: boolean;
 };
 
 export type BaiduNetdiskRemoteOwnershipListing = {

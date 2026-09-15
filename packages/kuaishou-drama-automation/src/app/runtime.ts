@@ -218,7 +218,7 @@ export async function startKuaishouDramaRuntime(
     while (running && page && !page.isClosed()) {
       taskState.claimed = undefined;
       let taskPage: Page | null = null;
-      let publishedVariants: Array<"full-paid" | "ad-unlock"> = [];
+      let publishedVariants: Array<"full-paid" | "ad-unlock" | "ad-unlock-2" | "ad-unlock-3"> = [];
       try {
         const resolvedTask = await resolveTask();
         if (!resolvedTask) {

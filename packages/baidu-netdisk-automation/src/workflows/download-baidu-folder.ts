@@ -77,6 +77,93 @@ export type RemoteVideoDirectoryCandidateScore = {
   path: string;
 };
 
+export type RemoteEpisodeAliasCandidate = {
+  index: number;
+  name: string;
+  path: string;
+  size?: number;
+  contentHash?: string;
+};
+
+export function collapseIdenticalRemoteEpisodeAliases<
+  T extends RemoteEpisodeAliasCandidate,
+>(files: T[]) {
+  const retained: T[] = [];
+  const ignored: Array<{ kept: T; duplicate: T }> = [];
+  const groups = new Map<number, T[]>();
+
+  for (const file of files) {
+    const group = groups.get(file.index) ?? [];
+    group.push(file);
+    groups.set(file.index, group);
+  }
+
+  for (const group of groups.values()) {
+    const ordered = [...group].sort((left, right) => {
+      const leftName = String(left.name || "");
+      const rightName = String(right.name || "");
+      const leftPreference = /第\s*\d+\s*集/i.test(leftName)
+        ? 2
+        : /(?:^|[^a-z])(?:ep|episode|e)[\s._-]*\d+/i.test(leftName) ? 1 : 0;
+      const rightPreference = /第\s*\d+\s*集/i.test(rightName)
+        ? 2
+        : /(?:^|[^a-z])(?:ep|episode|e)[\s._-]*\d+/i.test(rightName) ? 1 : 0;
+      return rightPreference - leftPreference || left.path.localeCompare(right.path);
+    });
+    const keptBySignature = new Map<string, T>();
+
+    for (const file of ordered) {
+      const size = Number(file.size);
+      if (!Number.isFinite(size) || size <= 0) {
+        retained.push(file);
+        continue;
+      }
+
+      const contentHash = String(file.contentHash || "").trim().toLowerCase();
+      const signature = `${size}:${contentHash || "size-only"}`;
+      const kept = keptBySignature.get(signature);
+      if (kept) ignored.push({ kept, duplicate: file });
+      else {
+        keptBySignature.set(signature, file);
+        retained.push(file);
+      }
+    }
+  }
+
+  return {
+    files: retained.sort(
+      (left, right) => left.index - right.index || left.path.localeCompare(right.path),
+    ),
+    ignored,
+  };
+}
+
+export function validateRemoteEpisodePathSelection(
+  candidates: RemoteEpisodeAliasCandidate[],
+  selectedPaths: string[],
+  expectedEpisodeCount?: number,
+) {
+  const candidatesByPath = new Map(candidates.map((file) => [file.path, file]));
+  const uniquePaths = [...new Set(selectedPaths)];
+  if (uniquePaths.length !== selectedPaths.length) return undefined;
+  const selected = uniquePaths.map((filePath) => candidatesByPath.get(filePath));
+  if (selected.some((file) => !file)) return undefined;
+
+  const files = (selected as RemoteEpisodeAliasCandidate[]).sort(
+    (left, right) => left.index - right.index || left.path.localeCompare(right.path),
+  );
+  const indexes = files.map((file) => file.index);
+  const uniqueIndexes = [...new Set(indexes)];
+  if (uniqueIndexes.length !== indexes.length) return undefined;
+  const configuredCount = Number(expectedEpisodeCount);
+  const episodeCount = Number.isInteger(configuredCount) && configuredCount > 0
+    ? configuredCount
+    : indexes[indexes.length - 1] ?? 0;
+  if (episodeCount <= 0 || files.length !== episodeCount) return undefined;
+  if (!indexes.every((index, position) => index === position + 1)) return undefined;
+  return files;
+}
+
 const baiduShareFailurePattern = /提取码错误|密码错误|分享不存在|链接不存在|分享已取消|分享已过期|分享(?:的)?文件(?:已经|已)(?:被删除|过期)|文件(?:已经|已)被删除/;
 
 export function baiduShareFailureText(text: string) {
@@ -1850,6 +1937,7 @@ async function saveShareToOwnNetdisk(
         name,
         path: entryPath,
         size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+        contentHash: String(entry?.md5 || entry?.content_md5 || "").trim() || undefined,
       };
       directEntriesByPath.set(entryPath, videoFile);
       allEntriesByPath.set(entryPath, videoFile);
@@ -1867,10 +1955,14 @@ async function saveShareToOwnNetdisk(
   }
   const allVideoFiles = [...allEntriesByPath.values()].sort((left, right) => left.path.localeCompare(right.path));
   const compareVideoDirectoryCandidates = ${compareRemoteVideoDirectoryCandidates.toString()};
+  const collapseIdenticalEpisodeAliases = ${collapseIdenticalRemoteEpisodeAliases.toString()};
   const scoredCandidateDirs = candidateDirs.map((candidate) => {
-    const recognizedIndexes = candidate.videoFiles
-      .map((file) => matchEpisodeIndex(file.name))
-      .filter((index) => Number.isInteger(index) && index > 0);
+    const indexedVideoFiles = candidate.videoFiles.flatMap((file) => {
+      const index = matchEpisodeIndex(file.name);
+      return Number.isInteger(index) && index > 0 ? [{ ...file, index }] : [];
+    });
+    const aliasResolution = collapseIdenticalEpisodeAliases(indexedVideoFiles);
+    const recognizedIndexes = aliasResolution.files.map((file) => file.index);
     const uniqueIndexes = [...new Set(recognizedIndexes)].sort((left, right) => left - right);
     const duplicateIndexes = [...new Set(recognizedIndexes.filter(
       (index, position) => recognizedIndexes.indexOf(index) !== position,
@@ -1887,6 +1979,8 @@ async function saveShareToOwnNetdisk(
       !materialDirectory && /成片|成品|正片|剧集|视频/i.test(normalizedName);
     return {
       ...candidate,
+      episodeFiles: aliasResolution.files,
+      ignoredIdenticalAliases: aliasResolution.ignored,
       validEpisodeSequence,
       materialDirectory,
       preferredEpisodeDirectory,
@@ -1901,22 +1995,22 @@ async function saveShareToOwnNetdisk(
       mp4Count: 0,
       mp4SizeBytes: 0,
       videoFiles: [],
+      episodeFiles: [],
+      ignoredIdenticalAliases: [],
     };
   const selectedVideoFiles = selectedVideoDir.videoFiles;
-  const files = selectedVideoFiles
-    .flatMap((file) => {
-      const index = matchEpisodeIndex(file.name);
-      if (index === undefined) return [];
-      return [{
-        index,
-        name: file.name,
-        path: file.path,
-        size: file.size,
-      }];
-    })
+  const files = selectedVideoDir.episodeFiles
+    .map((file) => ({
+      index: file.index,
+      name: file.name,
+      path: file.path,
+      size: file.size,
+      contentHash: file.contentHash,
+    }))
     .sort((left, right) => left.index - right.index || left.path.localeCompare(right.path));
-  const matchedVideoPaths = new Set(files.map((file) => file.path));
-  const unmatchedVideoFiles = selectedVideoFiles.filter((file) => !matchedVideoPaths.has(file.path));
+  const unmatchedVideoFiles = selectedVideoFiles.filter(
+    (file) => matchEpisodeIndex(file.name) === undefined,
+  );
   if (selectedVideoFiles.length > 0 && files.length === 0) {
     console.log(
       "[baidu] 集数匹配诊断：" +
@@ -1963,6 +2057,14 @@ async function saveShareToOwnNetdisk(
       files,
       allVideoFiles,
       unmatchedVideoFiles,
+      ignoredIdenticalAliases: selectedVideoDir.ignoredIdenticalAliases.map((item) => ({
+        index: item.duplicate.index,
+        name: item.duplicate.name,
+        path: item.duplicate.path,
+        size: item.duplicate.size,
+        contentHash: item.duplicate.contentHash,
+        keptPath: item.kept.path,
+      })),
       scannedDirs,
       duplicateIndexes,
     },
@@ -2759,6 +2861,7 @@ async function submitSavedDownload(
   requireAllDiscoveredAssets = false,
   saveOptions: SaveShareOptions = {},
   onTemporaryTransferCreated?: BaiduNetdiskShareDownloadOptions["onTemporaryTransferCreated"],
+  selectEpisodeFiles?: BaiduNetdiskShareDownloadOptions["selectEpisodeFiles"],
   signal?: AbortSignal,
 ) {
   signal?.throwIfAborted();
@@ -2796,10 +2899,47 @@ async function submitSavedDownload(
       ? `选中视频目录：${saved.savedPath}，名称=${videoTargetName}`
       : `素材-only 模式：跳过视频目录下载，资源目录=${saved.resourceRootPath}`,
   );
-  const remoteVideos = saved.remoteVideos;
+  let remoteVideos = saved.remoteVideos;
   const remoteOwnership = saved.remoteOwnership;
   const remotePosters = saved.remotePosters;
   const remoteAiProductionProofs = saved.remoteAiProductionProofs;
+  const ambiguousCandidates = [
+    ...remoteVideos.files,
+    ...(remoteVideos.ignoredIdenticalAliases ?? []).map((file) => ({
+      index: file.index,
+      name: file.name,
+      path: file.path,
+      size: file.size,
+    })),
+  ].filter((file, index, files) => files.findIndex((item) => item.path === file.path) === index);
+  const candidateIndexCount = new Set(ambiguousCandidates.map((file) => file.index)).size;
+  if (selectEpisodeFiles && ambiguousCandidates.length > candidateIndexCount) {
+    try {
+      const candidates = ambiguousCandidates.map((file, index) => ({ ...file, id: index + 1 }));
+      const selectedPaths = await selectEpisodeFiles({
+        resourceName: share.name,
+        expectedEpisodeCount,
+        candidates,
+      });
+      const selected = validateRemoteEpisodePathSelection(
+        ambiguousCandidates,
+        selectedPaths,
+        expectedEpisodeCount,
+      );
+      if (!selected) throw new Error("AI 返回的剧集文件不是一套完整连续分集");
+      remoteVideos = {
+        ...remoteVideos,
+        files: selected,
+        duplicateIndexes: [],
+        aiSelectionApplied: true,
+      };
+      log(`AI 已从${ambiguousCandidates.length}个候选视频中选出${selected.length}个连续短剧分集。`);
+    } catch (error) {
+      warn(
+        `AI 文件名归类未通过校验，改用集数、大小和内容指纹规则：${errorMessage(error)}`,
+      );
+    }
+  }
   const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
     (left, right) => left - right,
   );
@@ -2832,6 +2972,15 @@ async function submitSavedDownload(
     `网盘目录视频清单：匹配=${remoteVideos.files.length}个，集数=${formatNumberRanges(remoteIndexes)}，` +
       `全部视频=${remoteVideos.allVideoFiles.length}个`,
   );
+  if (remoteVideos.ignoredIdenticalAliases?.length) {
+    log(
+      `${remoteVideos.aiSelectionApplied ? "AI 归类前检测到" : "已自动忽略"}` +
+        `${remoteVideos.ignoredIdenticalAliases.length}个同集同大小的改名副本：` +
+        formatNameSample(
+          remoteVideos.ignoredIdenticalAliases.map((file) => `${file.index}:${file.name}`),
+        ),
+    );
+  }
   logRemoteVideoScanDetails(remoteVideos);
   if (remoteVideos.unmatchedVideoFiles?.length) {
     log(
@@ -2892,6 +3041,7 @@ async function submitSavedDownload(
           requireAllDiscoveredAssets,
           { isolatedRoot: true, isolatedRootUnique: true },
           onTemporaryTransferCreated,
+          selectEpisodeFiles,
           signal,
         );
       }
@@ -2948,6 +3098,7 @@ async function submitSavedDownload(
           requireAllDiscoveredAssets,
           { isolatedRoot: true, isolatedRootUnique: true },
           onTemporaryTransferCreated,
+          selectEpisodeFiles,
           signal,
         );
       }
@@ -3240,6 +3391,7 @@ async function downloadBaiduNetdiskSharePromise(
     options.requireAllDiscoveredAssets === true,
     {},
     options.onTemporaryTransferCreated,
+    options.selectEpisodeFiles,
     options.signal,
   );
   const resolvedDownloadRoot = downloadRoot ?? downloadDir;

@@ -23,9 +23,12 @@ const liveOwnershipProofDirectory =
 function cloudAiClassifier(kind: "jianying" | "juchuang" | "unknown"): DramaAiClient {
   return {
     analyzeImages: async (options) => {
-      assert.equal(options.images.length, 3);
-      assert.match(options.prompt, /Seedance 2\.0 Fast VIP/u);
-      assert.match(options.prompt, /AI 分镜\/视频生成工程工作区/u);
+      assert.ok(options.images.length === 3 || options.images.length === 4);
+      assert.match(options.prompt, /Guagu Studio/u);
+      if (options.images.length === 4) {
+        assert.match(options.prompt, /只回答两个独立的布尔判断/u);
+        assert.match(options.prompt, /单张海报、人物头像/u);
+      }
       for (const image of options.images) {
         assert.equal(image.type, "data-url");
         if (image.type === "data-url") {
@@ -35,7 +38,11 @@ function cloudAiClassifier(kind: "jianying" | "juchuang" | "unknown"): DramaAiCl
       return {
         finishReason: "stop",
         model: "test-vision-model",
-        text: JSON.stringify({ kind, evidence: "test" }),
+        text: JSON.stringify({
+          isEngineeringScreenshot: kind !== "unknown",
+          jianyingLabelVisible: kind === "jianying",
+          evidence: "test",
+        }),
       };
     },
     generateImage: async () => { throw new Error("not used"); },
@@ -66,6 +73,39 @@ test("prefers explicit proof source names", () => {
   assert.equal(classifyOwnershipProjectProofName("seedream-workspace.webp"), "juchuang");
   assert.equal(classifyOwnershipProjectProofName("剪映和剧创/工程1.png"), undefined);
   assert.equal(classifyOwnershipProjectProofName("测试剧 - 权属工程文件1.png"), undefined);
+});
+
+test("rechecks unknown screenshots using the platform label and right-side prompt panel", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "ownership-guagu-recheck-"));
+  const file = path.join(root, "权属工程文件2.png");
+  let calls = 0;
+  const aiClient: DramaAiClient = {
+    analyzeImages: async (options) => {
+      calls += 1;
+      assert.equal(options.images.length, calls === 1 ? 4 : 3);
+      assert.match(options.prompt, /Guagu Studio/u);
+      return {
+        finishReason: "stop",
+        model: "test-vision-model",
+        text: JSON.stringify({
+          isEngineeringScreenshot: calls !== 1,
+          jianyingLabelVisible: false,
+          evidence: calls === 1 ? "small label" : "Guagu Studio with input prompt",
+        }),
+      };
+    },
+    generateImage: async () => { throw new Error("not used"); },
+    generateText: async () => { throw new Error("not used"); },
+  };
+  try {
+    await sharp({
+      create: { width: 2_048, height: 1_080, channels: 3, background: "#f2f2f2" },
+    }).png().toFile(file);
+    assert.equal(await classifyOwnershipProjectProof(file, path.basename(file), aiClient), "juchuang");
+    assert.equal(calls, 2);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
 });
 
 test("classifies explicitly named parent directories without opening the image", async () => {

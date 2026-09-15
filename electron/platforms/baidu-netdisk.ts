@@ -1,6 +1,10 @@
 import { BrowserWindow, ipcMain } from "electron";
 import Store from "electron-store";
-import { ensureAiPoster, VideoTranscodeQueue } from "@drama/drama-media-assets";
+import {
+  ensureAiPoster,
+  selectBaiduEpisodePathsWithAi,
+  VideoTranscodeQueue,
+} from "@drama/drama-media-assets";
 import { ensureBaiduNetdiskEpisodeVideos } from "@drama/drama-media-assets/baidu-netdisk";
 import { formatDateKey } from "@drama/automation-logging";
 import { createHash } from "node:crypto";
@@ -91,6 +95,7 @@ type BaiduNetdiskRemoteVideoListing = {
   }>;
   duplicateIndexes: number[];
   missingIndexes?: number[];
+  aiSelectionApplied?: boolean;
 };
 
 type BaiduNetdiskShareDownloadResult = {
@@ -838,6 +843,17 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
         fsId: number | string;
         createdByAutomation: true;
       }) => void | Promise<void>;
+      selectEpisodeFiles?: (request: {
+        resourceName: string;
+        expectedEpisodeCount?: number;
+        candidates: Array<{
+          id: number;
+          index: number;
+          name: string;
+          path: string;
+          size?: number;
+        }>;
+      }) => Promise<string[]>;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
     getBaiduNetdiskDownloadTaskStatus: (options: { port: number; targetName: string }) => Promise<{
       found: boolean;
@@ -963,6 +979,10 @@ async function downloadShare(request?: BaiduNetdiskShareDownloadRequest) {
         shareText,
         port: cdpPort(config),
         downloadDir: defaultBaiduNetdiskDownloadDir,
+        selectEpisodeFiles: (selectionRequest) => selectBaiduEpisodePathsWithAi({
+          client: createConfiguredAiClient(),
+          ...selectionRequest,
+        }),
       }),
     );
   } catch (error) {
@@ -1155,6 +1175,10 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             port,
             downloadDir: downloadRequest.downloadDir,
             signal: request.signal,
+            selectEpisodeFiles: (selectionRequest) => selectBaiduEpisodePathsWithAi({
+              client: createConfiguredAiClient(),
+              ...selectionRequest,
+            }),
             onTemporaryTransferCreated: (transfer) => {
               record = upsertDownloadRecord({
                 ...record,

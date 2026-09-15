@@ -1248,7 +1248,7 @@ export async function fillKuaishouDramaEditForm(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const remoteAssetDirectoryName = `${taskConfig.title}-${variant.kind}`;
-  const coverFile = resolveKuaishouDramaCoverFile(taskConfig);
+  const coverFile = resolveKuaishouDramaCoverFile(taskConfig, variant.kind);
 
   log(options, `[kuaishou-drama] filling drama title: ${variant.title}`);
   await fillTextboxByLabel(page, "短剧标题", variant.title, "请输入");

@@ -417,7 +417,7 @@ export async function fillKuaishouDramaSaleAndEpisodes(
   if (!freeRange) {
     throw new Error(`KUAISHOU_DRAMA_FREE_EPISODE_RANGE_NOT_FOUND: ${variant.kind}`);
   }
-  const coverFile = resolveKuaishouEpisodeCoverFile(task);
+  const coverFile = resolveKuaishouEpisodeCoverFile(task, variant.kind);
   const episodeCoverPath = await resolveUploadAssetFile(
     coverFile,
     options,

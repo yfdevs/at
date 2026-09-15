@@ -1,4 +1,4 @@
-import { access, copyFile, link, mkdir, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
+import { access, copyFile, link, mkdir, open, readFile, readdir, rename, rm, stat, writeFile } from "node:fs/promises";
 import { createHash } from "node:crypto";
 import path from "node:path";
 import type { DramaAiClient } from "@drama/ai";
@@ -18,6 +18,12 @@ export type LocalEpisodeFile = {
   file: string;
   size: number;
   modifiedAtMs: number;
+};
+
+export type SelectedEpisodeFileIdentity = {
+  index: number;
+  name: string;
+  size?: number;
 };
 
 export type LocalOwnershipMaterialFile = {
@@ -92,6 +98,10 @@ export {
   type AiPosterResult,
   type EnsureAiPosterOptions,
 } from "./ai-poster.js";
+export {
+  selectBaiduEpisodePathsWithAi,
+  type BaiduEpisodeFilenameCandidate,
+} from "./baidu-episode-filename-ai.js";
 export {
   commercialPosterProhibitedTextGuidance,
   commercialPosterSupportingCopyGuidance,
@@ -236,6 +246,7 @@ export function matchLocalEpisodeIndex(fileName: string, resourceName: string) {
 export async function listDirectLocalEpisodeFiles(
   scanDir: string,
   resourceName: string,
+  selectedEpisodeFiles?: SelectedEpisodeFileIdentity[],
 ): Promise<LocalEpisodeFile[]> {
   const files: LocalEpisodeFile[] = [];
   const entries = await readdir(scanDir, { withFileTypes: true }).catch(() => []);
@@ -253,7 +264,142 @@ export async function listDirectLocalEpisodeFiles(
     files.push({ index, file, size: fileStat.size, modifiedAtMs: fileStat.mtimeMs });
   }
 
-  return files.sort((left, right) => left.index - right.index);
+  if (selectedEpisodeFiles?.length) {
+    const selected = files.filter((file) => selectedEpisodeFiles.some((expected) =>
+      expected.index === file.index
+      && expected.name.toLowerCase() === path.basename(file.file).toLowerCase()
+      && (expected.size === undefined || expected.size === file.size)
+    ));
+    return selected.sort((left, right) => left.index - right.index || left.file.localeCompare(right.file));
+  }
+
+  return (await collapseIdenticalLocalEpisodeAliasesByContent(files)).files;
+}
+
+export function collapseIdenticalLocalEpisodeAliases(files: LocalEpisodeFile[]) {
+  const retained: LocalEpisodeFile[] = [];
+  const ignored: Array<{ kept: LocalEpisodeFile; duplicate: LocalEpisodeFile }> = [];
+  const groups = new Map<number, LocalEpisodeFile[]>();
+
+  for (const file of files) {
+    const group = groups.get(file.index) ?? [];
+    group.push(file);
+    groups.set(file.index, group);
+  }
+
+  const preference = (file: LocalEpisodeFile) => {
+    const name = path.basename(file.file);
+    if (/第\s*\d+\s*集/i.test(name)) return 2;
+    if (/(?:^|[^a-z])(?:ep|episode|e)[\s._-]*\d+/i.test(name)) return 1;
+    return 0;
+  };
+
+  for (const group of groups.values()) {
+    const ordered = [...group].sort(
+      (left, right) => preference(right) - preference(left) || left.file.localeCompare(right.file),
+    );
+    const keptBySize = new Map<number, LocalEpisodeFile>();
+
+    for (const file of ordered) {
+      const kept = keptBySize.get(file.size);
+      if (kept) ignored.push({ kept, duplicate: file });
+      else {
+        keptBySize.set(file.size, file);
+        retained.push(file);
+      }
+    }
+  }
+
+  return {
+    files: retained.sort(
+      (left, right) => left.index - right.index || left.file.localeCompare(right.file),
+    ),
+    ignored,
+  };
+}
+
+const localEpisodeFingerprintCache = new Map<string, string>();
+
+async function localEpisodeContentFingerprint(file: LocalEpisodeFile) {
+  const cacheKey = `${path.resolve(file.file).toLowerCase()}#${file.size}#${file.modifiedAtMs}`;
+  const cached = localEpisodeFingerprintCache.get(cacheKey);
+  if (cached) return cached;
+
+  const sampleSize = Math.min(64 * 1024, file.size);
+  const lastOffset = Math.max(0, file.size - sampleSize);
+  const offsets = [...new Set([
+    0,
+    Math.max(0, Math.floor((file.size - sampleSize) / 2)),
+    lastOffset,
+  ])];
+  const handle = await open(file.file, "r");
+  const hash = createHash("sha256").update(String(file.size));
+  try {
+    for (const offset of offsets) {
+      const buffer = Buffer.allocUnsafe(sampleSize);
+      const { bytesRead } = await handle.read(buffer, 0, sampleSize, offset);
+      hash.update(String(offset));
+      hash.update(buffer.subarray(0, bytesRead));
+    }
+  } finally {
+    await handle.close();
+  }
+
+  const fingerprint = hash.digest("hex");
+  if (localEpisodeFingerprintCache.size >= 4_096) {
+    const oldest = localEpisodeFingerprintCache.keys().next().value;
+    if (oldest) localEpisodeFingerprintCache.delete(oldest);
+  }
+  localEpisodeFingerprintCache.set(cacheKey, fingerprint);
+  return fingerprint;
+}
+
+async function collapseIdenticalLocalEpisodeAliasesByContent(files: LocalEpisodeFile[]) {
+  const sizeResolution = collapseIdenticalLocalEpisodeAliases(files);
+  if (sizeResolution.ignored.length === 0) return sizeResolution;
+
+  const candidates = [...sizeResolution.files, ...sizeResolution.ignored.map((item) => item.duplicate)];
+  const retained: LocalEpisodeFile[] = [];
+  const ignored: Array<{ kept: LocalEpisodeFile; duplicate: LocalEpisodeFile }> = [];
+  const groups = new Map<string, LocalEpisodeFile[]>();
+  for (const file of candidates) {
+    const key = `${file.index}:${file.size}`;
+    const group = groups.get(key) ?? [];
+    group.push(file);
+    groups.set(key, group);
+  }
+
+  for (const group of groups.values()) {
+    if (group.length === 1) {
+      retained.push(group[0]);
+      continue;
+    }
+
+    const fingerprints = await Promise.all(group.map(async (file) => ({
+      file,
+      fingerprint: await localEpisodeContentFingerprint(file).catch(() => undefined),
+    })));
+    const keptByFingerprint = new Map<string, LocalEpisodeFile>();
+    for (const item of fingerprints) {
+      if (!item.fingerprint) {
+        retained.push(item.file);
+        continue;
+      }
+      const kept = keptByFingerprint.get(item.fingerprint);
+      if (kept) ignored.push({ kept, duplicate: item.file });
+      else {
+        keptByFingerprint.set(item.fingerprint, item.file);
+        retained.push(item.file);
+      }
+    }
+  }
+
+  return {
+    files: retained.sort(
+      (left, right) => left.index - right.index || left.file.localeCompare(right.file),
+    ),
+    ignored,
+  };
 }
 
 export async function recursiveLocalEpisodeScanDirs(root: string, resourceName: string) {
@@ -377,7 +523,7 @@ export async function listLocalOwnershipMaterials(options: {
 const ownershipProjectProofClassificationTimeoutMs = 5 * 60_000;
 
 const ownershipProjectProofClassificationCache = new Map<string, OwnershipProjectProofKind>();
-const ownershipProjectProofAiClassificationVersion = "content-v3-seedance-workspace-crop";
+const ownershipProjectProofAiClassificationVersion = "content-v6-engineering-binary-judgement";
 
 export function classifyOwnershipProjectProofName(
   name: string,
@@ -405,7 +551,7 @@ async function classifyOwnershipProjectProofContent(
     const oldest = ownershipProjectProofClassificationCache.keys().next().value;
     if (oldest) ownershipProjectProofClassificationCache.delete(oldest);
   }
-  ownershipProjectProofClassificationCache.set(cacheKey, kind);
+  if (kind !== "unknown") ownershipProjectProofClassificationCache.set(cacheKey, kind);
   return kind;
 }
 
@@ -921,6 +1067,7 @@ export async function listLocalEpisodeFiles(options: {
   root: string;
   resourceName: string;
   allowArbitraryDir?: boolean;
+  selectedEpisodeFiles?: SelectedEpisodeFileIdentity[];
 }) {
   const scanDirs = options.allowArbitraryDir
     ? await recursiveLocalEpisodeScanDirs(options.root, options.resourceName)
@@ -930,7 +1077,11 @@ export async function listLocalEpisodeFiles(options: {
   for (const scanDir of scanDirs) {
     candidates.push({
       dir: scanDir,
-      files: await listDirectLocalEpisodeFiles(scanDir, options.resourceName),
+      files: await listDirectLocalEpisodeFiles(
+        scanDir,
+        options.resourceName,
+        options.selectedEpisodeFiles,
+      ),
     });
   }
 
@@ -950,6 +1101,7 @@ export function isCompleteEpisodeFileSet(
   }
 
   const expectedIndexes = Array.from({ length: normalizedEpisodeCount }, (_, index) => index + 1);
+  if (files.length !== expectedIndexes.length) return false;
   const actualIndexSet = new Set(files.map((file) => file.index));
   return expectedIndexes.every((index) => actualIndexSet.has(index));
 }

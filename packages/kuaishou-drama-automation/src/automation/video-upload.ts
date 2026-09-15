@@ -143,6 +143,7 @@ async function submitKuaishouDramaForReview(
   options: KuaishouDramaRuntimeOptions,
 ) {
   const postSubmitSettleMs = 10_000;
+  const submitVerificationTimeoutMs = 90_000;
   const footer = page.locator(".handle-footer:visible").last();
   await footer.waitFor({ state: "visible", timeout: 60_000 });
   const submit = footer
@@ -151,14 +152,32 @@ async function submitKuaishouDramaForReview(
     .last();
   await submit.waitFor({ state: "visible", timeout: 30_000 });
   await submit.scrollIntoViewIfNeeded();
+  const submittedAt = Date.now();
   await submit.click({ timeout: 30_000 });
   log(
     options,
     `[kuaishou-drama] submit for review clicked; waiting ${postSubmitSettleMs}ms ` +
       "before the page may be closed",
   );
-  await page.waitForTimeout(postSubmitSettleMs);
-  log(options, "[kuaishou-drama] post-submit wait completed");
+  let verified = false;
+  while (Date.now() - submittedAt < submitVerificationTimeoutMs) {
+    await throwIfKuaishouWarningCaptured(page, options);
+    const currentUrl = new URL(page.url());
+    const returnedToManagement = currentUrl.origin === "https://kdj.kuaishou.com" &&
+      currentUrl.pathname.startsWith("/home/content/content-management") &&
+      currentUrl.pathname !== "/home/content/content-management/edit";
+    const successMessage = await page.locator(
+      '.ks-message--success:visible, .ks-result--success:visible',
+    ).filter({ hasText: /提交成功|提交审核成功|已提交审核|提交审核已完成/ }).first()
+      .isVisible().catch(() => false);
+    verified ||= returnedToManagement || successMessage;
+    if (verified && Date.now() - submittedAt >= postSubmitSettleMs) {
+      log(options, `[kuaishou-drama] submit success verified after ${Date.now() - submittedAt}ms: ${page.url()}`);
+      return;
+    }
+    await page.waitForTimeout(500);
+  }
+  throw new Error(`KUAISHOU_DRAMA_SUBMIT_SUCCESS_NOT_VERIFIED: url=${page.url()}`);
 }
 
 export async function uploadKuaishouDramaEpisodeVideos(

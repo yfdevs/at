@@ -16,6 +16,7 @@ import {
 
 import {
   buildKuaishouCounterpartCoverPrompt,
+  buildKuaishouTextlessVariantCoverPrompt,
   KUAISHOU_DRAMA_COVER_SIZE,
   KUAISHOU_EPISODE_COVER_SIZE,
   prepareKuaishouDramaCoverFiles,
@@ -79,6 +80,16 @@ void test("keeps technical dimensions out of model-visible generation prompts", 
   assert.doesNotMatch(dramaPrompt, /最终成图只能出现一处|除剧名外，严禁/);
 });
 
+void test("textless variant prompts require distinct compositions and both orientations", () => {
+  const second = buildKuaishouTextlessVariantCoverPrompt({ kind: "drama", variant: 2, summary: "测试剧情" });
+  const third = buildKuaishouTextlessVariantCoverPrompt({ kind: "episode", variant: 3, summary: "测试剧情" });
+  assert.match(second, /横版封面/);
+  assert.match(third, /竖版封面/);
+  assert.match(second, /彻底去掉.*所有剧名/);
+  assert.notEqual(second, third);
+  assert.doesNotMatch(second, /2208|1376|414:258/);
+});
+
 void test("generates only the missing landscape cover and shares prepared files across variants", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "kuaishou-cover-test-"));
   try {
@@ -122,6 +133,7 @@ void test("generates only the missing landscape cover and shares prepared files 
     } as unknown as DramaAiClient;
     const task = {
       title: "竖版补横版测试剧",
+      publishType: "广告",
     } as unknown as KuaishouDramaTaskConfig;
 
     const result = await prepareKuaishouDramaCoverFiles(
@@ -160,7 +172,7 @@ void test("does not call AI when both source orientations already exist", async 
       writeFile(landscapeFile, svg(1_600, 1_000, "#b91c1c")),
       writeFile(portraitFile, svg(900, 1_200, "#1d4ed8")),
     ]);
-    const task = { title: "双封面测试剧" } as unknown as KuaishouDramaTaskConfig;
+    const task = { title: "双封面测试剧", publishType: "广告" } as unknown as KuaishouDramaTaskConfig;
 
     const result = await prepareKuaishouDramaCoverFiles(
       task,
@@ -173,6 +185,123 @@ void test("does not call AI when both source orientations already exist", async 
 
     assert.deepEqual(await readImageDimensions(result.dramaCover), KUAISHOU_DRAMA_COVER_SIZE);
     assert.deepEqual(await readImageDimensions(result.episodeCover), KUAISHOU_EPISODE_COVER_SIZE);
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+void test("generates separate textless landscape and portrait covers for ad versions two and three", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "kuaishou-ad-cover-test-"));
+  try {
+    const landscapeFile = path.join(temporaryRoot, "landscape.svg");
+    const portraitFile = path.join(temporaryRoot, "portrait.svg");
+    await Promise.all([
+      writeFile(landscapeFile, svg(1_600, 1_000, "#b91c1c")),
+      writeFile(portraitFile, svg(900, 1_200, "#1d4ed8")),
+    ]);
+    const requests: ImageGenerationOptions[] = [];
+    const aiClient = {
+      generateImage: async (request: ImageGenerationOptions) => {
+        requests.push(request);
+        const [width, height] = request.size!.split("x").map(Number);
+        return { images: [{ data: svg(width!, height!, "#15803d"), mimeType: "image/svg+xml" }], model: "test-image-model" };
+      },
+      analyzeImages: async (_request: ImageAnalysisOptions) => ({
+        finishReason: "stop",
+        model: "test-analysis-model",
+        text: JSON.stringify({
+          mainSubjectsComplete: true,
+          facesIntact: true,
+          titlePresent: false,
+          titleReadable: false,
+          titleSeverelyIncorrect: false,
+          titleInsideSafeArea: true,
+          hasProhibitedOverlay: false,
+          hasClearlyUnrelatedOrGibberishText: false,
+          noMirroringOrTiling: true,
+          referenceSimilarityConfidence: 0.95,
+          detectedTexts: [],
+          blockingIssues: [],
+          warnings: [],
+        }),
+      }),
+    } as unknown as DramaAiClient;
+    const task = {
+      title: "原剧名",
+      publishType: "全部",
+      summary: "测试剧情简介",
+      adVersion2Title: "第二版剧名",
+      adVersion3Title: "第三版剧名",
+    } as unknown as KuaishouDramaTaskConfig;
+    const originals = await prepareKuaishouDramaCoverFiles(task, [
+      poster(landscapeFile, 1_600, 1_000),
+      poster(portraitFile, 900, 1_200),
+    ], { aiClient, aiImageModel: "test-image-model", assetDownloadDir: temporaryRoot });
+    assert.equal(requests.length, 4);
+    assert.equal(resolveKuaishouDramaCoverFile(task, "ad-unlock"), originals.dramaCover);
+    assert.equal(resolveKuaishouEpisodeCoverFile(task, "full-paid"), originals.episodeCover);
+    for (const kind of ["ad-unlock-2", "ad-unlock-3"]) {
+      assert.deepEqual(await readImageDimensions(resolveKuaishouDramaCoverFile(task, kind)), KUAISHOU_DRAMA_COVER_SIZE);
+      assert.deepEqual(await readImageDimensions(resolveKuaishouEpisodeCoverFile(task, kind)), KUAISHOU_EPISODE_COVER_SIZE);
+      assert.notEqual(resolveKuaishouDramaCoverFile(task, kind), originals.dramaCover);
+      assert.notEqual(resolveKuaishouEpisodeCoverFile(task, kind), originals.episodeCover);
+    }
+    assert.notEqual(resolveKuaishouDramaCoverFile(task, "ad-unlock-2"), resolveKuaishouDramaCoverFile(task, "ad-unlock-3"));
+    assert.deepEqual(requests.map((request) => request.size).sort(), ["1792x2400", "1792x2400", "2208x1376", "2208x1376"]);
+    assert.ok(requests.every((request) => String(request.prompt).includes("不要绘制任何新文字")));
+  } finally {
+    await rm(temporaryRoot, { recursive: true, force: true });
+  }
+});
+
+void test("rejects an extra ad cover when AI inspection finds visible text", async () => {
+  const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "kuaishou-text-reject-test-"));
+  try {
+    const landscapeFile = path.join(temporaryRoot, "landscape.svg");
+    const portraitFile = path.join(temporaryRoot, "portrait.svg");
+    await Promise.all([
+      writeFile(landscapeFile, svg(1_600, 1_000, "#b91c1c")),
+      writeFile(portraitFile, svg(900, 1_200, "#1d4ed8")),
+    ]);
+    const aiClient = {
+      generateImage: async (request: ImageGenerationOptions) => {
+        const [width, height] = request.size!.split("x").map(Number);
+        return { images: [{ data: svg(width!, height!, "#15803d"), mimeType: "image/svg+xml" }], model: "test-image-model" };
+      },
+      analyzeImages: async (_request: ImageAnalysisOptions) => ({
+        finishReason: "stop",
+        model: "test-analysis-model",
+        text: JSON.stringify({
+          mainSubjectsComplete: true,
+          facesIntact: true,
+          titlePresent: true,
+          titleReadable: true,
+          titleSeverelyIncorrect: false,
+          titleInsideSafeArea: true,
+          hasProhibitedOverlay: false,
+          hasClearlyUnrelatedOrGibberishText: false,
+          noMirroringOrTiling: true,
+          referenceSimilarityConfidence: 0.95,
+          detectedTexts: ["残留标题"],
+          blockingIssues: [],
+          warnings: [],
+        }),
+      }),
+    } as unknown as DramaAiClient;
+    const task = {
+      title: "原剧名",
+      publishType: "三个广告版本",
+      summary: "测试剧情简介",
+      adVersion2Title: "第二版剧名",
+      adVersion3Title: "第三版剧名",
+    } as unknown as KuaishouDramaTaskConfig;
+    await assert.rejects(
+      prepareKuaishouDramaCoverFiles(task, [
+        poster(landscapeFile, 1_600, 1_000),
+        poster(portraitFile, 900, 1_200),
+      ], { aiClient, aiImageModel: "test-image-model", aiCoverGenerationRetryAttempts: 0, assetDownloadDir: temporaryRoot }),
+      /KUAISHOU_DRAMA_AI_COVER_GENERATION_FAILED.*text-present/,
+    );
   } finally {
     await rm(temporaryRoot, { recursive: true, force: true });
   }

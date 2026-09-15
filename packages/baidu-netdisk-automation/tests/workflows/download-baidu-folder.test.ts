@@ -5,6 +5,7 @@ import { runInNewContext } from "node:vm";
 import {
   baiduShareFailureText,
   classifyBaiduNetdiskOwnershipProofName,
+  collapseIdenticalRemoteEpisodeAliases,
   compareRemoteVideoDirectoryCandidates,
   inspectContiguousEpisodeIndexes,
   isAutomationTemporaryTransferPath,
@@ -13,6 +14,7 @@ import {
   isBaiduNetdiskScreenshotCandidateDirectory,
   isGenericBaiduNetdiskMaterialDirectoryName,
   isSupportedEpisodeVideoFileName,
+  validateRemoteEpisodePathSelection,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
 
@@ -75,6 +77,82 @@ test("browser-injected Baidu helpers run after serialization without module scop
   assert.equal(isolatedDetector([...images, { name: "第1集.mp4", isDirectory: false }], 1), false);
   const score = videoDirectoryCandidate({});
   assert.equal(isolate(compareRemoteVideoDirectoryCandidates)(score, score), 0);
+  assert.equal(
+    isolate(collapseIdenticalRemoteEpisodeAliases)([
+      { index: 1, name: "剧名-第1集.mp4", path: "/剧名-第1集.mp4", size: 100 },
+      { index: 1, name: "分集-1.mp4", path: "/分集-1.mp4", size: 100 },
+    ]).files.length,
+    1,
+  );
+});
+
+test("collapses renamed remote episode copies only when their exact sizes match", () => {
+  const matching = collapseIdenticalRemoteEpisodeAliases([
+    { index: 1, name: "瘸腿-分集-1.mp4", path: "/瘸腿-分集-1.mp4", size: 162_214_707 },
+    { index: 1, name: "全村笑我娶瘸腿姑娘-第1集.mp4", path: "/全村笑我娶瘸腿姑娘-第1集.mp4", size: 162_214_707 },
+    { index: 2, name: "瘸腿-分集-2.mp4", path: "/瘸腿-分集-2.mp4", size: 155_608_678 },
+    { index: 2, name: "全村笑我娶瘸腿姑娘-第2集.mp4", path: "/全村笑我娶瘸腿姑娘-第2集.mp4", size: 155_608_678 },
+  ]);
+
+  assert.deepEqual(matching.files.map((file) => file.index), [1, 2]);
+  assert.ok(matching.files.every((file) => file.name.includes("第")));
+  assert.equal(matching.ignored.length, 2);
+
+  const conflicting = collapseIdenticalRemoteEpisodeAliases([
+    { index: 1, name: "版本A-1.mp4", path: "/版本A-1.mp4", size: 100 },
+    { index: 1, name: "版本B-1.mp4", path: "/版本B-1.mp4", size: 101 },
+  ]);
+  assert.equal(conflicting.files.length, 2);
+  assert.equal(conflicting.ignored.length, 0);
+
+  const differentHashes = collapseIdenticalRemoteEpisodeAliases([
+    { index: 1, name: "版本A-1.mp4", path: "/版本A-1.mp4", size: 100, contentHash: "aaa" },
+    { index: 1, name: "版本B-1.mp4", path: "/版本B-1.mp4", size: 100, contentHash: "bbb" },
+  ]);
+  assert.equal(differentHashes.files.length, 2);
+});
+
+test("reduces two renamed 1-60 sets to one complete 60-episode set", () => {
+  const candidates = Array.from({ length: 60 }, (_, position) => position + 1).flatMap((index) => [
+    {
+      index,
+      name: `瘸腿-分集-${index}.mp4`,
+      path: `/瘸腿-分集-${index}.mp4`,
+      size: 100_000_000 + index,
+    },
+    {
+      index,
+      name: `全村笑我娶瘸腿姑娘-第${index}集.mp4`,
+      path: `/全村笑我娶瘸腿姑娘-第${index}集.mp4`,
+      size: 100_000_000 + index,
+    },
+  ]);
+  const resolved = collapseIdenticalRemoteEpisodeAliases(candidates);
+  assert.equal(resolved.files.length, 60);
+  assert.deepEqual(resolved.files.map((file) => file.index), Array.from({ length: 60 }, (_, index) => index + 1));
+  assert.equal(resolved.ignored.length, 60);
+});
+
+test("accepts only one complete continuous AI-selected episode set", () => {
+  const candidates = [
+    { index: 1, name: "A-1.mp4", path: "/A-1.mp4", size: 100 },
+    { index: 1, name: "B-1.mp4", path: "/B-1.mp4", size: 101 },
+    { index: 2, name: "A-2.mp4", path: "/A-2.mp4", size: 200 },
+    { index: 2, name: "B-2.mp4", path: "/B-2.mp4", size: 201 },
+  ];
+  assert.deepEqual(
+    validateRemoteEpisodePathSelection(candidates, ["/B-1.mp4", "/B-2.mp4"], 2)
+      ?.map((file) => file.path),
+    ["/B-1.mp4", "/B-2.mp4"],
+  );
+  assert.equal(
+    validateRemoteEpisodePathSelection(candidates, ["/A-1.mp4", "/B-1.mp4"], 2),
+    undefined,
+  );
+  assert.equal(
+    validateRemoteEpisodePathSelection(candidates, ["/A-1.mp4"], 2),
+    undefined,
+  );
 });
 
 test("only accepts root-level timestamped automation transfer directories", () => {

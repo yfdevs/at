@@ -12,6 +12,8 @@ function task(publishType?: KuaishouDramaPublishType) {
     title: "测试短剧",
     episodeCount: 10,
     publishType,
+    adVersion2Title: "雨夜归人",
+    adVersion3Title: "旧城来信",
     fullDramaPriceYuan: 4.9,
     summary: "这是一段用于验证快手短剧发布版本选择逻辑的剧情简介。".repeat(4),
     genderChannel: "不限",
@@ -21,10 +23,10 @@ function task(publishType?: KuaishouDramaPublishType) {
   });
 }
 
-void test("publishes both variants when publishType is empty", () => {
+void test("publishes one paid and three ad variants when publishType is empty", () => {
   const variants = createKuaishouDramaPublishVariants(task());
-  assert.deepEqual(variants.map((item) => item.kind), ["full-paid", "ad-unlock"]);
-  assert.deepEqual(variants.map((item) => item.title), ["《测试短剧》", "测试短剧"]);
+  assert.deepEqual(variants.map((item) => item.kind), ["full-paid", "ad-unlock", "ad-unlock-2", "ad-unlock-3"]);
+  assert.deepEqual(variants.map((item) => item.title), ["《测试短剧》", "测试短剧", "雨夜归人", "旧城来信"]);
 
   for (const publishType of [null, "", "   "]) {
     const parsed = kuaishouDramaTaskSchema.parse({
@@ -33,6 +35,25 @@ void test("publishes both variants when publishType is empty", () => {
     });
     assert.equal(parsed.publishType, undefined);
   }
+});
+
+void test("publishes only three ad variants when selected", () => {
+  const variants = createKuaishouDramaPublishVariants(task("三个广告版本"));
+  assert.deepEqual(variants.map((item) => item.kind), ["ad-unlock", "ad-unlock-2", "ad-unlock-3"]);
+  assert.ok(variants.every((item) => item.saleMode === "观看广告解锁"));
+});
+
+void test("explicit 全部 uses the four-variant sequence", () => {
+  assert.deepEqual(
+    createKuaishouDramaPublishVariants(task("全部")).map((item) => item.kind),
+    ["full-paid", "ad-unlock", "ad-unlock-2", "ad-unlock-3"],
+  );
+});
+
+void test("requires distinct extra ad titles for triple and all modes", () => {
+  const base = task("广告");
+  assert.equal(kuaishouDramaTaskSchema.safeParse({ ...base, publishType: "全部", adVersion2Title: "" }).success, false);
+  assert.equal(kuaishouDramaTaskSchema.safeParse({ ...base, publishType: "三个广告版本", adVersion3Title: "测试短剧" }).success, false);
 });
 
 void test("publishes only the paid variant when publishType is 付费", () => {
@@ -60,6 +81,6 @@ void test("normalizes existing book-title marks before formatting each variant",
   markedTask.title = "《测试短剧》";
   assert.deepEqual(
     createKuaishouDramaPublishVariants(markedTask).map((item) => item.title),
-    ["《测试短剧》", "测试短剧"],
+    ["《测试短剧》", "测试短剧", "雨夜归人", "旧城来信"],
   );
 });

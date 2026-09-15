@@ -118,9 +118,28 @@ export function buildKuaishouCounterpartCoverPrompt(options: {
   ].join("\n");
 }
 
+export function buildKuaishouTextlessVariantCoverPrompt(options: {
+  kind: KuaishouCoverKind;
+  variant: 2 | 3;
+  summary: string;
+}) {
+  const direction = options.variant === 2
+    ? "突出核心人物之间的情绪张力，采用具有电影感的近景和自然背景。"
+    : "突出故事发生的场景、关键道具和人物关系，采用有纵深感的中景构图。";
+  return [
+    `参考原剧封面及剧情简介，创作第 ${options.variant} 个广告版本的${coverDetails[options.kind].label}。`,
+    `剧情简介：${options.summary}`,
+    direction,
+    "保留原剧主要人物的外貌、服饰、时代和作品辨识度；重新设计画面，不要简单裁切、拼接、镜像或复制原封面。",
+    "这是一张纯画面封面。彻底去掉参考图中所有剧名、标题、文字、字母、数字、标志、水印、二维码、字幕、按钮和排版元素；不要绘制任何新文字。",
+    "人物面部与关键道具完整自然，主体处于安全区域，四周留出裁切余量。直接输出可发布的成品图。",
+  ].join("\n");
+}
+
 function buildValidationRetryGuidance(
   title: string,
   validation: KuaishouGeneratedCoverValidation,
+  textless = false,
 ) {
   const guidance = new Set<string>();
   if (!validation.mainSubjectsComplete) {
@@ -129,15 +148,18 @@ function buildValidationRetryGuidance(
   if (!validation.facesIntact) {
     guidance.add("保持参考人物的面部特征，确保人脸自然、完整、无遮挡。");
   }
-  const textValidation = evaluateCommercialPosterTextValidation(title, validation);
+  const textValidation = textless ? { failures: [] as string[] } : evaluateCommercialPosterTextValidation(title, validation);
   if (textValidation.failures.some((failure) => /剧名/.test(failure))) {
     guidance.add("完整清晰地展示准确剧名，逐字核对，不得改字或漏字。");
   }
-  if (!validation.titleInsideSafeArea) {
+  if (!textless && !validation.titleInsideSafeArea) {
     guidance.add("把剧名移入中央区域，与画面边缘留出明显背景空间。");
   }
   if (validation.hasProhibitedOverlay || validation.hasClearlyUnrelatedOrGibberishText) {
     guidance.add("删除其他作品名、乱码、广告引流、二维码、水印或技术界面文字；正常海报辅助文案可以保留。");
+  }
+  if (textless && (validation.titlePresent || validation.detectedTexts.length > 0)) {
+    guidance.add("删除画面中所有可见文字、数字、标志和水印，包括参考封面原有的剧名。");
   }
   if (!validation.noMirroringOrTiling) {
     guidance.add("自然延展场景，不要镜像、重复或拼贴背景。");
@@ -148,12 +170,17 @@ function buildValidationRetryGuidance(
   return [...guidance].join("\n");
 }
 
-function validationFailure(title: string, validation: KuaishouGeneratedCoverValidation) {
-  const textValidation = evaluateCommercialPosterTextValidation(title, validation);
+function validationFailure(title: string, validation: KuaishouGeneratedCoverValidation, textless = false) {
+  const textValidation = textless
+    ? { failures: [
+        ...(validation.titlePresent || validation.detectedTexts.length > 0 ? ["text-present"] : []),
+        ...(validation.hasProhibitedOverlay || validation.hasClearlyUnrelatedOrGibberishText ? ["overlay-or-gibberish"] : []),
+      ] }
+    : evaluateCommercialPosterTextValidation(title, validation);
   const failedChecks = [
     ["main-subjects-incomplete", validation.mainSubjectsComplete],
     ["faces-damaged", validation.facesIntact],
-    ["title-outside-safe-area", validation.titleInsideSafeArea],
+    ["title-outside-safe-area", textless || validation.titleInsideSafeArea],
     ["mirroring-or-tiling", validation.noMirroringOrTiling],
     ["reference-similarity-low", validation.referenceSimilarityConfidence >= 0.75],
   ].filter(([, passed]) => !passed).map(([name]) => name);
@@ -165,6 +192,7 @@ async function validateGeneratedCover(options: {
   generatedFile: string;
   kind: KuaishouCoverKind;
   title: string;
+  textless?: boolean;
   runtime: KuaishouDramaRuntimeOptions;
 }) {
   const detail = coverDetails[options.kind];
@@ -176,16 +204,24 @@ async function validateGeneratedCover(options: {
     prompt: [
       "你是快手短剧封面质检员。第 1 张是参考原图，第 2 张是待验收的生成图。",
       `待验收图用于${detail.label}，目标比例为${detail.ratioLabel}。`,
-      `准确剧名是：${options.title}。`,
-      "请逐项判断：主要人物是否完整；人脸是否无畸变和遮挡；剧名是否完整可读且与四周边界至少保持约 5% 安全距离。剧名允许分行、竖排、标点调整和局部重复。",
-      "允许地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字，不得仅因不是剧名就判失败。",
-      "只把其他作品名、随机乱码、联系方式、账号、广告引流、二维码、平台水印、坐标、尺寸、时间戳、相机参数、取景框或伪界面元素判为文字阻断问题。不确定的小字放入 warnings。",
+      options.textless
+        ? "这是无字封面。仔细检查生成图上所有可见的汉字、字母、数字、标志、字幕、水印或乱码；任何可见文字都必须填入 detectedTexts，titlePresent 表示是否残留任何标题文字。"
+        : `准确剧名是：${options.title}。`,
+      options.textless
+        ? "只接受完全没有可见文字或标志的纯画面；主要人物、面部和关键道具必须完整。"
+        : "请逐项判断：主要人物是否完整；人脸是否无畸变和遮挡；剧名是否完整可读且与四周边界至少保持约 5% 安全距离。剧名允许分行、竖排、标点调整和局部重复。",
+      options.textless
+        ? "参考图允许有文字，但只评估第 2 张生成图的文字。"
+        : "允许地点、年代、人物身份、角色或演员信息、剧情氛围词、简短宣传语和装饰性小字，不得仅因不是剧名就判失败。",
+      options.textless
+        ? "任何残留文字、二维码、平台水印或伪界面元素都属于阻断问题。"
+        : "只把其他作品名、随机乱码、联系方式、账号、广告引流、二维码、平台水印、坐标、尺寸、时间戳、相机参数、取景框或伪界面元素判为文字阻断问题。不确定的小字放入 warnings。",
       "检查背景是否有明显镜像、重复拼接或边框，以及生成图与参考图的人物和作品辨识度是否一致。",
       "只返回 JSON 对象，不要 Markdown 或解释。布尔字段必须严格填 true/false。",
       "格式：" + JSON.stringify({
         mainSubjectsComplete: true,
         facesIntact: true,
-        titlePresent: true,
+        titlePresent: !options.textless,
         titleReadable: true,
         titleSeverelyIncorrect: false,
         titleInsideSafeArea: true,
@@ -193,7 +229,7 @@ async function validateGeneratedCover(options: {
         hasClearlyUnrelatedOrGibberishText: false,
         noMirroringOrTiling: true,
         referenceSimilarityConfidence: 0.95,
-        detectedTexts: [options.title],
+        detectedTexts: options.textless ? [] : [options.title],
         blockingIssues: [],
         warnings: [],
       }),
@@ -203,10 +239,12 @@ async function validateGeneratedCover(options: {
     temperature: 0,
   });
   const validation = kuaishouGeneratedCoverValidationSchema.parse(completion.data);
-  const textValidation = evaluateCommercialPosterTextValidation(options.title, validation);
+  const textValidation = options.textless
+    ? { warnings: [] as string[] }
+    : evaluateCommercialPosterTextValidation(options.title, validation);
   return {
     validation,
-    failure: validationFailure(options.title, validation),
+    failure: validationFailure(options.title, validation, options.textless),
     warnings: textValidation.warnings,
     model: completion.model,
     requestId: completion.requestId,
@@ -291,6 +329,8 @@ async function generateMissingCover(options: {
   sourceKind: "landscape" | "portrait" | "generic";
   kind: KuaishouCoverKind;
   title: string;
+  textlessVariant?: 2 | 3;
+  summary?: string;
   runtime: KuaishouDramaRuntimeOptions;
 }) {
   const outputRoot = options.runtime.assetDownloadDir?.trim();
@@ -299,10 +339,16 @@ async function generateMissingCover(options: {
   const model = options.runtime.aiImageModel?.trim();
   if (!model) throw new Error("DRAMA_AI_IMAGE_MODEL_REQUIRED");
 
-  const prompt = buildKuaishouCounterpartCoverPrompt({
-    kind: options.kind,
-    title: options.title,
-  });
+  const prompt = options.textlessVariant
+    ? buildKuaishouTextlessVariantCoverPrompt({
+        kind: options.kind,
+        variant: options.textlessVariant,
+        summary: options.summary ?? "",
+      })
+    : buildKuaishouCounterpartCoverPrompt({
+        kind: options.kind,
+        title: options.title,
+      });
   const cacheKey = await generatedCoverCacheKey({
     sourceFile: options.sourceFile,
     kind: options.kind,
@@ -370,10 +416,11 @@ async function generateMissingCover(options: {
           generatedFile: output,
           kind: options.kind,
           title: options.title,
+          textless: Boolean(options.textlessVariant),
           runtime: options.runtime,
         });
         if (validated.failure) {
-          retryGuidance = buildValidationRetryGuidance(options.title, validated.validation);
+          retryGuidance = buildValidationRetryGuidance(options.title, validated.validation, Boolean(options.textlessVariant));
           throw new Error(`KUAISHOU_DRAMA_AI_COVER_VALIDATION_FAILED: ${validated.failure}`);
         }
         if (validated.warnings.length > 0) {
@@ -390,6 +437,7 @@ async function generateMissingCover(options: {
           sourceKind: options.sourceKind,
           kind: options.kind,
           title: options.title,
+          textlessVariant: options.textlessVariant,
           model: result.model,
           requestId: result.requestId,
           target,
@@ -464,6 +512,40 @@ export async function prepareKuaishouDramaCoverFiles(
 
   task.localCoverFile = dramaCover;
   task.localEpisodeCoverFile = episodeCover;
+  if (task.publishType !== "付费" && task.publishType !== "广告") {
+    task.localVariantCoverFiles = {};
+    for (const variant of [2, 3] as const) {
+      const kind = variant === 2 ? "ad-unlock-2" : "ad-unlock-3";
+      const title = variant === 2 ? task.adVersion2Title! : task.adVersion3Title!;
+      const generated = await Promise.allSettled([
+        generateMissingCover({
+          sourceFile: selected.landscape?.file ?? selected.fallback.file,
+          sourceKind: selected.landscape ? "landscape" : "generic",
+          kind: "drama",
+          title,
+          textlessVariant: variant,
+          summary: task.summary,
+          runtime: options,
+        }),
+        generateMissingCover({
+          sourceFile: selected.portrait?.file ?? selected.fallback.file,
+          sourceKind: selected.portrait ? "portrait" : "generic",
+          kind: "episode",
+          title,
+          textlessVariant: variant,
+          summary: task.summary,
+          runtime: options,
+        }),
+      ]);
+      const failure = generated.find((result) => result.status === "rejected");
+      if (failure?.status === "rejected") throw failure.reason;
+      const drama = generated[0]!.status === "fulfilled" ? generated[0]!.value : undefined;
+      const episode = generated[1]!.status === "fulfilled" ? generated[1]!.value : undefined;
+      if (!drama || !episode) throw new Error("KUAISHOU_DRAMA_AI_VARIANT_COVERS_INCOMPLETE");
+      task.localVariantCoverFiles[kind] = { drama, episode };
+      log(options, `[kuaishou-drama] textless covers ready: variant=${kind} drama=${drama} episode=${episode}`);
+    }
+  }
   log(
     options,
     `[kuaishou-drama] unified cover files ready: drama=${dramaCover} episode=${episodeCover}`,
@@ -476,14 +558,18 @@ export async function prepareKuaishouDramaCoverFiles(
   };
 }
 
-export function resolveKuaishouDramaCoverFile(task: KuaishouDramaTaskConfig) {
-  const file = task.localCoverFile?.trim();
+export function resolveKuaishouDramaCoverFile(task: KuaishouDramaTaskConfig, variant?: string) {
+  const file = (variant === "ad-unlock-2" || variant === "ad-unlock-3"
+    ? task.localVariantCoverFiles?.[variant]?.drama
+    : task.localCoverFile)?.trim();
   if (!file) throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
   return file;
 }
 
-export function resolveKuaishouEpisodeCoverFile(task: KuaishouDramaTaskConfig) {
-  const file = task.localEpisodeCoverFile?.trim();
+export function resolveKuaishouEpisodeCoverFile(task: KuaishouDramaTaskConfig, variant?: string) {
+  const file = (variant === "ad-unlock-2" || variant === "ad-unlock-3"
+    ? task.localVariantCoverFiles?.[variant]?.episode
+    : task.localEpisodeCoverFile)?.trim();
   if (!file) throw new Error("KUAISHOU_DRAMA_LOCAL_EPISODE_COVER_FILE_REQUIRED");
   return file;
 }
