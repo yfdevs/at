@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import cron, { type ScheduledTask } from "node-cron";
 import { existsSync, mkdirSync, statSync } from "node:fs";

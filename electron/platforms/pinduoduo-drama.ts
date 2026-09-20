@@ -42,8 +42,9 @@ type PinduoduoDramaRuntime = {
 
 export type PinduoduoDramaConfig = {
   accountProfileName: string;
+  creatorUid: string;
+  browserExecutablePath: string;
   headless: string;
-  operationDelaySeconds: string;
   runDataDir: string;
   logRetentionDays: string;
   taskPollIntervalMinutes: string;
@@ -76,10 +77,20 @@ type PinduoduoDramaStore = {
   config: Partial<PinduoduoDramaConfig> & Record<string, string | undefined>;
 };
 
+function defaultPinduoduoBrowserExecutablePath() {
+  const candidates = [
+    process.env.LOCALAPPDATA ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe") : "",
+    process.env.PROGRAMFILES ? path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe") : "",
+    process.env["PROGRAMFILES(X86)"] ? path.join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe") : "",
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate)) ?? "";
+}
+
 const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
   accountProfileName: "default",
+  creatorUid: "7735796497358",
+  browserExecutablePath: defaultPinduoduoBrowserExecutablePath(),
   headless: "false",
-  operationDelaySeconds: "0",
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
   taskPollIntervalMinutes: "120",
@@ -140,20 +151,6 @@ function getStore() {
   return store;
 }
 
-function normalizeOperationDelaySeconds(value: string | undefined) {
-  const nextValue = value?.trim();
-  if (!nextValue) {
-    return defaultPinduoduoDramaConfig.operationDelaySeconds;
-  }
-
-  const numericValue = Number.parseFloat(nextValue);
-  if (!Number.isFinite(numericValue) || numericValue < 0) {
-    return defaultPinduoduoDramaConfig.operationDelaySeconds;
-  }
-
-  return nextValue;
-}
-
 function normalizePositiveInteger(value: string | undefined, fallback: string, min: number) {
   const nextValue = value?.trim();
   if (!nextValue) {
@@ -177,8 +174,10 @@ function normalizeConfig(
   return {
     accountProfileName:
       config.accountProfileName?.trim() || defaultPinduoduoDramaConfig.accountProfileName,
+    creatorUid: config.creatorUid?.trim() || defaultPinduoduoDramaConfig.creatorUid,
+    browserExecutablePath:
+      config.browserExecutablePath?.trim() ?? defaultPinduoduoDramaConfig.browserExecutablePath,
     headless: config.headless ?? defaultPinduoduoDramaConfig.headless,
-    operationDelaySeconds: normalizeOperationDelaySeconds(config.operationDelaySeconds),
     runDataDir:
       !config.runDataDir || config.runDataDir === ".drama-runs"
         ? defaultPinduoduoDramaConfig.runDataDir
@@ -333,7 +332,6 @@ async function startRuntime() {
   const config = readConfig();
   const paths = storagePaths(config);
   ensureStorageDirectories(paths);
-  const operationDelayMs = Math.max(0, Number.parseFloat(config.operationDelaySeconds) || 0) * 1000;
   const logRetentionDays = Math.max(1, Number.parseInt(config.logRetentionDays, 10) || 3);
   const { startPinduoduoDramaRuntime } = await import("@drama/pinduoduo-drama-automation");
 
@@ -351,9 +349,10 @@ async function startRuntime() {
         requesterPlatform: "pinduoduo-drama",
       }),
     config: {
+      creatorUid: config.creatorUid,
       browser: {
+        executablePath: config.browserExecutablePath || undefined,
         headless: config.headless === "true",
-        slowMo: operationDelayMs,
       },
       taskPollIntervalMinutes: config.taskPollIntervalMinutes,
       video: {
@@ -383,6 +382,14 @@ export function registerPinduoduoDramaPlatformHandlers() {
         storagePaths: storagePaths(nextConfig),
         restartRequired: runtimeController.running || runtimeController.startingPromise !== null,
       };
+    },
+  );
+
+  ipcMain.handle(
+    "pinduoduo-drama:config:test-browser-path",
+    async (_event, executablePath: string) => {
+      const { testPinduoduoBrowserExecutable } = await import("@drama/pinduoduo-drama-automation");
+      return testPinduoduoBrowserExecutable(executablePath);
     },
   );
 

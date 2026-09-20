@@ -1,4 +1,4 @@
-export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type MeituanCreationLoginState = "login-required" | "logged-in" | "unknown"
 
 export type MeituanCreationConfig = {
   apiBaseUrl: string

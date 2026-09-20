@@ -1,4 +1,4 @@
-export type BaiduDramaLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type BaiduDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type BaiduDramaConfig = {
   apiBaseUrl: string

@@ -23,6 +23,7 @@ export type CreateMockDouyinDramaTaskOptions = {
   payCommitmentFiles?: string[];
   publishAccountName?: string;
   projectScreenshotFiles?: string[];
+  paidEpisodeStart?: number;
   roles?: Array<{
     name: string;
     actorName?: string;
@@ -34,14 +35,17 @@ export type CreateMockDouyinDramaTaskOptions = {
   summary?: string;
   scheduledPublishAt?: string;
   title?: string;
+  unitPriceYuan?: number;
 };
 
 function defaultMockScheduledPublishAt() {
   const value = new Date(Date.now() + 4 * 24 * 60 * 60 * 1_000);
   value.setMinutes(0, 0, 0);
   const pad = (part: number) => String(part).padStart(2, "0");
-  return `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
-    `${pad(value.getHours())}:00:00`;
+  return (
+    `${value.getFullYear()}-${pad(value.getMonth() + 1)}-${pad(value.getDate())} ` +
+    `${pad(value.getHours())}:00:00`
+  );
 }
 
 function createMockTask(options: CreateMockDouyinDramaTaskOptions): ClaimedDouyinDramaTask {
@@ -90,6 +94,8 @@ function createMockTask(options: CreateMockDouyinDramaTaskOptions): ClaimedDouyi
       publishMode: "自主发布",
       publishAccountName: options.publishAccountName?.trim() || "兜兜动漫",
       scheduledPublishAt: options.scheduledPublishAt?.trim() || defaultMockScheduledPublishAt(),
+      unitPriceYuan: options.unitPriceYuan ?? 0.5,
+      paidEpisodeStart: options.paidEpisodeStart ?? 10,
       costConfigurationFiles: options.costConfigurationFiles ?? [DOUYIN_DRAMA_MOCK_IMAGE_URL],
       // This field is conditional and is not rendered for the current motion-comic
       // form/account. Keep it empty by default; callers can still provide files
@@ -156,7 +162,10 @@ export function createMockDouyinCopyrightSeriesTask(
 }
 
 export function createMockDouyinNetdiskTestTask(
-  options: Pick<CreateMockDouyinDramaTaskOptions, "accountId" | "accountName" | "submit"> = {},
+  options: Pick<
+    CreateMockDouyinDramaTaskOptions,
+    "accountId" | "accountName" | "paidEpisodeStart" | "submit" | "unitPriceYuan"
+  > = {},
 ) {
   return createMockTask({
     ...options,
@@ -171,7 +180,8 @@ export function createMockDouyinNetdiskTestTask(
     category: "都市日常",
     audience: "通用",
     isAi: true,
-    isCopyrightIpAdaptation: false,
+    isCopyrightIpAdaptation: true,
+    copyrightIpName: "我都成反派们师父了，能是好人？",
     isSeries: false,
     roles: [],
   });

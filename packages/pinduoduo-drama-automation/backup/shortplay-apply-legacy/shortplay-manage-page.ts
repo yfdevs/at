@@ -18,7 +18,7 @@ const SHORTPLAY_ROW_SELECT_TIMEOUT_MS = 30_000;
 const SHORTPLAY_ROW_CHECK_SETTLE_TIMEOUT_MS = 1_500;
 const SHORTPLAY_ROW_READY_SETTLE_MS = 3_000;
 const SHORTPLAY_SUBMIT_TOAST_TIMEOUT_MS = 3_000;
-const SUBMITTED_SHORTPLAY_APPLY_LIST_PAGE_SIZE = 1;
+const SUBMITTED_SHORTPLAY_APPLY_LIST_PAGE_SIZE = 2_000;
 const PINDUODUO_SHORTPLAY_APPLY_LIST_PATH = "/mms/gaia/topic/apply/list";
 const PINDUODUO_SHORTPLAY_APPLY_LIST_URL = `${PINDUODUO_MCN_ORIGIN}${PINDUODUO_SHORTPLAY_APPLY_LIST_PATH}`;
 const PINDUODUO_USER_INFO_URL = `${PINDUODUO_MCN_ORIGIN}/api/cafe/login/user_info`;
@@ -282,8 +282,6 @@ type ShortplayApplyListWaitResult = {
 
 export type ShortplayApplyRecord = {
   id?: number;
-  demoUrl?: string;
-  episodeCount?: number;
   rejectReason?: string;
   status?: number;
   title: string;
@@ -324,8 +322,6 @@ function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
     return [
       {
         id: "id" in item && typeof item.id === "number" ? item.id : undefined,
-        demoUrl: "demo_url" in item && typeof item.demo_url === "string" ? item.demo_url : undefined,
-        episodeCount: "episode_count" in item && typeof item.episode_count === "number" ? item.episode_count : undefined,
         rejectReason:
           "reject_reason" in item && typeof item.reject_reason === "string"
             ? item.reject_reason
@@ -512,15 +508,6 @@ export async function fetchSubmittedShortplayApplyRecords(
     records,
     totalCount,
   };
-}
-
-export async function fetchApprovedShortplays(
-  page: Page,
-  options: PinduoduoDramaRuntimeOptions,
-  pageNumber = 1,
-): Promise<ShortplayApplyRecord[]> {
-  const result = await fetchSubmittedShortplayApplyRecords(page, options, { page: pageNumber, pageSize: 1 });
-  return result.records.filter((record) => record.status === 1);
 }
 
 async function clickShortplayManageTabAndWaitForList(

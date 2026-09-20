@@ -17,7 +17,7 @@ import {
   saveCredentialState,
 } from "./browser-session.js";
 import { openShortplayManagePage } from "./shortplay-manage-page.js";
-import { claimAndSubmitNextTask } from "./task-runner.js";
+import { runApprovedShortplayCycle } from "./approved-shortplay-cycle.js";
 
 const CHINA_TIME_UTC_OFFSET_MS = 8 * 60 * 60 * 1000;
 const TASK_POLL_NIGHT_START_HOUR = 0;
@@ -50,6 +50,9 @@ function formatChinaTimeIso(date: Date): string {
   const chinaDate = new Date(date.getTime() + CHINA_TIME_UTC_OFFSET_MS);
   return `${chinaDate.toISOString().replace("Z", "")}+08:00`;
 }
+
+void nextTaskPollDelayMs;
+void formatChinaTimeIso;
 
 export async function startPinduoduoDramaRuntime(
   options: PinduoduoDramaRuntimeOptions = {},
@@ -87,27 +90,7 @@ export async function startPinduoduoDramaRuntime(
     wakeTaskLoop = null;
   }
 
-  async function runTaskLoop(activePage: Page): Promise<void> {
-    while (running && !activePage.isClosed()) {
-      await claimAndSubmitNextTask(activePage, options).catch((error: unknown) => {
-        log(options, "error", "runtime", "failed to run pinduoduo drama task loop tick", {
-          error,
-        });
-      });
-
-      if (!running || activePage.isClosed()) {
-        break;
-      }
-
-      const delayMs = nextTaskPollDelayMs(options);
-      log(options, "info", "runtime", "pinduoduo drama task loop sleeping", {
-        delayMs,
-        nextPollAt: new Date(Date.now() + delayMs).toISOString(),
-        nextPollAtChina: formatChinaTimeIso(new Date(Date.now() + delayMs)),
-      });
-      await waitForNextTaskPoll(delayMs);
-    }
-  }
+  void waitForNextTaskPoll;
 
   await cleanupOldLogFiles(options).catch(() => undefined);
   log(options, "info", "runtime", "starting browser", {
@@ -132,8 +115,14 @@ export async function startPinduoduoDramaRuntime(
       });
     });
 
-  if (managePageReady) {
-    taskLoopPromise = runTaskLoop(page);
+  if (managePageReady && context) {
+    taskLoopPromise = runApprovedShortplayCycle(page, context, options)
+      .then((opened) => {
+        log(options, "info", "runtime", "approved shortplay cycle completed", { opened });
+      })
+      .catch((error: unknown) => {
+        log(options, "error", "runtime", "approved shortplay cycle failed", { error });
+      });
   }
 
   return {

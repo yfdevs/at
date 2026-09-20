@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
@@ -67,6 +67,8 @@ export type DouyinDramaConfig = {
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
   episodeUploadWaitTimeoutMinutes: string;
+  unitPriceYuan: string;
+  paidEpisodeStart: string;
   headless: string;
   operationDelaySeconds: string;
   taskPollIntervalSeconds: string;
@@ -93,6 +95,8 @@ const defaultConfig: DouyinDramaConfig = {
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
+  unitPriceYuan: "0.5",
+  paidEpisodeStart: "10",
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
@@ -112,9 +116,20 @@ function getStore() {
   return store;
 }
 
-function numberText(value: string | undefined, fallback: string, minimum: number) {
+function numberText(
+  value: string | undefined,
+  fallback: string,
+  minimum: number,
+  maximum = Number.POSITIVE_INFINITY,
+  integer = false,
+) {
   const number = Number.parseFloat(value ?? "");
-  return Number.isFinite(number) && number >= minimum ? String(value).trim() : fallback;
+  return Number.isFinite(number)
+      && number >= minimum
+      && number <= maximum
+      && (!integer || Number.isInteger(number))
+    ? String(value).trim()
+    : fallback;
 }
 
 function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig {
@@ -130,6 +145,14 @@ function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig 
       config.episodeUploadWaitTimeoutMinutes,
       defaultConfig.episodeUploadWaitTimeoutMinutes,
       1,
+    ),
+    unitPriceYuan: numberText(config.unitPriceYuan, defaultConfig.unitPriceYuan, 0.1, 9_999),
+    paidEpisodeStart: numberText(
+      config.paidEpisodeStart,
+      defaultConfig.paidEpisodeStart,
+      2,
+      300,
+      true,
     ),
     headless: config.headless === "true" ? "true" : "false",
     operationDelaySeconds: numberText(
@@ -288,6 +311,8 @@ async function startRuntime() {
           10,
         ),
         episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
+        unitPriceYuan: Number.parseFloat(config.unitPriceYuan),
+        paidEpisodeStart: Number.parseInt(config.paidEpisodeStart, 10),
         taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
         aiClientFactory: createConfiguredAiClient,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({

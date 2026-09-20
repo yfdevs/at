@@ -136,6 +136,8 @@ test("provides AI, non-AI, and copyright-series mock builders", () => {
   assert.equal(netdisk.playlet.useFirstAvailableContract, true);
   assert.equal(netdisk.playlet.publishMode, "自主发布");
   assert.equal(netdisk.playlet.publishAccountName, "兜兜动漫");
+  assert.equal(netdisk.playlet.unitPriceYuan, 0.5);
+  assert.equal(netdisk.playlet.paidEpisodeStart, 10);
   assert.match(netdisk.playlet.scheduledPublishAt, /^\d{4}-\d{2}-\d{2} \d{2}:00:00$/u);
   assert.equal(netdisk.playlet.costConfigurationFiles.length, 1);
   assert.equal(netdisk.playlet.payCommitmentFiles.length, 0);
@@ -153,13 +155,20 @@ test("runs one local netdisk task for the temporary phone account without backen
       throw new Error("the mock task must not call the unfinished backend");
     },
   } as DouyinDramaHttpClient;
-  const runtimeOptions = { douyinAccountId: accountId, douyinAccountName: accountId };
+  const runtimeOptions = {
+    douyinAccountId: accountId,
+    douyinAccountName: accountId,
+    paidEpisodeStart: 6,
+    unitPriceYuan: 1.5,
+  };
   resetMockDouyinDramaTaskApi(accountId);
 
   const task = await claimNextDouyinDramaTaskApi({ client, runtimeOptions });
   assert.equal(task?.douyinAccountId, accountId);
   assert.equal(task?.originalTitle, "货车被当免费拉货站，我收车");
   assert.equal(task?.playlet.episodeCount, 35);
+  assert.equal(task?.playlet.unitPriceYuan, 1.5);
+  assert.equal(task?.playlet.paidEpisodeStart, 6);
   assert.match(task?.playlet.baiduPanResourceLink ?? "", /1GyEobepwLhJj5ND2swgvIQ/u);
   assert.equal(await claimNextDouyinDramaTaskApi({ client, runtimeOptions }), null);
 

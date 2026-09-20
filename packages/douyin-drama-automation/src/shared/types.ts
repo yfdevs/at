@@ -114,6 +114,8 @@ export const douyinDramaTaskPayloadSchema = z
     publishMode: z.enum(douyinDramaPublishModeValues).default("自主发布"),
     publishAccountName: optionalText,
     scheduledPublishAt: requiredText,
+    unitPriceYuan: z.coerce.number().min(0.1).max(9_999).optional(),
+    paidEpisodeStart: z.coerce.number().int().min(2).max(300).optional(),
     localHongguoCoverFile: fileReference.optional(),
     localDouyinCoverFile: fileReference.optional(),
     costConfigurationFiles: z.array(fileReference).min(1, "成本配置情况至少需要1个文件引用"),
@@ -137,6 +139,13 @@ export const douyinDramaTaskPayloadSchema = z
         code: z.ZodIssueCode.custom,
         path: ["aigcTools"],
         message: "AI 作品必须至少关联一个 AIGC 工具",
+      });
+    }
+    if (value.paidEpisodeStart !== undefined && value.paidEpisodeStart > value.episodeCount) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["paidEpisodeStart"],
+        message: "付费起始集数不能超过总集数",
       });
     }
   })
@@ -216,6 +225,8 @@ export type DouyinDramaRuntimeOptions = {
   localEpisodeVideoRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
   episodeUploadWaitTimeoutMinutes?: number;
+  unitPriceYuan?: number;
+  paidEpisodeStart?: number;
   taskPollIntervalMs?: number;
   config?: { browser?: { headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;

@@ -1,4 +1,4 @@
-import { app, ipcMain } from "electron";
+﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
 import { mkdirSync } from "node:fs";
 import path from "node:path";

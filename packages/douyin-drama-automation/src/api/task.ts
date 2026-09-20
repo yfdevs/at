@@ -90,6 +90,8 @@ function claimNextMockDouyinDramaTask(
   const task = createMockDouyinNetdiskTestTask({
     accountId,
     accountName: runtimeOptions?.douyinAccountName ?? accountId,
+    paidEpisodeStart: runtimeOptions?.paidEpisodeStart,
+    unitPriceYuan: runtimeOptions?.unitPriceYuan,
     submit: false,
   });
   claimedMockAccountIds.add(accountId);

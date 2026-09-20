@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConfigSection,
   ConfigurationPageFrame,
   type ConfigSectionDefinition,

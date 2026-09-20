@@ -3,6 +3,67 @@ import { DOUYIN_DRAMA_SERIES_TYPE } from "../shared/constants.js";
 import type { DouyinDramaDropdownRecorder } from "../shared/dropdown-options.js";
 import type { DouyinDramaRole } from "../shared/types.js";
 
+const douyinMessageErrorSelectors = [
+  ".arco-message.arco-message-error[role='alert']",
+  ".arco-message-error[role='alert']",
+  ".arco-message-error",
+];
+
+export const DOUYIN_DRAMA_VIDEO_TOPICS = [
+  "#短剧推剧",
+  "#百亿剧好看计划",
+  "#因为一个片段看了整部剧",
+  "#漫剧",
+  "#动态漫",
+] as const;
+
+async function selectDouyinVideoTopics(page: Page, drawer: Locator) {
+  const addTopic = drawer.getByText("#添加话题", { exact: true }).first();
+  const description = drawer.locator('[data-slate-editor="true"][contenteditable="true"]').first();
+  await addTopic.waitFor({ state: "visible", timeout: 5_000 });
+  await description.waitFor({ state: "visible", timeout: 5_000 });
+
+  for (const topic of DOUYIN_DRAMA_VIDEO_TOPICS) {
+    const topicName = topic.slice(1);
+    await addTopic.click();
+    await description.pressSequentially(topicName, { delay: 20 });
+
+    const suggestion = page.locator(".mention-suggest-mount-dom:visible").last();
+    await suggestion.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {
+      throw new Error(`DOUYIN_DRAMA_VIDEO_TOPIC_SUGGESTION_NOT_OPENED: ${topic}`);
+    });
+    const topicNameOption = suggestion
+      .locator('[class*="tag-hash-view-name"]')
+      .filter({ hasText: exactTextPattern(topicName) })
+      .first();
+    const matched = await topicNameOption.waitFor({ state: "visible", timeout: 10_000 })
+      .then(() => true)
+      .catch(() => false);
+    if (!matched) {
+      const observed = (await suggestion
+        .locator('[class*="tag-hash-view-name"]')
+        .allTextContents())
+        .map((value) => value.trim())
+        .filter(Boolean);
+      throw new Error(
+        `DOUYIN_DRAMA_VIDEO_TOPIC_NOT_FOUND: ${topic}; observed=${JSON.stringify(observed)}`,
+      );
+    }
+    await topicNameOption.click();
+    await suggestion.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {
+      throw new Error(`DOUYIN_DRAMA_VIDEO_TOPIC_NOT_SELECTED: ${topic}`);
+    });
+
+    const selectedText = (await description.innerText()).replace(/\s+/g, "");
+    if (!selectedText.includes(topic)) {
+      throw new Error(
+        `DOUYIN_DRAMA_VIDEO_TOPIC_NOT_CONFIRMED: ${topic}; actual=${JSON.stringify(selectedText)}`,
+      );
+    }
+  }
+  await description.blur();
+}
+
 function exactTextPattern(value: string) {
   return new RegExp(`^\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`);
 }
@@ -12,6 +73,65 @@ export function douyinFormItem(page: Page, label: string) {
     .locator(".arco-form-item:visible")
     .filter({ has: page.getByText(label, { exact: true }) })
     .first();
+}
+
+export async function installDouyinPageMessageCapture(page: Page) {
+  const selectorsJson = JSON.stringify(douyinMessageErrorSelectors);
+  await page.evaluate(`(() => {
+    const selectors = ${selectorsJson};
+    const state = window;
+    state.__douyinDramaCapturedPageMessages ??= [];
+    if (state.__douyinDramaPageMessageCaptureInstalled) return;
+    state.__douyinDramaPageMessageCaptureInstalled = true;
+
+    const selector = selectors.join(",");
+    const captureElement = (element) => {
+      if (!(element instanceof HTMLElement) || !element.matches(selector)) return;
+      const style = window.getComputedStyle(element);
+      const rect = element.getBoundingClientRect();
+      if (style.display === "none" || style.visibility === "hidden" || rect.width === 0 || rect.height === 0) {
+        return;
+      }
+      const message = element.textContent?.replace(/\\s+/g, " ").trim();
+      if (message && !state.__douyinDramaCapturedPageMessages?.includes(message)) {
+        state.__douyinDramaCapturedPageMessages?.push(message);
+      }
+    };
+    const captureNode = (node) => {
+      if (node instanceof Element) {
+        captureElement(node);
+        node.querySelectorAll(selector).forEach(captureElement);
+      } else if (node.parentElement) {
+        captureElement(node.parentElement);
+      }
+    };
+
+    document.querySelectorAll(selector).forEach(captureElement);
+    state.__douyinDramaPageMessageObserver = new MutationObserver((mutations) => {
+      mutations.forEach((mutation) => {
+        captureNode(mutation.target);
+        mutation.addedNodes.forEach(captureNode);
+      });
+    });
+    state.__douyinDramaPageMessageObserver.observe(document.body, {
+      attributes: true,
+      attributeFilter: ["class", "style"],
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+  })()`);
+}
+
+async function capturedDouyinPageMessageTexts(page: Page) {
+  return page.evaluate(() => {
+    const state = window as typeof window & {
+      __douyinDramaCapturedPageMessages?: string[];
+    };
+    const messages = [...(state.__douyinDramaCapturedPageMessages ?? [])];
+    state.__douyinDramaCapturedPageMessages = [];
+    return messages;
+  }).catch(() => [] as string[]);
 }
 
 export async function fillInputById(page: Page, id: string, value?: string | number) {
@@ -78,6 +198,25 @@ export function normalizeDouyinPublishDateTime(value: string) {
     formatter.formatToParts(parsed).map((part) => [part.type, part.value]),
   );
   return `${parts.year}-${parts.month}-${parts.day} ${parts.hour}:${parts.minute}:${parts.second}`;
+}
+
+export function resolveDouyinScheduledPublishDateTime(value: string, now = new Date()) {
+  const configured = normalizeDouyinPublishDateTime(value);
+  const target = douyinPublishDateTimeParts(configured);
+  let targetTime = Date.UTC(
+    target.year,
+    target.month - 1,
+    target.day,
+    Number(target.hour) - 8,
+    Number(target.minute),
+    Number(target.second),
+  );
+  const oneDayMs = 24 * 60 * 60 * 1_000;
+  if (targetTime <= now.getTime()) {
+    const elapsedDays = Math.floor((now.getTime() - targetTime) / oneDayMs) + 1;
+    targetTime += elapsedDays * oneDayMs;
+  }
+  return normalizeDouyinPublishDateTime(new Date(targetTime).toISOString());
 }
 
 function douyinPublishDateTimeParts(value: string) {
@@ -190,10 +329,14 @@ async function selectArcoPublishTime(
   }
 }
 
-export async function fillDouyinPublishDateTime(page: Page, value: string) {
+async function fillDouyinDateTimePicker(
+  page: Page,
+  input: Locator,
+  value: string,
+  fieldCode: "SCHEDULED_PUBLISH" | "COMPLETION_PROMISE",
+) {
   const expected = normalizeDouyinPublishDateTime(value);
   const target = douyinPublishDateTimeParts(expected);
-  const input = page.locator("#hong_guo_app_publish_time input").first();
   await input.waitFor({ state: "visible", timeout: 10_000 });
   await input.click();
   const popup = arcoDatePickerPopup(page);
@@ -208,7 +351,7 @@ export async function fillDouyinPublishDateTime(page: Page, value: string) {
     await page.waitForTimeout(100);
   }
   if (!await confirm.isEnabled().catch(() => false)) {
-    throw new Error("DOUYIN_DRAMA_SCHEDULED_PUBLISH_CONFIRM_DISABLED");
+    throw new Error(`DOUYIN_DRAMA_${fieldCode}_CONFIRM_DISABLED`);
   }
   await confirm.click();
   await popup.waitFor({ state: "hidden", timeout: 5_000 });
@@ -224,9 +367,105 @@ export async function fillDouyinPublishDateTime(page: Page, value: string) {
     await page.waitForTimeout(200);
   }
   throw new Error(
-    `DOUYIN_DRAMA_SCHEDULED_PUBLISH_TIME_NOT_CONFIRMED: expected=${expected}; ` +
+    `DOUYIN_DRAMA_${fieldCode}_TIME_NOT_CONFIRMED: expected=${expected}; ` +
       `actual=${JSON.stringify(await input.inputValue().catch(() => ""))}`,
   );
+}
+
+export function fillDouyinPublishDateTime(page: Page, value: string, now = new Date()) {
+  return fillDouyinDateTimePicker(
+    page,
+    page.locator("#hong_guo_app_publish_time input").first(),
+    resolveDouyinScheduledPublishDateTime(value, now),
+    "SCHEDULED_PUBLISH",
+  );
+}
+
+export async function fillNearestDouyinCompletionPromiseDateTime(page: Page) {
+  const input = page.locator([
+    "#complete_promise_time input",
+    'input[placeholder="请选择更新完成时间"]',
+    "#complete_promise_time_input",
+  ].join(", ")).filter({ visible: true }).first();
+  await input.waitFor({ state: "visible", timeout: 10_000 });
+  await input.click();
+
+  const popup = arcoDatePickerPopup(page);
+  await popup.waitFor({ state: "visible", timeout: 5_000 });
+  const nearestDate = popup
+    .locator(".arco-picker-cell-in-view:visible:not(.arco-picker-cell-disabled)")
+    .first();
+  await nearestDate.waitFor({ state: "visible", timeout: 5_000 });
+  await nearestDate.locator(".arco-picker-date").click();
+
+  const selectTimeButton = popup.locator(".arco-picker-btn-select-time:visible").first();
+  await selectTimeButton.waitFor({ state: "visible", timeout: 5_000 });
+  await selectTimeButton.click();
+  const lists = popup.locator(".arco-timepicker-list:visible");
+  const listCount = await lists.count();
+  if (listCount < 2) {
+    throw new Error(`DOUYIN_DRAMA_COMPLETION_PROMISE_TIME_PANEL_INVALID: columns=${listCount}`);
+  }
+  for (let index = 0; index < listCount; index += 1) {
+    const nearestValue = lists
+      .nth(index)
+      .locator(".arco-timepicker-cell:visible:not(.arco-timepicker-cell-disabled)")
+      .first();
+    await nearestValue.waitFor({ state: "visible", timeout: 5_000 });
+    await nearestValue.click();
+  }
+
+  const confirm = popup.locator(".arco-picker-btn-confirm:visible").first();
+  await confirm.waitFor({ state: "visible", timeout: 5_000 });
+  const confirmDeadline = Date.now() + 5_000;
+  while (!await confirm.isEnabled().catch(() => false) && Date.now() < confirmDeadline) {
+    await page.waitForTimeout(100);
+  }
+  if (!await confirm.isEnabled().catch(() => false)) {
+    throw new Error("DOUYIN_DRAMA_COMPLETION_PROMISE_CONFIRM_DISABLED");
+  }
+  await confirm.click();
+  await popup.waitFor({ state: "hidden", timeout: 5_000 });
+
+  const deadline = Date.now() + 10_000;
+  while (Date.now() < deadline) {
+    const actual = (await input.inputValue()).trim();
+    if (actual) return normalizeDouyinPublishDateTime(actual);
+    await page.waitForTimeout(200);
+  }
+  throw new Error("DOUYIN_DRAMA_COMPLETION_PROMISE_TIME_NOT_CONFIRMED");
+}
+
+export async function selectDouyinChargeEpisodes(
+  page: Page,
+  firstPaidEpisode: number,
+  episodeCount: number,
+) {
+  if (!Number.isSafeInteger(firstPaidEpisode) || firstPaidEpisode < 2) {
+    throw new Error(`DOUYIN_DRAMA_PAID_EPISODE_START_INVALID: ${firstPaidEpisode}`);
+  }
+  if (!Number.isSafeInteger(episodeCount) || episodeCount < firstPaidEpisode) {
+    throw new Error(
+      `DOUYIN_DRAMA_PAID_EPISODE_RANGE_INVALID: start=${firstPaidEpisode}; total=${episodeCount}`,
+    );
+  }
+
+  const item = douyinFormItem(page, "售卖集数");
+  await item.waitFor({ state: "visible", timeout: 10_000 });
+  for (let episode = firstPaidEpisode; episode <= episodeCount; episode += 1) {
+    const option = item
+      .locator("div:visible")
+      .filter({ hasText: exactTextPattern(String(episode)) })
+      .last();
+    await option.waitFor({ state: "visible", timeout: 5_000 });
+    const classes = await option.getAttribute("class") ?? "";
+    if (/disabled/u.test(classes)) {
+      throw new Error(`DOUYIN_DRAMA_PAID_EPISODE_DISABLED: ${episode}`);
+    }
+    const selected = await option.getAttribute("aria-selected") === "true"
+      || /(?:^|[-_])(active|checked|selected)(?:[-_]|$)/iu.test(classes);
+    if (!selected) await option.click();
+  }
 }
 
 export async function fillFormItem(page: Page, label: string, value?: string | number) {
@@ -357,6 +596,39 @@ function compactDropdownText(value: string | null | undefined) {
   return (value ?? "").replace(/\s+/g, " ").trim();
 }
 
+async function dropdownDisplayValues(trigger: Locator) {
+  const formItem = trigger.locator(
+    "xpath=ancestor::*[contains(concat(' ', normalize-space(@class), ' '), ' arco-form-item ')][1]",
+  );
+  const [triggerTexts, formItemTexts, inputValues, accessibleValues] = await Promise.all([
+    trigger.allTextContents().catch(() => [] as string[]),
+    formItem.allTextContents().catch(() => [] as string[]),
+    trigger.locator("input").evaluateAll((inputs) =>
+      inputs.map((input) => (input as HTMLInputElement).value).filter(Boolean)
+    ).catch(() => [] as string[]),
+    trigger.locator("[title], [aria-label], [aria-valuetext]")
+      .evaluateAll((elements) => elements.flatMap((element) => [
+        element.getAttribute("title"),
+        element.getAttribute("aria-label"),
+        element.getAttribute("aria-valuetext"),
+      ].filter((item): item is string => Boolean(item))))
+      .catch(() => [] as string[]),
+  ]);
+  return {
+    display: [...triggerTexts, ...formItemTexts, ...accessibleValues]
+      .map(compactDropdownText)
+      .filter(Boolean),
+    inputs: inputValues.map(compactDropdownText).filter(Boolean),
+  };
+}
+
+function dropdownValuesInclude(values: string[], value: string) {
+  const expected = compactDropdownText(value);
+  const stableToken = expected.split(" ")[0] ?? expected;
+  return values.some((candidate) => candidate.includes(expected)
+    || (stableToken.length >= 2 && candidate.includes(stableToken)));
+}
+
 async function confirmDropdownSelection(
   page: Page,
   trigger: Locator,
@@ -367,27 +639,39 @@ async function confirmDropdownSelection(
   const expected = compactDropdownText(value);
   const stableToken = expected.split(" ")[0] ?? expected;
   const deadline = Date.now() + 5_000;
+  let closedSettledPasses = 0;
   while (Date.now() < deadline) {
-    const triggerText = compactDropdownText(await trigger.textContent().catch(() => ""));
-    const inputValues = await trigger.locator("input").evaluateAll((inputs) =>
-      inputs.map((input) => (input as HTMLInputElement).value).filter(Boolean)
-    ).catch(() => [] as string[]);
-    const optionState = [
-      await option.getAttribute("aria-selected").catch(() => null),
-      await option.getAttribute("aria-checked").catch(() => null),
-      await option.getAttribute("class").catch(() => null),
-    ].join(" ");
-    const optionInputSelected = await option.locator('input[type="checkbox"], input[type="radio"]')
-      .first()
-      .isChecked()
-      .catch(() => false);
+    const [values, optionEvidence, visibleSurfaceCount] = await Promise.all([
+      dropdownDisplayValues(trigger),
+      option.evaluateAll((elements) => {
+        const element = elements[0] as HTMLElement | undefined;
+        if (!element) return { present: false, selected: false, visible: false };
+        const input = element.querySelector<HTMLInputElement>(
+          'input[type="checkbox"], input[type="radio"]',
+        );
+        const state = [
+          element.getAttribute("aria-selected"),
+          element.getAttribute("aria-checked"),
+          element.className,
+        ].join(" ");
+        return {
+          present: true,
+          selected: /\btrue\b|option-selected|option-checked/u.test(state)
+            || Boolean(input?.checked),
+          visible: Boolean(element.offsetWidth || element.offsetHeight || element.getClientRects().length),
+        };
+      }).catch(() => ({ present: false, selected: false, visible: false })),
+      visibleDropdownSurfaces(page).count(),
+    ]);
+    const dropdownClosed = visibleSurfaceCount === 0;
     if (
-      triggerText.includes(expected) ||
-      (stableToken.length >= 2 && triggerText.includes(stableToken)) ||
-      inputValues.some((inputValue) => compactDropdownText(inputValue).includes(stableToken)) ||
-      /\btrue\b|option-selected|option-checked/.test(optionState) ||
-      optionInputSelected
+      dropdownValuesInclude(values.display, expected)
+      || (dropdownClosed && dropdownValuesInclude(values.inputs, stableToken))
+      || optionEvidence.selected
     ) return;
+    const clickedOptionGone = !optionEvidence.present || !optionEvidence.visible;
+    closedSettledPasses = dropdownClosed && clickedOptionGone ? closedSettledPasses + 1 : 0;
+    if (closedSettledPasses >= 2) return;
     await page.waitForTimeout(200);
   }
   throw new Error(`DOUYIN_DRAMA_DROPDOWN_SELECTION_NOT_CONFIRMED: ${field}=${value}`);
@@ -418,8 +702,8 @@ async function selectDropdownValuesFromTrigger(
   recorder: DouyinDramaDropdownRecorder,
 ) {
   for (const value of values) {
-    const currentText = (await trigger.textContent().catch(() => "")) ?? "";
-    if (compactDropdownText(currentText).includes(compactDropdownText(value))) {
+    const currentValues = await dropdownDisplayValues(trigger);
+    if (dropdownValuesInclude([...currentValues.display, ...currentValues.inputs], value)) {
       await closeVisibleDropdowns(page, field);
       continue;
     }
@@ -476,8 +760,14 @@ export async function selectSearchableDropdownByPlaceholder(
   recorder: DouyinDramaDropdownRecorder,
 ) {
   const input = page.getByPlaceholder(placeholder, { exact: true }).filter({ visible: true }).first();
+  const selectRoot = input.locator(
+    "xpath=ancestor::*[@role='combobox' or contains(@class, 'arco-select')][1]",
+  );
+  const trigger = await selectRoot.count() ? selectRoot : input;
   await closeVisibleDropdowns(page, field);
   await input.waitFor({ state: "visible", timeout: 10_000 });
+  const currentValues = await dropdownDisplayValues(trigger);
+  if (dropdownValuesInclude([...currentValues.display, ...currentValues.inputs], value)) return;
   await input.click();
   await input.fill(value);
   const options = dropdownOptions(page);
@@ -499,10 +789,6 @@ export async function selectSearchableDropdownByPlaceholder(
   }).first();
   await option.waitFor({ state: "visible", timeout: 10_000 });
   await option.click();
-  const selectRoot = input.locator(
-    "xpath=ancestor::*[@role='combobox' or contains(@class, 'arco-select')][1]",
-  );
-  const trigger = await selectRoot.count() ? selectRoot : input;
   await confirmDropdownSelection(page, trigger, option, field, value);
   await closeVisibleDropdowns(page, field);
 }
@@ -810,6 +1096,70 @@ export async function uploadFormFiles(
   }
 }
 
+export async function fillDouyinEpisodeBatchEdit(
+  page: Page,
+  options: {
+    coverFile: string;
+    episodeCount: number;
+    title: string;
+  },
+) {
+  if (!Number.isSafeInteger(options.episodeCount) || options.episodeCount < 1) {
+    throw new Error(`DOUYIN_DRAMA_BATCH_EDIT_EPISODE_COUNT_INVALID: ${options.episodeCount}`);
+  }
+  if (!options.coverFile.trim()) throw new Error("DOUYIN_DRAMA_BATCH_EDIT_COVER_REQUIRED");
+
+  const batchEditButton = page
+    .locator(".header-right-opt-btn:visible")
+    .filter({ hasText: exactTextPattern("批量编辑") })
+    .last();
+  await batchEditButton.waitFor({ state: "visible", timeout: 15_000 });
+  await batchEditButton.click();
+
+  const drawer = page
+    .locator(".arco-drawer-inner:visible")
+    .filter({ has: page.getByText("批量编辑", { exact: true }) })
+    .last();
+  await drawer.waitFor({ state: "visible", timeout: 15_000 });
+
+  const startInput = drawer.locator("#item_start_input").first();
+  const endInput = drawer.locator("#item_end_input").first();
+  const titleInput = drawer.locator("#item_title_input").first();
+  await startInput.fill("1");
+  await endInput.fill(String(options.episodeCount));
+  await titleInput.fill(options.title);
+  await titleInput.blur();
+
+  await selectDouyinVideoTopics(page, drawer);
+
+  const sameCover = drawer.locator("label").filter({
+    hasText: exactTextPattern("相同封面"),
+  }).first();
+  const sameCoverRadio = sameCover.locator('input[type="radio"]').first();
+  if (!await sameCoverRadio.isChecked()) await sameCover.click();
+
+  const coverControl = drawer.locator("#thumb_url_input").first();
+  const coverInput = coverControl.locator('input[type="file"]').first();
+  await coverInput.waitFor({ state: "attached", timeout: 10_000 });
+  await coverInput.setInputFiles(options.coverFile, { timeout: 120_000 });
+  await confirmImageCropDialogIfPresent(page, "批量编辑视频封面");
+  const coverItem = coverControl.locator("xpath=ancestor::*[contains(@class, 'arco-form-item')][1]");
+  await coverItem
+    .locator(".arco-upload-list-item, .uploaded_list_item")
+    .first()
+    .waitFor({ state: "visible", timeout: 30_000 });
+  await waitForUploadSettlement(page, coverItem, "批量编辑视频封面", 120_000, 1);
+
+  await assertNoDouyinFormError(page, "批量编辑剧集");
+  const confirm = drawer.getByRole("button", { name: "确认", exact: true }).last();
+  await confirm.waitFor({ state: "visible", timeout: 10_000 });
+  await confirm.click();
+  await drawer.waitFor({ state: "hidden", timeout: 30_000 }).catch(() => {
+    throw new Error("DOUYIN_DRAMA_BATCH_EDIT_NOT_CONFIRMED");
+  });
+  await assertNoDouyinFormError(page, "确认批量编辑剧集");
+}
+
 export async function fillDouyinSeriesDialog(
   page: Page,
   data: { coverFile: string; summary: string; title: string },
@@ -983,7 +1333,10 @@ export async function assertNoDouyinFormError(page: Page, action: string) {
   // contains a persistent informational Arco alert whose copy says settings
   // are "不可修改"; treating that advisory text as validation blocks the
   // workflow immediately after the video step has already succeeded.
-  const messages = (await errors.allTextContents())
+  const messages = [
+    ...await capturedDouyinPageMessageTexts(page),
+    ...await errors.allTextContents(),
+  ]
     .map((text) => text.replace(/\s+/g, " ").trim())
     .filter(Boolean)
     .filter((text) => !isTransientDouyinUploadMessage(text));

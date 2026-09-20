@@ -24,12 +24,16 @@ import {
   clickDouyinNext,
   douyinFormItem,
   fillDouyinSeriesDialog,
+  fillDouyinEpisodeBatchEdit,
+  fillNearestDouyinCompletionPromiseDateTime,
   fillDouyinPublishDateTime,
   fillInputById,
   fillStableInputById,
+  installDouyinPageMessageCapture,
   resetRestoredDouyinFormIfPresent,
   selectDropdownByPlaceholder,
   selectDropdownValues,
+  selectDouyinChargeEpisodes,
   selectFirstDropdownByPlaceholder,
   selectRadio,
   selectSearchableDropdownByPlaceholder,
@@ -41,6 +45,13 @@ type DouyinAutomationAction = <T>(name: string, action: () => Promise<T>) => Pro
 
 const episodeUploadPollIntervalMs = 5_000;
 const postSubmitSettleMs = 10_000;
+const salesConfigurationSelector = [
+  "#complete_promise_time input",
+  'input[placeholder="请选择更新完成时间"]',
+  "#complete_promise_time_input",
+  "#unit_price_input",
+  "#charge_episode",
+].join(", ");
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
@@ -66,17 +77,27 @@ function createActionRunner(page: Page, options: DouyinDramaRuntimeOptions): Dou
   return async <T>(name: string, action: () => Promise<T>) => {
     log(options, `[douyin-drama] 脚本操作开始：${name}`, { action: name, url: page.url() }, "automation");
     try {
+      await installDouyinPageMessageCapture(page);
       const result = await action();
+      await installDouyinPageMessageCapture(page);
+      await assertNoDouyinFormError(page, name);
       log(options, `[douyin-drama] 脚本操作完成：${name}`, { action: name, url: page.url() }, "automation");
       return result;
     } catch (error) {
+      let failure = error;
+      try {
+        await installDouyinPageMessageCapture(page);
+        await assertNoDouyinFormError(page, name);
+      } catch (pageError) {
+        failure = pageError;
+      }
       errorLog(
         options,
-        `[douyin-drama] 脚本操作失败：${name}；url=${page.url()}；错误=${errorMessage(error)}`,
-        { action: name, url: page.url(), error },
+        `[douyin-drama] 脚本操作失败：${name}；url=${page.url()}；错误=${errorMessage(failure)}`,
+        { action: name, url: page.url(), error: failure },
         "automation",
       );
-      throw error;
+      throw failure;
     }
   };
 }
@@ -265,6 +286,17 @@ async function uploadEpisodes(
   } finally {
     await runAction("清理剧集上传临时文件", () => cleanupEpisodeUploadFiles(prepared));
   }
+  if (!task.playlet.localDouyinCoverFile) {
+    throw new Error("DOUYIN_DRAMA_BATCH_EDIT_COVER_REQUIRED");
+  }
+  await runAction(
+    `批量编辑剧集=第1集至第${task.playlet.episodeCount}集，标题=${logValue(task.playlet.title)}`,
+    () => fillDouyinEpisodeBatchEdit(page, {
+      coverFile: task.playlet.localDouyinCoverFile!,
+      episodeCount: task.playlet.episodeCount,
+      title: task.playlet.title,
+    }),
+  );
   await runAction("视频上传页点击下一步", () => clickDouyinNext(page));
 }
 
@@ -323,7 +355,39 @@ async function fillPublishConfiguration(
       });
     }
   }
-  await runAction("发布配置页点击下一步", () => clickDouyinNext(page));
+  await runAction("进入销售配置表单", () => enterSalesConfiguration(page));
+}
+
+export async function enterSalesConfiguration(page: Page) {
+  const salesConfiguration = page.locator(salesConfigurationSelector).filter({ visible: true });
+  if (await salesConfiguration.count() > 0) return;
+
+  // 抖音同时存在同页表单和旧版分步表单。仅在销售字段尚未出现时推进到下一步，
+  // 避免同页表单已经渲染后仍等待一个不存在的“下一步”按钮。
+  await clickDouyinNext(page);
+  await salesConfiguration.first().waitFor({ state: "visible", timeout: 15_000 });
+}
+
+async function fillSalesConfiguration(
+  page: Page,
+  task: ClaimedDouyinDramaTask,
+  options: DouyinDramaRuntimeOptions,
+  runAction: DouyinAutomationAction,
+) {
+  const unitPriceYuan = task.playlet.unitPriceYuan ?? options.unitPriceYuan ?? 0.5;
+  const paidEpisodeStart = task.playlet.paidEpisodeStart ?? options.paidEpisodeStart ?? 10;
+  if (!Number.isFinite(unitPriceYuan) || unitPriceYuan < 0.1 || unitPriceYuan > 9_999) {
+    throw new Error(`DOUYIN_DRAMA_UNIT_PRICE_INVALID: ${unitPriceYuan}`);
+  }
+
+  await runAction("设置最近可用的更新完成时间", () =>
+    fillNearestDouyinCompletionPromiseDateTime(page));
+  await runAction(`填写单集售价=${unitPriceYuan}元`, () =>
+    fillStableInputById(page, "unit_price_input", unitPriceYuan));
+  await runAction(
+    `选择售卖集数=第${paidEpisodeStart}集至第${task.playlet.episodeCount}集`,
+    () => selectDouyinChargeEpisodes(page, paidEpisodeStart, task.playlet.episodeCount),
+  );
 }
 
 export async function waitForDouyinSubmitSuccess(
@@ -388,6 +452,7 @@ export async function runDouyinDramaPublishTask(
     await fillBasicInformation(page, task, options, runAction, recorder);
     await uploadEpisodes(page, task, options, runAction);
     await fillPublishConfiguration(page, task, runAction, recorder);
+    await fillSalesConfiguration(page, task, options, runAction);
 
     if (!task.playlet.submit) {
       log(

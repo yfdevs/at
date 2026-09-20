@@ -1,4 +1,4 @@
-export type TencentHuolongDramaLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type TencentHuolongDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type TencentHuolongDramaConfig = {
   accountProfileName: string

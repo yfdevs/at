@@ -2,8 +2,9 @@ export type PinduoduoDramaLoginState = "login-required" | "logged-in" | "unknown
 
 export type PinduoduoDramaConfig = {
   accountProfileName: string;
+  creatorUid: string;
+  browserExecutablePath: string;
   headless: string;
-  operationDelaySeconds: string;
   runDataDir: string;
   logRetentionDays: string;
   taskPollIntervalMinutes: string;
@@ -63,6 +64,12 @@ export const pinduoduoDramaService = {
   },
   saveConfig(config: PinduoduoDramaConfig) {
     return invokePinduoduoDrama<PinduoduoDramaConfigResult>("pinduoduo-drama:config:save", config);
+  },
+  testBrowserPath(executablePath: string) {
+    return invokePinduoduoDrama<{ ok: boolean; message: string }>(
+      "pinduoduo-drama:config:test-browser-path",
+      executablePath,
+    );
   },
   selectRunDataDir(currentPath?: string) {
     return invokePinduoduoDrama<string | null>(

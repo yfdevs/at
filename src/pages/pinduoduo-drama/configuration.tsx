@@ -9,11 +9,14 @@ import {
   type PinduoduoDramaConfigResult,
   pinduoduoDramaService,
 } from "@/platforms/pinduoduo-drama/service";
+import { Button } from "@/components/ui/button";
+import { toast } from "sonner";
 
 const emptyConfig: PinduoduoDramaConfig = {
   accountProfileName: "default",
+  creatorUid: "7735796497358",
+  browserExecutablePath: "",
   headless: "false",
-  operationDelaySeconds: "0",
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
   taskPollIntervalMinutes: "120",
@@ -27,17 +30,19 @@ const sections: ConfigSectionDefinition<PinduoduoDramaConfig>[] = [
     description: "拼多多登录态按账号隔离；共享目录在全局配置中统一管理。",
     fields: [
       {
+        key: "creatorUid",
+        label: "创作者 UID",
+        description: "用于打开视频上传页面。",
+      },
+      {
+        key: "browserExecutablePath",
+        label: "浏览器可执行文件路径",
+        description: "浏览器 exe 路径；留空使用默认 Chrome。",
+      },
+      {
         key: "accountProfileName",
         label: "账号配置名",
         description: "用于区分不同拼多多 MCN 登录态。",
-      },
-      {
-        key: "operationDelaySeconds",
-        label: "操作延迟",
-        type: "number",
-        description: "每一步 Playwright 操作之间的延迟。",
-        suffix: "秒",
-        step: "0.01",
       },
       {
         key: "logRetentionDays",
@@ -93,6 +98,21 @@ export function PinduoduoDramaConfigurationPage() {
     saveConfig: (nextConfig) => pinduoduoDramaService.saveConfig(nextConfig),
   });
 
+  const testBrowserPath = async () => {
+    try {
+      const result = await pinduoduoDramaService.testBrowserPath(config.browserExecutablePath);
+      if (result.ok) {
+        toast.success("浏览器路径测试通过", { description: result.message });
+      } else {
+        toast.error("浏览器路径测试失败", { description: result.message });
+      }
+    } catch (error) {
+      toast.error("浏览器路径测试失败", {
+        description: error instanceof Error ? error.message : String(error),
+      });
+    }
+  };
+
   return (
     <ConfigurationPageFrame
       hasChanges={hasChanges}
@@ -102,12 +122,17 @@ export function PinduoduoDramaConfigurationPage() {
       onDiscard={discardChanges}
       onSave={persistConfig}
     >
-      {sections.map((section) => (
+      {sections.map((section, index) => (
         <ConfigSection
           key={section.title}
           config={config}
           fields={section.fields}
           section={section}
+          footer={index === 0 ? (
+            <Button disabled={loading} onClick={() => void testBrowserPath()} variant="outline">
+              测试浏览器路径
+            </Button>
+          ) : undefined}
           onChange={updateConfig}
         />
       ))}

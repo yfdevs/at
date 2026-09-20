@@ -1,4 +1,4 @@
-export type KuaishouDramaLoginState = "login-required" | "logged-in" | "unknown";
+﻿export type KuaishouDramaLoginState = "login-required" | "logged-in" | "unknown";
 
 export type KuaishouDramaConfig = {
   accountProfileName: string;

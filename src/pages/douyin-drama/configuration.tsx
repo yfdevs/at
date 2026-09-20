@@ -1,4 +1,4 @@
-import {
+﻿import {
   ConfigSection,
   ConfigurationPageFrame,
   type ConfigSectionDefinition,
@@ -14,6 +14,8 @@ const emptyConfig: DouyinDramaConfig = {
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
+  unitPriceYuan: "0.5",
+  paidEpisodeStart: "10",
   headless: "false",
   operationDelaySeconds: "0",
   taskPollIntervalSeconds: "10",
@@ -25,7 +27,7 @@ const emptyConfig: DouyinDramaConfig = {
 const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
   {
     title: "任务与素材",
-    description: "业务选项由后台 RPA 任务配置；桌面端只负责领取、执行和回报任务。",
+    description: "剧目业务字段由后台 RPA 任务提供；售卖确认页使用这里配置的期限、价格和付费起始集数。",
     fields: [
       {
         key: "apiBaseUrl",
@@ -56,6 +58,25 @@ const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
         type: "number",
         suffix: "分钟",
         min: 1,
+      },
+      {
+        key: "unitPriceYuan",
+        label: "单集售价",
+        description: "填写抖音最终确认页的单集售价。",
+        type: "number",
+        suffix: "元",
+        min: 0.1,
+        max: 9999,
+        step: "0.1",
+      },
+      {
+        key: "paidEpisodeStart",
+        label: "付费起始集数",
+        description: "从该集开始到最后一集均设为付费；第 1 集为平台免费集，因此最早从第 2 集开始。",
+        type: "number",
+        suffix: "集起",
+        min: 2,
+        max: 300,
       },
     ],
   },

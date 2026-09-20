@@ -1,4 +1,4 @@
-export type IqiyiDramaLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type IqiyiDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type IqiyiDramaConfig = {
   accountProfileName: string

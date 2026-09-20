@@ -1,4 +1,4 @@
-export type TiktokDramaCenterLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type TiktokDramaCenterLoginState = "login-required" | "logged-in" | "unknown"
 
 export type TiktokDramaCenterConfig = {
   feishuBotWebhookUrl: string

@@ -1,4 +1,4 @@
-export type QqDramaLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type QqDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type QqDramaConfig = {
   accountProfileName: string

@@ -176,12 +176,14 @@ export type PinduoduoDramaApiConfig = z.infer<typeof pinduoduoDramaApiConfigSche
 
 export interface PinduoduoDramaBrowserOptions {
   userDataDir?: string;
+  executablePath?: string;
   headless?: boolean;
   slowMo?: number;
   keepOpenAfterRun?: boolean;
 }
 
 export interface PinduoduoDramaConfig {
+  creatorUid?: string;
   api?: PinduoduoDramaApiConfig;
   browser?: PinduoduoDramaBrowserOptions;
   dryRun?: boolean;
@@ -224,7 +226,10 @@ export type PinduoduoDramaRuntimeOptions = {
     resourceName: string;
     localEpisodeVideoRoot: string;
     episodeCount: number;
-  }) => Promise<unknown>;
+    downloadEpisodeVideos?: boolean;
+    downloadAssetMaterials?: boolean;
+    requireAllDiscoveredAssets?: boolean;
+  }) => Promise<{ localPath?: string }>;
   onLog?: (message: string) => void;
 };
 

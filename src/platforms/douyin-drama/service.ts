@@ -1,10 +1,12 @@
-export type DouyinDramaLoginState = "login-required" | "logged-in" | "unknown"
+﻿export type DouyinDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type DouyinDramaConfig = {
   apiBaseUrl: string
   localEpisodeVideoRoot: string
   baiduNetdiskDownloadRetryAttempts: string
   episodeUploadWaitTimeoutMinutes: string
+  unitPriceYuan: string
+  paidEpisodeStart: string
   headless: string
   operationDelaySeconds: string
   taskPollIntervalSeconds: string
