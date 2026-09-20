@@ -1,9 +1,7 @@
 export type DouyinDramaLoginState = "login-required" | "logged-in" | "unknown"
 
 export type DouyinDramaConfig = {
-  accountProfileName: string
   apiBaseUrl: string
-  useMockTask: string
   localEpisodeVideoRoot: string
   baiduNetdiskDownloadRetryAttempts: string
   episodeUploadWaitTimeoutMinutes: string
@@ -12,6 +10,7 @@ export type DouyinDramaConfig = {
   taskPollIntervalSeconds: string
   runDataDir: string
   logRetentionDays: string
+  closeFailedTaskPages: string
 }
 
 export type DouyinDramaConfigResult = {
@@ -23,11 +22,27 @@ export type DouyinDramaConfigResult = {
 export type DouyinDramaServiceStatus = {
   platform: "douyin-drama"
   running: boolean
-  loginState: DouyinDramaLoginState
-  activeUrl?: string
   createUrl: string
   loginUrl: string
-  userDataDir: string
+  accounts: Array<{
+    id: number
+    accountId: string
+    accountName: string
+    loginAccount?: string | null
+    rpaProfileKey?: string | null
+    launched: boolean
+    running: boolean
+    loginState: DouyinDramaLoginState
+    activeUrl?: string
+    userDataDir: string
+    lastTask?: {
+      accountTaskId: number
+      originalTitle: string
+      status: "running" | "succeeded" | "failed"
+      errorMessage?: string
+      updatedAt: string
+    }
+  }>
   pid: number | null
 }
 
@@ -41,6 +56,10 @@ async function invokeDouyinDrama<T>(channel: string, ...args: unknown[]): Promis
     const message = error instanceof Error ? error.message : String(error)
     const readableMessage = message.includes("DOUYIN_DRAMA_LOCAL_VIDEO_ROOT_REQUIRED")
       ? "请先选择抖音短剧剧集视频根目录。"
+      : message.includes("DOUYIN_DRAMA_ENABLED_ACCOUNT_NOT_FOUND")
+        ? "没有获取到已启用的抖音账号，请先在后台开启账号。"
+        : message.includes("DOUYIN_DRAMA_API_BASE_URL_REQUIRED")
+          ? "请先配置抖音后台接口地址。"
       : message
     const readableError = new Error(readableMessage) as Error & { cause?: unknown }
     readableError.cause = error

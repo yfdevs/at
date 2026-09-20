@@ -13,6 +13,11 @@ export {
   analyzeImagesAsJson,
   parseAiJsonObject,
 } from "./structured-output.js";
+export {
+  optimizeTextLength,
+  truncateTextToLength,
+} from "./text-length.js";
+export type { OptimizeTextLengthOptions } from "./text-length.js";
 export type {
   AiCompletionResult,
   AiGenerationOptions,

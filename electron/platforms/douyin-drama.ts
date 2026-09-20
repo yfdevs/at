@@ -14,11 +14,20 @@ import {
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
   assertGlobalDirectoriesConfigured,
+  createConfiguredAiClient,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 
-type DouyinDramaRuntimeStatus = {
+type DouyinDramaAccount = {
+  id: number;
+  accountId: string;
+  accountName: string;
+  loginAccount?: string | null;
+  rpaProfileKey?: string | null;
+};
+
+type DouyinDramaAccountRuntimeStatus = {
   platform: "douyin-drama";
   running: boolean;
   loginState: "login-required" | "logged-in" | "unknown";
@@ -35,15 +44,26 @@ type DouyinDramaRuntimeStatus = {
   };
 };
 
+type DouyinDramaAccountRuntime = {
+  getStatus: () => DouyinDramaAccountRuntimeStatus;
+  stop: () => Promise<void>;
+};
+
+type DouyinDramaRuntimeStatus = {
+  platform: "douyin-drama";
+  running: boolean;
+  createUrl: string;
+  loginUrl: string;
+  accounts: Array<DouyinDramaAccountRuntimeStatus & DouyinDramaAccount & { launched: boolean }>;
+};
+
 type DouyinDramaRuntime = {
   getStatus: () => DouyinDramaRuntimeStatus;
   stop: () => Promise<void>;
 };
 
 export type DouyinDramaConfig = {
-  accountProfileName: string;
   apiBaseUrl: string;
-  useMockTask: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
   episodeUploadWaitTimeoutMinutes: string;
@@ -52,6 +72,7 @@ export type DouyinDramaConfig = {
   taskPollIntervalSeconds: string;
   runDataDir: string;
   logRetentionDays: string;
+  closeFailedTaskPages: string;
 };
 
 type DouyinDramaStoragePaths = {
@@ -68,9 +89,7 @@ export type DouyinDramaServiceStatus = DouyinDramaRuntimeStatus & { pid: number 
 type DouyinDramaStore = { config: Partial<DouyinDramaConfig> };
 
 const defaultConfig: DouyinDramaConfig = {
-  accountProfileName: "default",
-  apiBaseUrl: "",
-  useMockTask: "false",
+  apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
@@ -79,6 +98,7 @@ const defaultConfig: DouyinDramaConfig = {
   taskPollIntervalSeconds: "10",
   runDataDir: "D:\\.drama-runs\\douyin-drama",
   logRetentionDays: "3",
+  closeFailedTaskPages: "false",
 };
 
 const runtimeController = new RuntimeController<DouyinDramaRuntime>();
@@ -99,9 +119,7 @@ function numberText(value: string | undefined, fallback: string, minimum: number
 
 function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig {
   return {
-    accountProfileName: config.accountProfileName?.trim() || defaultConfig.accountProfileName,
-    apiBaseUrl: config.apiBaseUrl?.trim() ?? "",
-    useMockTask: config.useMockTask === "true" ? "true" : "false",
+    apiBaseUrl: config.apiBaseUrl?.trim() || defaultConfig.apiBaseUrl,
     localEpisodeVideoRoot: config.localEpisodeVideoRoot?.trim() ?? "",
     baiduNetdiskDownloadRetryAttempts: numberText(
       config.baiduNetdiskDownloadRetryAttempts,
@@ -126,6 +144,7 @@ function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig 
     ),
     runDataDir: config.runDataDir?.trim() || defaultConfig.runDataDir,
     logRetentionDays: numberText(config.logRetentionDays, defaultConfig.logRetentionDays, 1),
+    closeFailedTaskPages: config.closeFailedTaskPages === "true" ? "true" : "false",
   };
 }
 
@@ -142,13 +161,16 @@ function readConfig() {
   };
 }
 
-function storagePaths(config = readConfig()): DouyinDramaStoragePaths {
+function storagePaths(
+  config = readConfig(),
+  profile = "default",
+): DouyinDramaStoragePaths {
   const runDataDir = resolveFromAppRoot(config.runDataDir);
   const accountDir = path.join(
     runDataDir,
     "auth",
     "accounts",
-    encodeURIComponent(config.accountProfileName),
+    encodeURIComponent(profile),
   );
   const logDir = path.join(runDataDir, "logs");
   const now = new Date();
@@ -162,7 +184,7 @@ function storagePaths(config = readConfig()): DouyinDramaStoragePaths {
     accountDir,
     userDataDir: path.join(accountDir, "chromium-profile"),
     credentialStatePath: path.join(accountDir, "storage-state.json"),
-    assetDownloadDir: path.join(runDataDir, "assets", encodeURIComponent(config.accountProfileName)),
+    assetDownloadDir: path.join(runDataDir, "assets", encodeURIComponent(profile)),
     logDir,
     logFilePath: path.join(logDir, `app-${dateKey}.log`),
   };
@@ -189,24 +211,28 @@ function ensureStorageDirectories(paths = storagePaths()) {
   }
 }
 
-async function defaultStoppedStatus(): Promise<DouyinDramaServiceStatus> {
-  const paths = storagePaths();
+function defaultStoppedStatus(): DouyinDramaServiceStatus {
   return {
     platform: "douyin-drama",
     running: false,
-    loginState: "unknown",
     createUrl:
       "https://www.shortdramas.com/page/copyright/short-play/motion-comic-manage-edit-page/?from=book",
     loginUrl:
       "https://www.shortdramas.com/page/login?redirect=%2Fcopyright%2Fshort-play%2Fmotion-comic-manage-edit-page%2F%3Ffrom%3Dbook",
-    userDataDir: paths.userDataDir,
+    accounts: [],
     pid: null,
   };
 }
 
 async function status(): Promise<DouyinDramaServiceStatus> {
   const runtime = runtimeController.current;
-  return runtime ? { ...runtime.getStatus(), pid: process.pid } : defaultStoppedStatus();
+  if (!runtime) return defaultStoppedStatus();
+  const current = runtime.getStatus();
+  if (!current.running) {
+    await runtimeController.stop();
+    return defaultStoppedStatus();
+  }
+  return { ...current, pid: process.pid };
 }
 
 async function startRuntime() {
@@ -220,42 +246,93 @@ async function startRuntime() {
   if (!existsSync(localEpisodeVideoRoot) || !statSync(localEpisodeVideoRoot).isDirectory()) {
     throw new Error(`抖音短剧剧集视频根目录不存在或不是文件夹：${localEpisodeVideoRoot}`);
   }
-  const paths = storagePaths(config);
-  ensureStorageDirectories(paths);
-  const { startDouyinDramaRuntime } = await import("@drama/douyin-drama-automation") as {
-    startDouyinDramaRuntime: (options: Record<string, unknown>) => Promise<DouyinDramaRuntime>;
+  const {
+    createMockDouyinDramaAccounts,
+    fetchDouyinDramaAccounts,
+    startDouyinDramaRuntime,
+  } = await import("@drama/douyin-drama-automation") as {
+    createMockDouyinDramaAccounts: () => DouyinDramaAccount[];
+    fetchDouyinDramaAccounts: (apiBaseUrl: string) => Promise<DouyinDramaAccount[]>;
+    startDouyinDramaRuntime: (options: Record<string, unknown>) => Promise<DouyinDramaAccountRuntime>;
   };
-  return startDouyinDramaRuntime({
-    accountProfileName: config.accountProfileName,
-    apiBaseUrl: config.apiBaseUrl,
-    mockTaskEnabled: config.useMockTask === "true",
-    userDataDir: paths.userDataDir,
-    credentialStatePath: paths.credentialStatePath,
-    assetDownloadDir: paths.assetDownloadDir,
-    logFilePath: paths.logFilePath,
-    logRetentionDays: Number.parseInt(config.logRetentionDays, 10),
-    localEpisodeVideoRoot,
-    baiduNetdiskDownloadRetryAttempts: Number.parseInt(
-      config.baiduNetdiskDownloadRetryAttempts,
-      10,
-    ),
-    episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
-    taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
-    ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
-      ...request,
-      requesterPlatform: "douyin-drama",
-    }),
-    config: {
-      browser: {
-        headless: config.headless === "true",
-        slowMo: Number.parseFloat(config.operationDelaySeconds) * 1_000,
-      },
+  let accounts: DouyinDramaAccount[];
+  try {
+    accounts = await fetchDouyinDramaAccounts(config.apiBaseUrl);
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    if (!message.startsWith("DOUYIN_DRAMA_ACCOUNT_CONFIG_")) throw error;
+    accounts = createMockDouyinDramaAccounts();
+  }
+  if (accounts.length === 0) throw new Error("DOUYIN_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
+
+  const runtimes: Array<{ account: DouyinDramaAccount; runtime: DouyinDramaAccountRuntime }> = [];
+  let running = true;
+  try {
+    for (const account of accounts) {
+      const paths = storagePaths(config, account.accountId);
+      ensureStorageDirectories(paths);
+      const runtime = await startDouyinDramaRuntime({
+        accountProfileName: account.accountId,
+        douyinAccountId: account.accountId,
+        douyinAccountName: account.accountName,
+        apiConfig: { baseUrl: config.apiBaseUrl },
+        closeFailedTaskPages: config.closeFailedTaskPages === "true",
+        userDataDir: paths.userDataDir,
+        credentialStatePath: paths.credentialStatePath,
+        assetDownloadDir: paths.assetDownloadDir,
+        logFilePath: paths.logFilePath,
+        logRetentionDays: Number.parseInt(config.logRetentionDays, 10),
+        localEpisodeVideoRoot,
+        baiduNetdiskDownloadRetryAttempts: Number.parseInt(
+          config.baiduNetdiskDownloadRetryAttempts,
+          10,
+        ),
+        episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
+        taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
+        aiClientFactory: createConfiguredAiClient,
+        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
+          ...request,
+          requesterPlatform: "douyin-drama",
+        }),
+        config: {
+          browser: {
+            headless: config.headless === "true",
+            slowMo: Number.parseFloat(config.operationDelaySeconds) * 1_000,
+          },
+        },
+      });
+      runtimes.push({ account, runtime });
+    }
+  } catch (error) {
+    running = false;
+    await Promise.allSettled(runtimes.map(({ runtime }) => runtime.stop()));
+    throw error;
+  }
+
+  return {
+    getStatus(): DouyinDramaRuntimeStatus {
+      const runtimeAccounts = runtimes.map(({ account, runtime }) => {
+        const current = runtime.getStatus();
+        return { ...current, ...account, launched: current.running };
+      });
+      if (runtimeAccounts.every((account) => !account.launched)) running = false;
+      return {
+        platform: "douyin-drama",
+        running,
+        createUrl: defaultStoppedStatus().createUrl,
+        loginUrl: defaultStoppedStatus().loginUrl,
+        accounts: runtimeAccounts,
+      };
     },
-  });
+    async stop() {
+      running = false;
+      await Promise.allSettled(runtimes.map(({ runtime }) => runtime.stop()));
+    },
+  };
 }
 
 export function getDouyinDramaBrowserInstanceCount() {
-  return runtimeController.current?.getStatus().running ? 1 : 0;
+  return runtimeController.current?.getStatus().accounts.filter((account) => account.launched).length ?? 0;
 }
 
 export function getDouyinDramaRunningPlatformCount() {
@@ -264,13 +341,17 @@ export function getDouyinDramaRunningPlatformCount() {
 
 export function getDouyinDramaPlatformRuntimeSummary() {
   const runtime = runtimeController.current?.getStatus();
+  const activeAccounts = runtime?.accounts.filter((account) => account.launched) ?? [];
   return {
     platform: "douyin-drama" as const,
     running: Boolean(runtime?.running),
-    browserInstanceCount: runtime?.running ? 1 : 0,
-    browserInstances: runtime?.running
-      ? [{ id: "default", label: "抖音短剧", loginState: runtime.loginState, activeUrl: runtime.activeUrl }]
-      : [],
+    browserInstanceCount: activeAccounts.length,
+    browserInstances: activeAccounts.map((account) => ({
+      id: account.accountId,
+      label: account.accountName,
+      loginState: account.loginState,
+      activeUrl: account.activeUrl,
+    })),
     logDir: storagePaths().logDir,
   };
 }

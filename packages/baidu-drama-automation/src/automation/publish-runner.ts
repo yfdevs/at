@@ -14,6 +14,7 @@ import {
   assertNoBaiduFormError,
   assertBaiduCoverUploadReceipt,
   clickBaiduNext,
+  confirmBaiduDramaTypeChangeIfPresent,
   confirmBaiduDramaInformation,
   ensureCheckboxByExactText,
   fillByPlaceholder,
@@ -114,8 +115,7 @@ async function chooseDramaType(
 ) {
   await runAction("选择短剧类型=非真人短剧", async () => {
     await page.getByText("非真人短剧", { exact: true }).filter({ visible: true }).first().click();
-    const confirm = page.getByRole("button", { name: "确定", exact: true });
-    if (await confirm.isVisible().catch(() => false)) await confirm.click();
+    await confirmBaiduDramaTypeChangeIfPresent(page);
   });
   await runAction("短剧类型页点击下一步", () => clickBaiduNext(page));
 

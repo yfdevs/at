@@ -1,6 +1,6 @@
 {
   "name": "drama-post-auto",
-  "version": "0.0.122",
+  "version": "0.0.130",
   "private": true,
   "type": "module",
   "main": "dist-electron/main.js",
@@ -14,6 +14,12 @@
     "playwright:install-browsers": "node scripts/install-playwright-browsers.mjs",
     "release": "node scripts/create-release.mjs",
     "release:win": "node scripts/release-win.mjs",
+    "douyin-drama:build": "pnpm --filter @drama/douyin-drama-automation build",
+    "douyin-drama:check": "pnpm --filter @drama/douyin-drama-automation check",
+    "douyin-drama:test": "pnpm --filter @drama/douyin-drama-automation test",
+    "taobao-drama:build": "pnpm --filter @drama/taobao-drama-automation build",
+    "taobao-drama:check": "pnpm --filter @drama/taobao-drama-automation check",
+    "taobao-drama:test": "pnpm --filter @drama/taobao-drama-automation test",
     "postinstall": "node scripts/rebuild-electron-native.mjs",
     "prepare": "vp config",
     "test:packages": "pnpm --filter \"./packages/*-automation\" --filter @drama/automation-logging --filter @drama/drama-media-assets --if-present test"
@@ -35,6 +41,7 @@
     "@drama/meituan-drama-automation": "workspace:*",
     "@drama/pinduoduo-drama-automation": "workspace:*",
     "@drama/qq-drama-automation": "workspace:*",
+    "@drama/taobao-drama-automation": "workspace:*",
     "@drama/tencent-huolong-drama-automation": "workspace:*",
     "@drama/tiktok-drama-automation": "workspace:*",
     "@drama/wechat-drama-automation": "workspace:*",

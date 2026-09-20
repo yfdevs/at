@@ -10,6 +10,7 @@ import {
   claimNextDouyinDramaTaskApi,
   reportDouyinDramaTaskErrorApi,
   reportDouyinDramaTaskSuccessApi,
+  resetMockDouyinDramaTaskApi,
 } from "../api/task.js";
 import {
   douyinDramaLoginStateFromUrl,
@@ -32,6 +33,11 @@ import {
   douyinDramaResourceName,
   prepareDouyinDramaResources,
 } from "../shared/resources.js";
+import {
+  collectDouyinNetdiskMetadataInputs,
+  douyinTaskNeedsNetdiskMetadata,
+  enrichDouyinTaskFromNetdisk,
+} from "../shared/netdisk-metadata.js";
 import type {
   ClaimedDouyinDramaTask,
   DouyinDramaRuntime,
@@ -48,7 +54,7 @@ function failStage(error: unknown): DouyinDramaTaskFailStage {
   const message = errorMessage(error);
   if (/LOGIN/i.test(message)) return "LOGIN";
   if (/NETDISK|DOWNLOAD|网盘|下载/i.test(message)) return "DOWNLOAD";
-  if (/FILE|UPLOAD|VIDEO|COVER|POSTER|文件|上传|视频|封面|海报/i.test(message)) {
+  if (/FILE|UPLOAD|VIDEO|COVER|POSTER|MATERIAL|文件|上传|视频|封面|海报|素材|合同|承诺/i.test(message)) {
     return "UPLOAD_FILE";
   }
   if (/FORM|FIELD|LOCATOR|STRICT MODE|SELECT|OPTION|表单|字段|填写|选择/i.test(message)) {
@@ -68,41 +74,81 @@ async function ensureNetdiskResource(
     throw new Error("任务包含百度网盘链接，但抖音运行时未接入网盘下载能力");
   }
   const maxAttempts = Math.max(0, options.baiduNetdiskDownloadRetryAttempts ?? 3) + 1;
-  let lastError: unknown;
-  for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
-    try {
-      await options.ensureBaiduNetdiskResource({
-        shareText,
-        resourceName: douyinDramaResourceName(task),
-        localEpisodeVideoRoot: douyinDramaLocalRoot(options),
-        episodeCount: task.playlet.episodeCount,
-        requiredOwnership: { minimumImages: 4 },
-        requiredPosterImages: 1,
-        posterFallback: {
-          title: task.playlet.title,
-          summary: task.playlet.summary,
-        },
-        requiredAiProductionProofFiles: 0,
-        mergeOwnershipMaterials: false,
-      });
-      return;
-    } catch (error) {
-      lastError = error;
-      if (isNonRetryableBaiduNetdiskResourceError(error) || attempt === maxAttempts) break;
-      warn(
-        options,
-        `[douyin-drama] 百度网盘下载失败，准备重试：${attempt}/${maxAttempts}`,
-        { error },
-        "download",
-      );
-      await new Promise((resolve) => setTimeout(resolve, 5_000));
+  const ensureWithRetry = async (request: Parameters<NonNullable<
+    DouyinDramaRuntimeOptions["ensureBaiduNetdiskResource"]
+  >>[0]) => {
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= maxAttempts; attempt += 1) {
+      try {
+        return await options.ensureBaiduNetdiskResource!(request);
+      } catch (error) {
+        lastError = error;
+        if (isNonRetryableBaiduNetdiskResourceError(error) || attempt === maxAttempts) break;
+        warn(
+          options,
+          `[douyin-drama] 百度网盘下载失败，准备重试：${attempt}/${maxAttempts}`,
+          { error },
+          "download",
+        );
+        await new Promise((resolve) => setTimeout(resolve, 5_000));
+      }
     }
-  }
-  throw lastError;
+    throw lastError;
+  };
+
+  await ensureWithRetry({
+    shareText,
+    resourceName: douyinDramaResourceName(task),
+    localEpisodeVideoRoot: douyinDramaLocalRoot(options),
+    episodeCount: task.playlet.episodeCount,
+    requiredOwnership: { minimumImages: 4 },
+    requiredPosterImages: 1,
+    posterFallback: {
+      title: task.playlet.title,
+      summary: task.playlet.summary || task.playlet.title,
+    },
+    requiredAiProductionProofFiles: 0,
+    requiredMetadataTextFiles: task.playlet.summary.trim().length <= 100 ? 1 : 0,
+    mergeOwnershipMaterials: false,
+  });
+
+  if (!douyinTaskNeedsNetdiskMetadata(task)) return;
+  const resourceDir = path.join(douyinDramaLocalRoot(options), douyinDramaResourceName(task));
+  const inputs = await collectDouyinNetdiskMetadataInputs(resourceDir);
+  const missingRequiredText = task.playlet.summary.trim().length <= 100 && inputs.texts.length === 0;
+  const missingOriginalRoleImages = (
+    task.playlet.roles.length < 2 || task.playlet.roles.some((role) => !role.photoFile)
+  )
+    && !inputs.images.some((image) => image.relativePath.split(path.sep).includes("原始图片"));
+  if (!missingRequiredText && !missingOriginalRoleImages) return;
+
+  log(options, "[douyin-drama] 本地旧素材缺少 TXT 或原始角色图片名，补拉网盘素材目录。", {
+    accountTaskId: task.accountTaskId,
+    missingRequiredText,
+    missingOriginalRoleImages,
+  }, "download");
+  await ensureWithRetry({
+    shareText,
+    resourceName: douyinDramaResourceName(task),
+    localEpisodeVideoRoot: douyinDramaLocalRoot(options),
+    episodeCount: task.playlet.episodeCount,
+    downloadEpisodeVideos: false,
+    downloadAssetMaterials: true,
+    forceAssetDownload: true,
+    requiredOwnership: { minimumImages: 0 },
+    requiredPosterImages: 1,
+    posterFallback: {
+      title: task.playlet.title,
+      summary: task.playlet.summary || task.playlet.title,
+    },
+    requiredAiProductionProofFiles: 0,
+    requiredMetadataTextFiles: missingRequiredText ? 1 : 0,
+    mergeOwnershipMaterials: false,
+  });
 }
 
 async function runTask(
-  basePage: Page,
+  taskPage: Page,
   task: ClaimedDouyinDramaTask,
   options: DouyinDramaRuntimeOptions,
   setLastTask: (lastTask: NonNullable<DouyinDramaRuntimeStatus["lastTask"]>) => void,
@@ -119,18 +165,19 @@ async function runTask(
     status: "running",
     updatedAt: new Date().toISOString(),
   });
-  const taskPage = await basePage.context().newPage();
   try {
     await ensureNetdiskResource(task, options);
-    const resources = await prepareDouyinDramaResources(task, options);
+    const enrichedTask = await enrichDouyinTaskFromNetdisk(task, options);
+    const resources = await prepareDouyinDramaResources(enrichedTask, options);
     log(
       options,
       "[douyin-drama] 任务资源准备完成。",
       { accountTaskId: task.accountTaskId, ...resources },
       "task",
     );
-    await runDouyinDramaPublishTask(taskPage, task, options);
+    await runDouyinDramaPublishTask(taskPage, enrichedTask, options);
     await reportDouyinDramaTaskSuccessApi({
+      apiConfig: options.apiConfig,
       runtimeOptions: options,
       accountTaskId: task.accountTaskId,
     });
@@ -146,6 +193,7 @@ async function runTask(
       { accountTaskId: task.accountTaskId, title: task.originalTitle },
       "task",
     );
+    return true;
   } catch (error) {
     const message = formatAutomationErrorReport(error, {
       fallbackMessage: "抖音任务提交失败，未获取到具体错误原因",
@@ -160,6 +208,7 @@ async function runTask(
       task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
     });
     await reportDouyinDramaTaskErrorApi({
+      apiConfig: options.apiConfig,
       runtimeOptions: options,
       accountTaskId: task.accountTaskId,
       failStage: stage,
@@ -184,14 +233,14 @@ async function runTask(
       },
       "task",
     );
-  } finally {
-    if (!taskPage.isClosed()) await taskPage.close().catch(() => undefined);
+    return false;
   }
 }
 
 export async function startDouyinDramaRuntime(
   options: DouyinDramaRuntimeOptions = {},
 ): Promise<DouyinDramaRuntime> {
+  resetMockDouyinDramaTaskApi(options.douyinAccountId);
   const userDataDir =
     options.userDataDir ??
     path.resolve(process.cwd(), ".drama-runs/douyin-drama/auth/chromium-profile");
@@ -199,7 +248,7 @@ export async function startDouyinDramaRuntime(
   log(
     options,
     `[douyin-drama] 运行时启动：userDataDir=${userDataDir}，logFile=${options.logFilePath ?? "未配置"}`,
-    { userDataDir, logFilePath: options.logFilePath, mockTaskEnabled: options.mockTaskEnabled },
+    { userDataDir, logFilePath: options.logFilePath },
   );
   await mkdir(userDataDir, { recursive: true });
   const context = await launchDouyinDramaBrowserContext(userDataDir, options);
@@ -220,11 +269,23 @@ export async function startDouyinDramaRuntime(
   const pollLoop = async () => {
     while (running) {
       try {
-        const task = await claimNextDouyinDramaTaskApi({ runtimeOptions: options });
+        const task = await claimNextDouyinDramaTaskApi({
+          apiConfig: options.apiConfig,
+          runtimeOptions: options,
+        });
         if (task) {
-          await runTask(page, task, options, (value) => {
+          const taskPage = await page.context().newPage();
+          const succeeded = await runTask(taskPage, task, options, (value) => {
             lastTask = value;
           });
+          if (!taskPage.isClosed() && (succeeded || options.closeFailedTaskPages === true)) {
+            await taskPage.close().catch(() => undefined);
+          } else if (!taskPage.isClosed()) {
+            log(options, "[douyin-drama] 已保留失败任务页面供排查。", {
+              accountTaskId: task.accountTaskId,
+              activeUrl: taskPage.url(),
+            }, "task");
+          }
           continue;
         }
       } catch (error) {

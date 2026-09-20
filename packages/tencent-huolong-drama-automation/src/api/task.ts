@@ -1,222 +1,398 @@
-import { z } from "zod";
 import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
+import { z } from "zod";
+import { log } from "../shared/logger.js";
 import {
   claimedTencentHuolongDramaTaskSchema,
   type ClaimedTencentHuolongDramaTask,
+  type TencentHuolongApiConfig,
   type TencentHuolongRuntimeOptions,
   type TencentHuolongTaskFailStage,
 } from "../shared/types.js";
-import { createTencentHuolongHttpClient } from "./http-client.js";
-import { ensureLocalTencentHuolongMockFiles } from "./local-mock-files.js";
+import {
+  createTencentHuolongHttpClient,
+  type TencentHuolongHttpClient,
+} from "./http-client.js";
 
-const useLocalMockTaskSource = true;
+export type TencentHuolongTaskApiEndpoints = {
+  accountTaskPage: string;
+  claimTask: string;
+  reportTask: string;
+};
 
-// A structural placeholder keeps the synchronous mock-task factory useful in
-// validation tests. claimNextTencentHuolongDramaTask replaces it with a locally
-// generated, valid test PDF before the task enters the automation runtime.
-const localMockCostAnalysisFile =
-  "https://example.invalid/tencent-huolong/replace-with-cost-analysis-commitment.pdf";
+export type TencentHuolongTaskApiOptions = {
+  apiConfig?: TencentHuolongApiConfig;
+  client?: TencentHuolongHttpClient;
+  endpoints?: Partial<TencentHuolongTaskApiEndpoints>;
+};
 
-const localMockTask = claimedTencentHuolongDramaTaskSchema.parse({
-  accountTaskId: 900001,
-  dramaId: 900001,
-  originalTitle: "车位风波",
-  accountId: "default",
-  accountName: "腾讯火龙漫剧本地账号",
-  playlet: {
-    title: "车位风波",
-    summary:
-      "沈悦因车位被占和婆家起冲突，公公许广田为顾权威收回车位卡，购置新车位接济亲戚。不料蹭停剐蹭频发，他雨夜帮人占位摔伤，面对赔偿终于醒悟，懂得依靠规则维护权益，理解了儿媳的委屈。",
-    episodeCount: 40,
-    baiduPanResourceLink:
-      "链接: https://pan.baidu.com/s/15hOcSd7evsFenNN3Smtr7w?pwd=drb3 提取码: drb3",
-    protagonistName: "沈悦",
-    isAiRealPersonShortDrama: "否",
-    themeType: "都市",
-    costAnalysisFiles: [localMockCostAnalysisFile],
-    copyrightProofFiles: [],
-    productionProcessFiles: [],
-  },
+export type ClaimNextTencentHuolongDramaTaskOptions = TencentHuolongTaskApiOptions & {
+  runtimeOptions?: TencentHuolongRuntimeOptions;
+};
+
+export type TencentHuolongTaskSuccessReport = TencentHuolongTaskApiOptions & {
+  runtimeOptions?: TencentHuolongRuntimeOptions;
+  accountTaskId: number;
+  externalId?: string;
+  platformDramaId?: string;
+  resultJson?: Record<string, unknown>;
+};
+
+export type TencentHuolongTaskErrorReport = TencentHuolongTaskApiOptions & {
+  runtimeOptions?: TencentHuolongRuntimeOptions;
+  accountTaskId: number;
+  failStage: TencentHuolongTaskFailStage;
+  errorMessage: string;
+  resultJson?: Record<string, unknown>;
+};
+
+const defaultEndpoints: TencentHuolongTaskApiEndpoints = {
+  accountTaskPage: "/dramaAiRpa/tencent/accountTask/page",
+  claimTask: "/dramaAiRpa/tencent/rpa/claim",
+  reportTask: "/dramaAiRpa/tencent/rpa/report",
+};
+const readyTaskPageSize = 100;
+const requiredText = z.string().trim().min(1);
+const nullableText = z.string().nullish();
+const jsonRecord = z.record(z.unknown());
+
+const apiResponseBaseSchema = z.object({
+  code: z.number(),
+  msg: z.string().nullish(),
 });
 
-let localMockTaskClaimed = false;
-
-export function getLocalTencentHuolongDramaTask(): ClaimedTencentHuolongDramaTask {
-  return {
-    ...localMockTask,
-    playlet: {
-      ...localMockTask.playlet,
-      costAnalysisFiles: [...localMockTask.playlet.costAnalysisFiles],
-      copyrightProofFiles: [...localMockTask.playlet.copyrightProofFiles],
-      productionProcessFiles: [...localMockTask.playlet.productionProcessFiles],
-    },
-  };
-}
-
-const responseBaseSchema = z.object({ code: z.number(), msg: z.string().nullish() });
-const listItemSchema = z
+const readyAccountTaskSchema = z
   .object({
     id: z.coerce.number().int().positive(),
     dramaId: z.coerce.number().int().positive().optional(),
-    accountId: z.string().trim(),
-    accountName: z.string().nullish(),
-    originalTitle: z.string().nullish(),
+    accountId: requiredText,
+    accountName: nullableText,
+    status: nullableText,
+    originalTitle: nullableText,
   })
   .passthrough();
-const pageSchema = responseBaseSchema.extend({
-  data: z.object({ data: z.array(listItemSchema) }).nullish(),
-});
-const claimSchema = responseBaseSchema.extend({
+
+const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
   data: z
     .object({
-      accountTaskId: z.coerce.number().int().positive(),
-      originalTitle: z.string().nullish(),
-      accountId: z.string().nullish(),
-      payloadJson: z.unknown(),
+      total: z.coerce.number().int().nonnegative().optional(),
+      data: z.array(readyAccountTaskSchema),
     })
     .nullish(),
 });
 
-function client(options: TencentHuolongRuntimeOptions) {
-  if (!options.apiConfig) throw new Error("TENCENT_HUOLONG_DRAMA_API_BASE_URL_REQUIRED");
+const claimResponseDataSchema = z.object({
+  accountTaskId: z.coerce.number().int().positive(),
+  originalTitle: nullableText,
+  accountId: nullableText,
+  rpaProfileKey: nullableText,
+  accountConfigJson: jsonRecord.nullish(),
+  payloadJson: z.unknown(),
+});
+
+const claimResponseSchema = apiResponseBaseSchema.extend({
+  data: claimResponseDataSchema.nullish(),
+});
+
+const reportResponseSchema = apiResponseBaseSchema.extend({
+  data: z.boolean().nullish(),
+});
+
+type ReadyAccountTask = z.infer<typeof readyAccountTaskSchema>;
+type ClaimResponseData = z.infer<typeof claimResponseDataSchema>;
+
+function taskClient(options: TencentHuolongTaskApiOptions) {
+  if (options.client) return options.client;
+  if (!options.apiConfig?.baseUrl.trim()) {
+    throw new Error("TENCENT_HUOLONG_DRAMA_API_BASE_URL_REQUIRED");
+  }
   return createTencentHuolongHttpClient(options.apiConfig);
 }
 
-function record(value: unknown): Record<string, unknown> {
-  if (typeof value === "string") return record(JSON.parse(value));
-  return typeof value === "object" && value !== null && !Array.isArray(value)
-    ? (value as Record<string, unknown>)
-    : {};
+function taskEndpoints(options: TencentHuolongTaskApiOptions): TencentHuolongTaskApiEndpoints {
+  return { ...defaultEndpoints, ...options.endpoints };
 }
 
-function text(value: unknown) {
+function assertApiSuccess(payload: z.infer<typeof apiResponseBaseSchema>, action: string) {
+  if (payload.code !== 0) {
+    throw new Error(`${action}: code=${payload.code} message=${payload.msg || "-"}`);
+  }
+}
+
+function recordValue(value: unknown): Record<string, unknown> {
+  if (typeof value === "object" && value !== null && !Array.isArray(value)) {
+    return value as Record<string, unknown>;
+  }
+  return {};
+}
+
+function parsePayloadJson(value: unknown) {
+  if (typeof value === "string") return jsonRecord.parse(JSON.parse(value));
+  return jsonRecord.parse(value);
+}
+
+function stringValue(value: unknown) {
   return typeof value === "string" && value.trim() ? value.trim() : undefined;
 }
 
-function files(value: unknown): string[] {
-  if (!Array.isArray(value)) return [];
-  return value.flatMap((item) => (text(item) ? [text(item)!] : []));
+function numberValue(value: unknown) {
+  if (typeof value === "number" && Number.isFinite(value)) return value;
+  if (typeof value === "string" && value.trim()) {
+    const parsed = Number(value);
+    if (Number.isFinite(parsed)) return parsed;
+  }
+  return undefined;
 }
 
-function yesNo(value: unknown) {
+function stringArray(value: unknown) {
+  if (!Array.isArray(value)) return [];
+  return value.flatMap((item) => {
+    const normalized = stringValue(item);
+    return normalized ? [normalized] : [];
+  });
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+function yesNoValue(value: unknown) {
   if (value === true || value === 1 || value === "1" || value === "是") return "是";
   if (value === false || value === 0 || value === "0" || value === "否") return "否";
   return undefined;
 }
 
-function normalizeTask(
-  claimed: z.infer<typeof claimSchema>["data"],
-  listed: z.infer<typeof listItemSchema>,
-) {
-  if (!claimed) return null;
-  const payload = record(claimed.payloadJson);
-  const playlet = record(
+function classifyClaimedTaskFailStage(error: unknown): TencentHuolongTaskFailStage {
+  const message = error instanceof Error ? error.message : String(error);
+  return /costAnalysisFiles|copyrightProofFiles|productionProcessFiles|文件|材料|成本|版权|工程/i.test(
+    message,
+  )
+    ? "UPLOAD_FILE"
+    : "OTHER";
+}
+
+export function normalizeClaimedTencentHuolongDramaTask(options: {
+  claimed: ClaimResponseData;
+  listedTask?: ReadyAccountTask;
+  runtimeOptions?: TencentHuolongRuntimeOptions;
+}): ClaimedTencentHuolongDramaTask {
+  const { claimed, listedTask, runtimeOptions } = options;
+  const expectedAccountId = runtimeOptions?.accountId?.trim();
+  const claimedAccountId = claimed.accountId?.trim();
+  if (expectedAccountId && claimedAccountId && expectedAccountId !== claimedAccountId) {
+    throw new Error(
+      `TENCENT_HUOLONG_DRAMA_CLAIMED_ACCOUNT_MISMATCH: ` +
+        `expected=${expectedAccountId} actual=${claimedAccountId}`,
+    );
+  }
+
+  const payload = parsePayloadJson(claimed.payloadJson);
+  const payloadPlaylet = recordValue(
     payload.tencentHuolongPlaylet ?? payload.huolongPlaylet ?? payload.playlet,
   );
-  const copyright = record(payload.copyright);
-  const production = record(payload.production);
-  const productionCost = record(payload.productionCost);
-  return claimedTencentHuolongDramaTaskSchema.parse({
+  const accountConfig = recordValue(claimed.accountConfigJson);
+  const accountPlaylet = recordValue(
+    accountConfig.tencentHuolongPlaylet ?? accountConfig.huolongPlaylet,
+  );
+  const playlet = { ...accountPlaylet, ...payloadPlaylet };
+  const copyright = recordValue(payload.copyright);
+  const production = recordValue(payload.production);
+  const productionCost = recordValue(payload.productionCost);
+
+  const result = claimedTencentHuolongDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
-    dramaId: listed.dramaId,
-    originalTitle: claimed.originalTitle ?? listed.originalTitle,
-    accountId: claimed.accountId ?? listed.accountId,
-    accountName: listed.accountName,
+    dramaId: listedTask?.dramaId,
+    originalTitle:
+      stringValue(claimed.originalTitle) ??
+      stringValue(listedTask?.originalTitle) ??
+      stringValue(payload.name) ??
+      stringValue(playlet.title),
+    accountId: claimedAccountId ?? listedTask?.accountId ?? expectedAccountId,
+    accountName: listedTask?.accountName ?? runtimeOptions?.accountName,
     playlet: {
       ...playlet,
-      title: text(playlet.title) ?? text(payload.name),
-      summary: text(playlet.summary) ?? text(payload.summary),
-      episodeCount: playlet.episodeCount ?? payload.episodeCount,
+      title: stringValue(playlet.title) ?? stringValue(payload.name),
+      summary: stringValue(playlet.summary) ?? stringValue(payload.summary),
+      episodeCount: numberValue(playlet.episodeCount) ?? numberValue(payload.episodeCount),
       baiduPanResourceLink:
-        text(playlet.baiduPanResourceLink) ?? text(payload.baiduPanResourceLink),
-      protagonistName: text(playlet.protagonistName),
+        stringValue(playlet.baiduPanResourceLink) ?? stringValue(payload.baiduPanResourceLink),
+      protagonistName:
+        stringValue(playlet.protagonistName) ?? stringValue(payload.protagonistName),
       isAiRealPersonShortDrama:
-        yesNo(playlet.isAiRealPersonShortDrama ?? payload.isAiRealPersonShortDrama) ?? "否",
+        yesNoValue(playlet.isAiRealPersonShortDrama ?? payload.isAiRealPersonShortDrama) ?? "否",
       themeType:
-        text(playlet.themeType) ??
-        text(playlet.theme) ??
-        text(payload.themeType) ??
-        text(payload.theme),
-      costAnalysisFiles: files(
-        playlet.costAnalysisFiles ?? productionCost.proofFiles ?? production.costAnalysisFiles,
+        stringValue(playlet.themeType) ??
+        stringValue(playlet.theme) ??
+        stringValue(payload.themeType) ??
+        stringValue(payload.theme),
+      keywords: uniqueStrings(
+        stringArray(
+          playlet.keywords ??
+          playlet.microSeriesKeywords ??
+          payload.keywords ??
+          payload.microSeriesKeywords,
+        ),
       ),
-      copyrightProofFiles: [
-        ...files(
+      costAnalysisFiles: uniqueStrings(
+        stringArray(
+          playlet.costAnalysisFiles ?? productionCost.proofFiles ?? production.costAnalysisFiles,
+        ),
+      ),
+      copyrightProofFiles: uniqueStrings([
+        ...stringArray(
           playlet.copyrightProofFiles ?? copyright.productionProofFiles ?? copyright.proofFiles,
         ),
-        ...files(copyright.licenseProofFiles),
-      ],
-      productionProcessFiles: files(playlet.productionProcessFiles ?? production.processFiles),
+        ...stringArray(copyright.licenseProofFiles),
+      ]),
+      productionProcessFiles: uniqueStrings(
+        stringArray(playlet.productionProcessFiles ?? production.processFiles),
+      ),
     },
+  });
+  if (result.success) return result.data;
+
+  const details = result.error.issues
+    .map((issue) => `${issue.path.join(".") || "task"}: ${issue.message}`)
+    .join("; ");
+  throw new Error(`TENCENT_HUOLONG_DRAMA_CLAIMED_TASK_INVALID: ${details}`);
+}
+
+async function fetchReadyTasks(options: ClaimNextTencentHuolongDramaTaskOptions) {
+  const accountId = options.runtimeOptions?.accountId?.trim();
+  if (!accountId) throw new Error("TENCENT_HUOLONG_DRAMA_ACCOUNT_ID_REQUIRED");
+
+  const payload = accountTaskPageResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).accountTaskPage, {
+      page: 1,
+      pageSize: readyTaskPageSize,
+      dramaId: null,
+      originalTitle: null,
+      accountId,
+      accountName: null,
+      status: "READY",
+      auditStatus: null,
+    }),
+  );
+  assertApiSuccess(payload, "TENCENT_HUOLONG_DRAMA_ACCOUNT_TASK_PAGE_FAILED");
+  return (payload.data?.data ?? []).filter(
+    (task) => task.accountId === accountId && task.status === "READY",
+  );
+}
+
+async function reportTencentHuolongDramaTask(options: TencentHuolongTaskApiOptions & {
+  taskId: number;
+  success: boolean;
+  externalId?: string;
+  platformDramaId?: string;
+  failStage?: TencentHuolongTaskFailStage;
+  errorMessage?: string;
+  resultJson?: Record<string, unknown>;
+}) {
+  const payload = reportResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).reportTask, {
+      taskId: options.taskId,
+      success: options.success,
+      externalId: options.externalId,
+      platformDramaId: options.platformDramaId,
+      failStage: options.failStage,
+      resultJson: options.resultJson ?? {},
+      errorMessage: options.errorMessage,
+    }),
+  );
+  assertApiSuccess(payload, "TENCENT_HUOLONG_DRAMA_ACCOUNT_TASK_REPORT_FAILED");
+  if (payload.data === false) {
+    throw new Error("TENCENT_HUOLONG_DRAMA_ACCOUNT_TASK_REPORT_FAILED: data=false");
+  }
+}
+
+async function claimTask(
+  options: ClaimNextTencentHuolongDramaTaskOptions,
+  accountTaskId: number,
+  listedTask?: ReadyAccountTask,
+) {
+  const payload = claimResponseSchema.parse(
+    await taskClient(options).post(taskEndpoints(options).claimTask, { accountTaskId }),
+  );
+  assertApiSuccess(payload, "TENCENT_HUOLONG_DRAMA_ACCOUNT_TASK_CLAIM_FAILED");
+  if (!payload.data) return null;
+  if (payload.data.accountTaskId !== accountTaskId) {
+    throw new Error(
+      `TENCENT_HUOLONG_DRAMA_CLAIMED_TASK_ID_MISMATCH: expected=${accountTaskId} ` +
+        `actual=${payload.data.accountTaskId}`,
+    );
+  }
+
+  try {
+    return normalizeClaimedTencentHuolongDramaTask({
+      claimed: payload.data,
+      listedTask,
+      runtimeOptions: options.runtimeOptions,
+    });
+  } catch (error) {
+    const message = error instanceof Error ? error.message : String(error);
+    await reportTencentHuolongDramaTask({
+      ...options,
+      taskId: payload.data.accountTaskId,
+      success: false,
+      failStage: classifyClaimedTaskFailStage(error),
+      errorMessage: message,
+      resultJson: {
+        accountId: options.runtimeOptions?.accountId,
+        accountName: options.runtimeOptions?.accountName,
+      },
+    }).catch((reportError) => {
+      log(
+        options.runtimeOptions ?? {},
+        `[tencent-huolong-drama] 无效领取任务回写失败：accountTaskId=${accountTaskId} ` +
+          `error=${reportError instanceof Error ? reportError.message : String(reportError)}`,
+      );
+    });
+    throw error;
+  }
+}
+
+export async function claimNextTencentHuolongDramaTaskApi(
+  options: ClaimNextTencentHuolongDramaTaskOptions,
+): Promise<ClaimedTencentHuolongDramaTask | null> {
+  const readyTasks = await fetchReadyTasks(options);
+  if (readyTasks.length === 0) return null;
+
+  log(options.runtimeOptions ?? {}, `[tencent-huolong-drama] 获取到 ${readyTasks.length} 条 READY 任务`);
+  for (const listedTask of readyTasks) {
+    try {
+      const claimed = await claimTask(options, listedTask.id, listedTask);
+      if (claimed) return claimed;
+    } catch (error) {
+      log(
+        options.runtimeOptions ?? {},
+        `[tencent-huolong-drama] 领取任务失败：accountTaskId=${listedTask.id} ` +
+          `error=${error instanceof Error ? error.message : String(error)}`,
+      );
+    }
+  }
+  return null;
+}
+
+export async function reportTencentHuolongDramaTaskSuccessApi(
+  report: TencentHuolongTaskSuccessReport,
+): Promise<void> {
+  await reportTencentHuolongDramaTask({
+    ...report,
+    taskId: report.accountTaskId,
+    success: true,
   });
 }
 
-export async function claimNextTencentHuolongDramaTask(
-  options: TencentHuolongRuntimeOptions,
-): Promise<ClaimedTencentHuolongDramaTask | null> {
-  if (useLocalMockTaskSource) {
-    if (localMockTaskClaimed) return null;
-    if (options.accountId && options.accountId !== localMockTask.accountId) return null;
-    const task = getLocalTencentHuolongDramaTask();
-    const mockFiles = await ensureLocalTencentHuolongMockFiles(options);
-    task.playlet.costAnalysisFiles = [mockFiles.costAnalysisFile];
-    localMockTaskClaimed = true;
-    return task;
-  }
-  const api = client(options);
-  const page = pageSchema.parse(
-    await api.post("/dramaAiRpa/tencent/accountTask/page", {
-      page: 1,
-      pageSize: 100,
-      accountId: options.accountId ?? null,
-      status: "READY",
-    }),
-  );
-  if (page.code !== 0)
-    throw new Error(`TENCENT_HUOLONG_DRAMA_TASK_LIST_FAILED: ${page.msg || page.code}`);
-  const listed = page.data?.data[0];
-  if (!listed) return null;
-  const claim = claimSchema.parse(
-    await api.post("/dramaAiRpa/tencent/rpa/claim", {
-      accountTaskId: listed.id,
-      accountId: options.accountId ?? listed.accountId,
-      rpaStatus: "RUNNING",
-    }),
-  );
-  if (claim.code !== 0)
-    throw new Error(`TENCENT_HUOLONG_DRAMA_TASK_CLAIM_FAILED: ${claim.msg || claim.code}`);
-  return normalizeTask(claim.data, listed);
-}
-
-export async function reportTencentHuolongDramaTask(
-  options: TencentHuolongRuntimeOptions & {
-    accountTaskId: number;
-    status: "SUCCESS" | "FAILED";
-    failStage?: TencentHuolongTaskFailStage;
-    errorMessage?: string;
-    resultJson?: Record<string, unknown>;
-  },
-) {
-  if (options.status === "FAILED" && isBrowserClosedError(options.errorMessage)) return;
-  const errorMessage =
-    options.status === "FAILED"
-      ? formatAutomationErrorReport(options.errorMessage, {
-          fallbackMessage: "腾讯火龙漫剧任务提交失败，未获取到具体错误原因",
-        })
-      : options.errorMessage;
-  if (useLocalMockTaskSource) {
-    // 本地模拟模式没有远端任务，因此不需要回写任务状态。
-    return;
-  }
-  const result = responseBaseSchema.parse(
-    await client(options).post("/dramaAiRpa/tencent/rpa/report", {
-      accountTaskId: options.accountTaskId,
-      rpaStatus: options.status,
-      failStage: options.failStage,
-      errorMessage,
-      resultJson: options.resultJson ?? {},
-    }),
-  );
-  if (result.code !== 0)
-    throw new Error(`TENCENT_HUOLONG_DRAMA_TASK_REPORT_FAILED: ${result.msg || result.code}`);
+export async function reportTencentHuolongDramaTaskErrorApi(
+  report: TencentHuolongTaskErrorReport,
+): Promise<void> {
+  if (isBrowserClosedError(report.errorMessage)) return;
+  const errorMessage = formatAutomationErrorReport(report.errorMessage, {
+    fallbackMessage: "腾讯火龙漫剧任务提交失败，未获取到具体错误原因",
+  });
+  await reportTencentHuolongDramaTask({
+    ...report,
+    taskId: report.accountTaskId,
+    success: false,
+    errorMessage,
+  });
 }

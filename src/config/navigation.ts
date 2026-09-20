@@ -5,6 +5,7 @@ export type PlatformId =
   | "wechat-drama"
   | "wechat-miniprogram-drama"
   | "meituan-drama"
+  | "taobao-drama"
   | "kuaishou-drama"
   | "qq-drama"
   | "tencent-huolong-drama"
@@ -24,6 +25,8 @@ export type AppRoute =
   | "wechat-miniprogram-drama/config"
   | "meituan-drama/service"
   | "meituan-drama/config"
+  | "taobao-drama/service"
+  | "taobao-drama/config"
   | "kuaishou-drama/service"
   | "kuaishou-drama/config"
   | "kuaishou-drama/projects"
@@ -55,6 +58,8 @@ const appRoutes = [
   "wechat-miniprogram-drama/config",
   "meituan-drama/service",
   "meituan-drama/config",
+  "taobao-drama/service",
+  "taobao-drama/config",
   "kuaishou-drama/service",
   "kuaishou-drama/config",
   "kuaishou-drama/projects",
@@ -145,6 +150,14 @@ export const platformNavigation: PlatformNavigationItem[] = [
     serviceRoute: "meituan-drama/service",
     configRoute: "meituan-drama/config",
     logoSrc: `${import.meta.env.BASE_URL}meituan.svg`,
+  },
+  {
+    id: "taobao-drama",
+    title: "淘宝短剧",
+    routePrefix: "taobao-drama",
+    serviceRoute: "taobao-drama/service",
+    configRoute: "taobao-drama/config",
+    logoSrc: `${import.meta.env.BASE_URL}taobao.svg`,
   },
   {
     id: "kuaishou-drama",
@@ -254,6 +267,21 @@ export const navigationGroups: NavigationGroup[] = [
       {
         title: "配置管理",
         route: "meituan-drama/config",
+        icon: FineTune,
+      },
+    ],
+  },
+  {
+    title: "淘宝短剧",
+    items: [
+      {
+        title: "服务控制",
+        route: "taobao-drama/service",
+        icon: Terminal,
+      },
+      {
+        title: "配置管理",
+        route: "taobao-drama/config",
         icon: FineTune,
       },
     ],

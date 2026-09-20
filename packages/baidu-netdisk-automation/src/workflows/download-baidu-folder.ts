@@ -37,6 +37,7 @@ import type {
   BaiduNetdiskRemoteOwnershipListing,
   BaiduNetdiskRemotePosterListing,
   BaiduNetdiskRemoteAiProductionProofListing,
+  BaiduNetdiskRemoteMetadataListing,
   BaiduNetdiskRemoteVideoListing,
   BaiduNetdiskShareDownloadOptions,
   BaiduNetdiskShareDownloadResult,
@@ -58,6 +59,7 @@ export type {
   BaiduNetdiskRemoteEpisodeFile,
   BaiduNetdiskRemoteOwnershipFile,
   BaiduNetdiskRemoteOwnershipListing,
+  BaiduNetdiskRemoteMetadataListing,
   BaiduNetdiskRemotePosterListing,
   BaiduNetdiskRemoteVideoListing,
   BaiduNetdiskShareDownloadOptions,
@@ -84,6 +86,23 @@ export type RemoteEpisodeAliasCandidate = {
   size?: number;
   contentHash?: string;
 };
+
+export type RemoteEpisodeSelectionCandidate = Omit<RemoteEpisodeAliasCandidate, "index"> & {
+  index?: number;
+};
+
+export type RemoteEpisodeSelection = {
+  path: string;
+  index: number;
+};
+
+export function matchBaiduLeadingEpisodeIndex(fileName: string) {
+  const stem = String(fileName || "").replace(/\.[^.]+$/, "").trim();
+  const match = stem.match(/^(\d{1,4})\s*[·•・、，,。．._—–-]\s*\S/u);
+  if (!match) return undefined;
+  const index = Number(match[1]);
+  return Number.isInteger(index) && index > 0 ? index : undefined;
+}
 
 export function collapseIdenticalRemoteEpisodeAliases<
   T extends RemoteEpisodeAliasCandidate,
@@ -139,14 +158,18 @@ export function collapseIdenticalRemoteEpisodeAliases<
 }
 
 export function validateRemoteEpisodePathSelection(
-  candidates: RemoteEpisodeAliasCandidate[],
-  selectedPaths: string[],
+  candidates: RemoteEpisodeSelectionCandidate[],
+  selections: RemoteEpisodeSelection[],
   expectedEpisodeCount?: number,
 ) {
   const candidatesByPath = new Map(candidates.map((file) => [file.path, file]));
-  const uniquePaths = [...new Set(selectedPaths)];
-  if (uniquePaths.length !== selectedPaths.length) return undefined;
-  const selected = uniquePaths.map((filePath) => candidatesByPath.get(filePath));
+  const uniquePaths = new Set(selections.map(({ path: filePath }) => filePath));
+  if (uniquePaths.size !== selections.length) return undefined;
+  const selected = selections.map(({ path: filePath, index }) => {
+    const candidate = candidatesByPath.get(filePath);
+    if (!candidate || !Number.isInteger(index) || index <= 0) return undefined;
+    return { ...candidate, index } as RemoteEpisodeAliasCandidate;
+  });
   if (selected.some((file) => !file)) return undefined;
 
   const files = (selected as RemoteEpisodeAliasCandidate[]).sort(
@@ -871,6 +894,7 @@ type SavedShareResult = {
   remoteOwnership: BaiduNetdiskRemoteOwnershipListing;
   remotePosters: BaiduNetdiskRemotePosterListing;
   remoteAiProductionProofs: BaiduNetdiskRemoteAiProductionProofListing;
+  remoteMetadata: BaiduNetdiskRemoteMetadataListing;
   temporaryTransfer?: import("../domain/types.js").BaiduNetdiskTemporaryTransfer;
 };
 
@@ -1719,6 +1743,7 @@ async function saveShareToOwnNetdisk(
   const alreadySaved = !createdTarget && transferredCount === 0;
   const escapeRegExp = (value) => String(value).replace(/[\\\\^$.*+?()[\\]{}|]/g, "\\\\$&");
   const isSupportedEpisodeVideoFileName = ${isSupportedEpisodeVideoFileName.toString()};
+  const matchLeadingEpisodeIndex = ${matchBaiduLeadingEpisodeIndex.toString()};
   const classifyOwnershipProofName = ${classifyBaiduNetdiskOwnershipProofName.toString()};
   const isOwnershipProofDirectoryName = ${isBaiduNetdiskOwnershipProofDirectoryName.toString()};
   const isScreenshotCandidateDirectory = ${isBaiduNetdiskScreenshotCandidateDirectory.toString()};
@@ -1736,6 +1761,9 @@ async function saveShareToOwnNetdisk(
     /^(\\d+)\\.(?:mp4|mov)$/i,
   );
   const matchEpisodeIndex = (fileName) => {
+    const leadingIndex = matchLeadingEpisodeIndex(fileName);
+    if (leadingIndex !== undefined) return leadingIndex;
+
     const strongMatch = episodePatterns
       .map((pattern) => pattern.exec(fileName))
       .find((result) => result !== null);
@@ -1820,6 +1848,8 @@ async function saveShareToOwnNetdisk(
   const directoryPosterFiles = new Map();
   const aiProductionProofFiles = new Map();
   const aiProductionProofRoots = new Map();
+  const metadataTextFiles = new Map();
+  const metadataRoots = new Map();
   if (rootIsOwnership) ownershipRoots.set(normalizeDir(savedPath), itemFsId(ownRoot));
   if (rootIsAiProductionProof) aiProductionProofRoots.set(normalizeDir(savedPath), itemFsId(ownRoot));
   const candidateDirs = [];
@@ -1856,6 +1886,24 @@ async function saveShareToOwnNetdisk(
         : [];
     const selectedPosterPaths = new Set(selectedPosterImages.map((entry) => itemPath(entry) || joinPath(current.path, itemName(entry))));
     const namedPosterPaths = new Set(namedPosterImages.map((entry) => itemPath(entry) || joinPath(current.path, itemName(entry))));
+    const directMetadataTextEntries = entries.filter((entry) =>
+      !(entry?.isdir === 1 || entry?.isdir === true) && /.(?:txt|md)$/i.test(itemName(entry))
+    );
+    if (directMetadataTextEntries.length > 0) {
+      metadataRoots.set(current.path, current.fsId);
+      for (const entry of entries) {
+        if (entry?.isdir === 1 || entry?.isdir === true) continue;
+        const name = itemName(entry);
+        if (!/.(?:txt|md|png|jpe?g|bmp|webp)$/i.test(name)) continue;
+        const entryPath = itemPath(entry) || joinPath(current.path, name);
+        metadataTextFiles.set(entryPath, {
+          name,
+          path: entryPath,
+          fsId: itemFsId(entry),
+          size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
+        });
+      }
+    }
     const directEntriesByPath = new Map();
     for (const entry of entries) {
       const name = itemName(entry);
@@ -2092,6 +2140,14 @@ async function saveShareToOwnNetdisk(
       files: [...aiProductionProofFiles.values()]
         .sort((left, right) => left.path.localeCompare(right.path)),
       roots: [...aiProductionProofRoots.entries()].map(([path, fsId]) => ({ path, fsId })),
+    },
+    remoteMetadata: {
+      files: [...metadataTextFiles.values()]
+        .sort((left, right) => left.path.localeCompare(right.path, "zh-CN", { numeric: true })),
+      textFiles: [...metadataTextFiles.values()]
+        .filter((file) => /.(?:txt|md)$/i.test(file.name))
+        .sort((left, right) => left.path.localeCompare(right.path, "zh-CN", { numeric: true })),
+      roots: [...metadataRoots.entries()].map(([path, fsId]) => ({ path, fsId })),
     },
   };
 })()
@@ -2820,6 +2876,25 @@ async function countLocalPosterImages(root: string) {
   return count;
 }
 
+async function countLocalMetadataFiles(root: string) {
+  let total = 0;
+  let text = 0;
+  const queue = [root];
+  while (queue.length > 0) {
+    const current = queue.shift();
+    if (!current) continue;
+    const entries = await readdir(current, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (entry.isDirectory()) queue.push(path.join(current, entry.name));
+      else if (entry.isFile() && /\.(?:txt|md|png|jpe?g|bmp|webp)$/i.test(entry.name)) {
+        total += 1;
+        if (/\.(?:txt|md)$/i.test(entry.name)) text += 1;
+      }
+    }
+  }
+  return { text, total };
+}
+
 export function inspectContiguousEpisodeIndexes(
   indexes: number[],
   duplicateIndexes: number[] = [],
@@ -2855,6 +2930,7 @@ async function submitSavedDownload(
   expectedOwnershipFiles?: number,
   expectedPosterImages?: number,
   expectedAiProductionProofFiles?: number,
+  expectedMetadataTextFiles?: number,
   downloadEpisodeVideos = true,
   inferEpisodeCount = false,
   downloadAssetMaterials = true,
@@ -2903,6 +2979,7 @@ async function submitSavedDownload(
   const remoteOwnership = saved.remoteOwnership;
   const remotePosters = saved.remotePosters;
   const remoteAiProductionProofs = saved.remoteAiProductionProofs;
+  const remoteMetadata = saved.remoteMetadata;
   const ambiguousCandidates = [
     ...remoteVideos.files,
     ...(remoteVideos.ignoredIdenticalAliases ?? []).map((file) => ({
@@ -2911,20 +2988,35 @@ async function submitSavedDownload(
       path: file.path,
       size: file.size,
     })),
+    ...(remoteVideos.unmatchedVideoFiles ?? []).map((file) => ({
+      index: undefined,
+      name: file.name,
+      path: file.path,
+      size: file.size,
+    })),
   ].filter((file, index, files) => files.findIndex((item) => item.path === file.path) === index);
-  const candidateIndexCount = new Set(ambiguousCandidates.map((file) => file.index)).size;
-  if (selectEpisodeFiles && ambiguousCandidates.length > candidateIndexCount) {
+  if (downloadEpisodeVideos && selectEpisodeFiles && ambiguousCandidates.length > 0) {
     try {
       const candidates = ambiguousCandidates.map((file, index) => ({ ...file, id: index + 1 }));
-      const selectedPaths = await selectEpisodeFiles({
+      const preliminaryIndexes = remoteVideos.files.map((file) => file.index);
+      const preliminaryUniqueIndexes = [...new Set(preliminaryIndexes)].sort((left, right) => left - right);
+      const preliminaryCount = preliminaryUniqueIndexes[preliminaryUniqueIndexes.length - 1] ?? 0;
+      const preliminarySequenceIsComplete =
+        preliminaryCount > 0
+        && remoteVideos.duplicateIndexes.length === 0
+        && preliminaryUniqueIndexes.length === preliminaryCount
+        && preliminaryUniqueIndexes.every((index, position) => index === position + 1);
+      const aiExpectedEpisodeCount = expectedEpisodeCount
+        ?? (preliminarySequenceIsComplete ? preliminaryCount : undefined);
+      const selections = await selectEpisodeFiles({
         resourceName: share.name,
-        expectedEpisodeCount,
+        expectedEpisodeCount: aiExpectedEpisodeCount,
         candidates,
       });
       const selected = validateRemoteEpisodePathSelection(
         ambiguousCandidates,
-        selectedPaths,
-        expectedEpisodeCount,
+        selections,
+        aiExpectedEpisodeCount,
       );
       if (!selected) throw new Error("AI 返回的剧集文件不是一套完整连续分集");
       remoteVideos = {
@@ -3035,6 +3127,7 @@ async function submitSavedDownload(
           expectedOwnershipFiles,
           expectedPosterImages,
           expectedAiProductionProofFiles,
+          expectedMetadataTextFiles,
           downloadEpisodeVideos,
           inferEpisodeCount,
           downloadAssetMaterials,
@@ -3092,6 +3185,7 @@ async function submitSavedDownload(
           expectedOwnershipFiles,
           expectedPosterImages,
           expectedAiProductionProofFiles,
+          expectedMetadataTextFiles,
           downloadEpisodeVideos,
           inferEpisodeCount,
           downloadAssetMaterials,
@@ -3173,6 +3267,18 @@ async function submitSavedDownload(
       message: `百度网盘AI制作证明数量不足。` +
         `至少需要${requiredAiProductionProofFiles}个文件，实际找到${remoteAiProductionProofs.files.length}个。` +
         `请在分享资源中添加文件名或目录名包含“AI制作证明”的图片/PDF。`,
+    });
+  }
+  const requiredMetadataTextFiles = Math.max(0, expectedMetadataTextFiles ?? 0);
+  log(`网盘剧情资料清单：文本=${remoteMetadata.textFiles.length}/${requiredMetadataTextFiles}，全部文件=${remoteMetadata.files.length}`);
+  if (remoteMetadata.textFiles.length < requiredMetadataTextFiles) {
+    throw new RemoteMaterialValidationError({
+      material: "metadata-text",
+      expected: requiredMetadataTextFiles,
+      actual: remoteMetadata.textFiles.length,
+      message: `百度网盘剧情资料数量不足。` +
+        `至少需要${requiredMetadataTextFiles}个 TXT 或 MD 文件，实际找到${remoteMetadata.textFiles.length}个。` +
+        `请将简介与角色资料保存为 TXT 文件后放入分享目录。`,
     });
   }
   // Keep the large video download scoped to the selected episode directory. Every matched
@@ -3277,6 +3383,33 @@ async function submitSavedDownload(
     if (!posterSubmitted) throw new Error(`百度网盘海报封面目录下载任务提交失败：${posterTaskName}`);
   }
 
+  if (downloadAssetMaterials && requiredMetadataTextFiles > 0) {
+    for (const metadataRoot of remoteMetadata.roots) {
+      if (!metadataRoot.path || !metadataRoot.fsId || submittedAssetRoots.has(metadataRoot.path)) continue;
+      assertDedicatedAssetRoot(metadataRoot.path, "剧情资料");
+      const metadataTaskName = metadataRoot.path.split("/").filter(Boolean).pop() || "简介";
+      const localMetadataCandidates = downloadDir
+        ? [path.join(downloadDir, saved.resourceRootName, metadataTaskName), path.join(downloadDir, metadataTaskName)]
+        : [];
+      const localMetadataCounts = await Promise.all(
+        localMetadataCandidates.map(countLocalMetadataFiles),
+      );
+      if (Math.max(0, ...localMetadataCounts.map((count) => count.total)) >= remoteMetadata.files.length) {
+        log(`本地已有完整剧情资料目录，跳过重复下载：${metadataTaskName}`);
+        submittedAssetRoots.add(metadataRoot.path);
+        continue;
+      }
+      const metadataSubmitted = await submitNativeDownloadTask(port, {
+        targetName: metadataTaskName,
+        savedPath: metadataRoot.path,
+        fsId: metadataRoot.fsId,
+        downloadRoot: downloadDir,
+      });
+      if (!metadataSubmitted) throw new Error(`百度网盘剧情资料目录下载任务提交失败：${metadataTaskName}`);
+      submittedAssetRoots.add(metadataRoot.path);
+    }
+  }
+
   if (
     downloadAssetMaterials
     && (requiredAiProductionProofFiles > 0 || requireAllDiscoveredAssets)
@@ -3308,6 +3441,7 @@ async function submitSavedDownload(
     remoteOwnership,
     remotePosters,
     remoteAiProductionProofs,
+    remoteMetadata,
     inferredEpisodeCount,
     temporaryTransfer: saved.temporaryTransfer,
   };
@@ -3373,6 +3507,7 @@ async function downloadBaiduNetdiskSharePromise(
     remoteOwnership,
     remotePosters,
     remoteAiProductionProofs,
+    remoteMetadata,
     inferredEpisodeCount,
     temporaryTransfer,
   } = await submitSavedDownload(
@@ -3385,6 +3520,7 @@ async function downloadBaiduNetdiskSharePromise(
     options.expectedOwnershipFiles,
     options.expectedPosterImages,
     options.expectedAiProductionProofFiles,
+    options.expectedMetadataTextFiles,
     options.downloadEpisodeVideos !== false,
     options.inferEpisodeCount === true,
     options.downloadAssetMaterials !== false,
@@ -3409,10 +3545,13 @@ async function downloadBaiduNetdiskSharePromise(
     remoteOwnership,
     remotePosters,
     remoteAiProductionProofs,
+    remoteMetadata,
     expectedOwnershipImages: remoteOwnership.files.length,
     expectedOwnershipFiles: remoteOwnership.allFiles.length,
     expectedPosterImages: remotePosters.files.length,
     expectedAiProductionProofFiles: remoteAiProductionProofs.files.length,
+    expectedMetadataTextFiles: remoteMetadata.textFiles.length,
+    expectedMetadataFiles: remoteMetadata.files.length,
     inferredEpisodeCount,
     temporaryTransfer,
     completed: false,

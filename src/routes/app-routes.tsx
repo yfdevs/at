@@ -27,6 +27,8 @@ import { WechatMiniProgramConfigurationPage } from "@/pages/wechat-miniprogram-d
 import { WechatMiniProgramServiceControlPage } from "@/pages/wechat-miniprogram-drama/service-control"
 import { MeituanCreationConfigurationPage } from "@/pages/meituan-drama/configuration"
 import { MeituanCreationServiceControlPage } from "@/pages/meituan-drama/service-control"
+import { TaobaoDramaConfigurationPage } from "@/pages/taobao-drama/configuration"
+import { TaobaoDramaServiceControlPage } from "@/pages/taobao-drama/service-control"
 import { PinduoduoDramaConfigurationPage } from "@/pages/pinduoduo-drama/configuration"
 import { PinduoduoDramaServiceControlPage } from "@/pages/pinduoduo-drama/service-control"
 import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama/configuration"
@@ -42,6 +44,8 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "wechat-miniprogram-drama/config": WechatMiniProgramConfigurationPage,
   "meituan-drama/service": MeituanCreationServiceControlPage,
   "meituan-drama/config": MeituanCreationConfigurationPage,
+  "taobao-drama/service": TaobaoDramaServiceControlPage,
+  "taobao-drama/config": TaobaoDramaConfigurationPage,
   "kuaishou-drama/service": KuaishouDramaServiceControlPage,
   "kuaishou-drama/config": KuaishouDramaConfigurationPage,
   "kuaishou-drama/projects": KuaishouProjectsPage,

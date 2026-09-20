@@ -59,6 +59,10 @@ export type LocalPosterImageFile = {
   height?: number;
 };
 
+export const dramaPosterOriginalImageDirectoryName = "原始图片";
+export const dramaPosterTextDirectoryName = "剧情资料";
+export const dramaPosterSourceManifestFileName = "素材清单.json";
+
 export type LocalAiProductionProofFile = {
   name: string;
   file: string;
@@ -101,6 +105,7 @@ export {
 export {
   selectBaiduEpisodePathsWithAi,
   type BaiduEpisodeFilenameCandidate,
+  type BaiduEpisodeFilenameSelection,
 } from "./baidu-episode-filename-ai.js";
 export {
   commercialPosterProhibitedTextGuidance,
@@ -229,13 +234,19 @@ export function localEpisodeScanDirs(root: string, resourceName: string) {
 }
 
 export function matchLocalEpisodeIndex(fileName: string, resourceName: string) {
+  const stem = fileName.replace(/\.[^.]+$/, "").trim();
+  const leadingOrdinalMatch = stem.match(/^(\d{1,4})\s*[·•・、，,。．._—–-]\s*\S/u);
+  if (leadingOrdinalMatch) {
+    const leadingIndex = Number(leadingOrdinalMatch[1]);
+    if (Number.isInteger(leadingIndex) && leadingIndex > 0) return leadingIndex;
+  }
+
   const match = localEpisodeFilePatterns(resourceName)
     .map((pattern) => pattern.exec(fileName))
     .find((result): result is RegExpExecArray => result !== null);
 
   if (match) return Number(match[1]);
 
-  const stem = fileName.replace(/\.[^.]+$/, "");
   const trailingNumberMatch = stem.match(/(\d{1,4})\s*(?:集|episode|ep|e)?\s*$/i);
   if (!trailingNumberMatch) return undefined;
 
@@ -727,6 +738,10 @@ export async function listLocalPosterImages(options: {
   const seenFiles = new Set<string>();
 
   for (const dir of await recursiveDirs(resourceDir)) {
+    const relativeDirectoryParts = path.relative(resourceDir, dir).split(path.sep);
+    if (relativeDirectoryParts.some((part) =>
+      part === dramaPosterOriginalImageDirectoryName || part === dramaPosterTextDirectoryName
+    )) continue;
     const entries = (await readdir(dir, { withFileTypes: true }).catch(() => []))
       .filter((entry) => entry.isFile() && ownershipImageExtensions.has(path.extname(entry.name).toLowerCase()))
       .sort((left, right) => left.name.localeCompare(right.name, "zh-CN", { numeric: true }));
@@ -828,24 +843,115 @@ export async function standardizeAiProductionProofFilesToRoot(options: {
 
 export async function standardizePosterImagesToRoot(options: {
   files: LocalPosterImageFile[];
+  metadataSourceFiles?: string[];
   targetRoot: string;
   resourceName: string;
   onLog?: (message: string) => void;
 }) {
   const targetDir = path.join(playletDir(options.targetRoot, options.resourceName), "海报封面");
-  const selected = options.files[0];
-  const sourceBuffer = selected ? await readFile(selected.file) : undefined;
+  const originalImageDir = path.join(targetDir, dramaPosterOriginalImageDirectoryName);
+  const textDir = path.join(targetDir, dramaPosterTextDirectoryName);
+  const sourceRoots = [...new Map([
+    ...options.files.map((source) => source.file),
+    ...(options.metadataSourceFiles ?? []),
+  ].map((sourceFile) => {
+    const parent = path.dirname(sourceFile);
+    return [path.resolve(parent).toLowerCase(), parent] as const;
+  })).values()];
+  const snapshotFiles = async (extensions: Set<string>, preferredSubdir: string) => {
+    const snapshots: Array<{
+      buffer: Buffer;
+      originalName: string;
+      originalRelativePath: string;
+    }> = [];
+    const seen = new Set<string>();
+    for (const sourceRoot of sourceRoots) {
+      const preferredRoot = path.join(sourceRoot, preferredSubdir);
+      const scanRoot = await pathExists(preferredRoot) ? preferredRoot : sourceRoot;
+      for (const dir of await recursiveDirs(scanRoot)) {
+        const entries = await readdir(dir, { withFileTypes: true }).catch(() => []);
+        for (const entry of entries) {
+          if (!entry.isFile() || !extensions.has(path.extname(entry.name).toLowerCase())) continue;
+          const file = path.join(dir, entry.name);
+          const key = path.resolve(file).toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          snapshots.push({
+            buffer: await readFile(file),
+            originalName: entry.name,
+            originalRelativePath: path.relative(scanRoot, file),
+          });
+        }
+      }
+    }
+    return snapshots;
+  };
+  // The downloaded cover directory often also carries actor portraits and a TXT
+  // synopsis. Snapshot them before replacing the directory with standardized covers.
+  const [originalImages, textFiles] = await Promise.all([
+    snapshotFiles(ownershipImageExtensions, dramaPosterOriginalImageDirectoryName),
+    snapshotFiles(new Set([".txt", ".md"]), dramaPosterTextDirectoryName),
+  ]);
+  const sources = await Promise.all(options.files.map(async (source) => ({
+    source,
+    buffer: await readFile(source.file),
+  })));
   await rm(targetDir, { recursive: true, force: true });
   await mkdir(targetDir, { recursive: true });
   const standardized: LocalPosterImageFile[] = [];
-  if (selected && sourceBuffer) {
-    const extension = path.extname(selected.file).toLowerCase() || ".jpg";
-    const target = path.join(targetDir, `${options.resourceName} - 海报${extension}`);
-    await writeFile(target, sourceBuffer);
+  for (const [{ source, buffer }, index] of sources.map((item, index) => [item, index] as const)) {
+    const extension = path.extname(source.file).toLowerCase() || ".jpg";
+    const suffix = index === 0 ? "" : String(index + 1);
+    const target = path.join(targetDir, `${options.resourceName} - 海报${suffix}${extension}`);
+    await writeFile(target, buffer);
     const targetStat = await stat(target);
-    standardized.push({ name: path.basename(target), file: target, size: targetStat.size });
+    standardized.push({
+      name: path.basename(target),
+      file: target,
+      size: targetStat.size,
+      width: source.width,
+      height: source.height,
+    });
   }
-  options.onLog?.(`[video-assets] 海报封面标准化完成：图片=${standardized.length} dir=${targetDir}`);
+  const writeSnapshots = async (
+    targetRoot: string,
+    snapshots: Array<{ buffer: Buffer; originalName: string; originalRelativePath: string }>,
+  ) => {
+    await mkdir(targetRoot, { recursive: true });
+    const usedNames = new Set<string>();
+    const written: Array<{ originalName: string; originalRelativePath: string; localFile: string }> = [];
+    for (const snapshot of snapshots) {
+      const parsed = path.parse(snapshot.originalName);
+      let fileName = snapshot.originalName;
+      let suffix = 2;
+      while (usedNames.has(fileName.toLowerCase())) {
+        fileName = `${parsed.name}-${suffix}${parsed.ext}`;
+        suffix += 1;
+      }
+      usedNames.add(fileName.toLowerCase());
+      const target = path.join(targetRoot, fileName);
+      await writeFile(target, snapshot.buffer);
+      written.push({
+        originalName: snapshot.originalName,
+        originalRelativePath: snapshot.originalRelativePath,
+        localFile: path.relative(targetDir, target),
+      });
+    }
+    return written;
+  };
+  const [writtenImages, writtenTexts] = await Promise.all([
+    writeSnapshots(originalImageDir, originalImages),
+    writeSnapshots(textDir, textFiles),
+  ]);
+  await writeFile(
+    path.join(targetDir, dramaPosterSourceManifestFileName),
+    JSON.stringify({ images: writtenImages, texts: writtenTexts }, null, 2),
+    "utf8",
+  );
+  options.onLog?.(
+    `[video-assets] 海报封面标准化完成：封面=${standardized.length} `
+      + `原始图片=${writtenImages.length} 文本=${writtenTexts.length} dir=${targetDir}`,
+  );
   return standardized;
 }
 

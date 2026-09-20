@@ -5,6 +5,7 @@ import {
   listLocalPosterImages,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
+import { log } from "./logger.js";
 import type { ClaimedTencentHuolongDramaTask, TencentHuolongRuntimeOptions } from "./types.js";
 
 export function materialRoot(options: TencentHuolongRuntimeOptions) {
@@ -17,6 +18,13 @@ export async function sourcePoster(task: ClaimedTencentHuolongDramaTask, options
   const posters = await listLocalPosterImages({ root: materialRoot(options), resourceName: task.originalTitle });
   const poster = posters[0];
   if (!poster) throw new Error(`[poster-material-invalid] 未找到剧集封面：${task.originalTitle}`);
+  const sourceKind = /AI海报/u.test(poster.name)
+    ? "网盘缺少海报后的AI兜底源图"
+    : "百度网盘或本地剧集素材";
+  log(
+    options,
+    `[tencent-huolong-drama] 封面AI参考图已选定：来源=${sourceKind} file=${poster.file}`,
+  );
   return poster.file;
 }
 

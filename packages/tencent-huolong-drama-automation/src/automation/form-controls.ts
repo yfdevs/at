@@ -10,6 +10,7 @@ import {
 import { log } from "../shared/logger.js";
 import type {
   ClaimedTencentHuolongDramaTask,
+  TencentHuolongKeyword,
   TencentHuolongRuntimeOptions,
   TencentHuolongTheme,
 } from "../shared/types.js";
@@ -213,6 +214,55 @@ async function chooseTheme(
     return;
   }
   log(options, `[tencent-huolong-drama] 题材类型已选择并收起：${theme}`);
+}
+
+async function keywordSelected(option: Locator) {
+  return option.evaluate((element) => {
+    const className = typeof element.className === "string" ? element.className : "";
+    return element.getAttribute("aria-pressed") === "true"
+      || element.getAttribute("aria-checked") === "true"
+      || element.getAttribute("data-selected") === "true"
+      || /(?:^|[_\s-])(?:selected|active|checked|chosen)(?:[_\s-]|$)/iu.test(className);
+  }).catch(() => false);
+}
+
+export async function selectTencentHuolongKeywords(
+  page: Page,
+  keywords: readonly [TencentHuolongKeyword, TencentHuolongKeyword],
+  options: TencentHuolongRuntimeOptions,
+) {
+  const root = page.locator('[data-field-name="micro_series_keyword"]').first();
+  await root.waitFor({ state: "visible", timeout: 15_000 });
+  for (const keyword of [...new Set(keywords)]) {
+    const option = root.getByRole("button", { name: keyword, exact: true }).first();
+    await option.waitFor({ state: "visible", timeout: 10_000 });
+    if (!await keywordSelected(option)) {
+      await option.click({ timeout: 10_000 });
+      await page.waitForTimeout(100);
+    }
+  }
+
+  const error = root.getByText(/关键词至少选择\s*2\s*个/u).filter({ visible: true });
+  if (await error.count() > 0) {
+    throw new Error(
+      `TENCENT_HUOLONG_DRAMA_KEYWORDS_NOT_SELECTED: expected=${keywords.join("、")}`,
+    );
+  }
+  const selectedCount = await root.locator('[role="button"]').evaluateAll((elements) =>
+    elements.filter((element) => {
+      const className = typeof element.className === "string" ? element.className : "";
+      return element.getAttribute("aria-pressed") === "true"
+        || element.getAttribute("aria-checked") === "true"
+        || element.getAttribute("data-selected") === "true"
+        || /(?:^|[_\s-])(?:selected|active|checked|chosen)(?:[_\s-]|$)/iu.test(className);
+    }).length,
+  );
+  if (selectedCount > 0 && selectedCount < 2) {
+    throw new Error(
+      `TENCENT_HUOLONG_DRAMA_KEYWORDS_NOT_SELECTED: selected=${selectedCount}; expected=${keywords.join("、")}`,
+    );
+  }
+  log(options, `[tencent-huolong-drama] 关键词已选择：${keywords.join("、")}`);
 }
 
 async function confirmCropIfPresent(page: Page, timeout = 15_000) {
@@ -569,6 +619,7 @@ export async function fillTencentHuolongFirstPage(
   page: Page,
   task: ClaimedTencentHuolongDramaTask,
   subtitle: string,
+  keywords: readonly TencentHuolongKeyword[],
   covers: TencentHuolongCoverFiles,
   options: TencentHuolongRuntimeOptions,
 ) {
@@ -632,6 +683,14 @@ export async function fillTencentHuolongFirstPage(
   await clickFieldOption(page, "kairos_pay_mode", "免费");
   await clickFieldOption(page, "pay_model", "免费");
   await chooseTheme(page, task.playlet.themeType, options);
+  if (task.playlet.isAiRealPersonShortDrama === "是") {
+    if (keywords.length < 2) throw new Error("TENCENT_HUOLONG_DRAMA_KEYWORDS_REQUIRED");
+    await selectTencentHuolongKeywords(
+      page,
+      [keywords[0]!, keywords[1]!],
+      options,
+    );
+  }
 
   await checkNamedRadio(page, "is_end_update", 0);
   await page.locator('[data-field-name="total_episode"] input[type="number"]').fill(String(task.playlet.episodeCount));
@@ -704,26 +763,100 @@ async function confirmAuthorizationContractIfPresent(
   return true;
 }
 
+const videoUploadInputSelector =
+  'input[type="file"][accept*="video"],input[type="file"][accept*="mp4"]';
+
+async function visibleFormErrorMessage(page: Page) {
+  const errors = await page.locator('[class*="error"],[role="alert"]')
+    .filter({ visible: true })
+    .allInnerTexts();
+  return errors
+    .map((text) => text.replace(/\s+/g, " ").trim())
+    .filter(Boolean)
+    .join("；");
+}
+
+async function waitForVideoUploadControl(page: Page, timeoutMs: number) {
+  const input = page.locator(videoUploadInputSelector).first();
+  const localUpload = page.getByText("本地上传", { exact: true }).filter({ visible: true }).first();
+  const deadline = Date.now() + timeoutMs;
+  let localUploadClicked = false;
+  while (Date.now() < deadline) {
+    if (await input.count() > 0) return true;
+    if (!localUploadClicked && await localUpload.isVisible().catch(() => false)) {
+      await localUpload.click({ timeout: 10_000 });
+      localUploadClicked = true;
+    }
+    await page.waitForTimeout(200);
+  }
+  return await input.count() > 0;
+}
+
+export async function ensureTencentHuolongVideoUploadStep(
+  page: Page,
+  options: TencentHuolongRuntimeOptions,
+  initialWaitMs = 20_000,
+) {
+  if (await waitForVideoUploadControl(page, initialWaitMs)) return;
+
+  const errorBeforeRefresh = await visibleFormErrorMessage(page);
+  if (errorBeforeRefresh) {
+    throw new Error(`TENCENT_HUOLONG_DRAMA_FORM_INVALID: ${errorBeforeRefresh}`);
+  }
+
+  const bodyTextBeforeRefresh = await page.locator("body").innerText().catch(() => "");
+  log(options, "[tencent-huolong-drama] 合同确认后上传步骤长时间空白，刷新页面恢复上传控件", {
+    activeUrl: page.url(),
+    visibleTextLength: bodyTextBeforeRefresh.replace(/\s+/g, "").length,
+  });
+  await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+  await page.waitForLoadState("networkidle", { timeout: 15_000 }).catch(() => undefined);
+
+  if (await waitForVideoUploadControl(page, 60_000)) {
+    log(options, "[tencent-huolong-drama] 页面刷新后上传控件已恢复");
+    return;
+  }
+
+  const errorAfterRefresh = await visibleFormErrorMessage(page);
+  if (errorAfterRefresh) {
+    throw new Error(`TENCENT_HUOLONG_DRAMA_FORM_INVALID_AFTER_REFRESH: ${errorAfterRefresh}`);
+  }
+  const bodyTextAfterRefresh = await page.locator("body").innerText().catch(() => "");
+  throw new Error(
+    "TENCENT_HUOLONG_DRAMA_VIDEO_UPLOAD_STEP_NOT_READY_AFTER_REFRESH: " +
+      `url=${page.url()}; pageText=${bodyTextAfterRefresh.replace(/\s+/g, " ").trim().slice(0, 300) || "<blank>"}`,
+  );
+}
+
 export async function submitAndOpenVideoStep(page: Page, options: TencentHuolongRuntimeOptions) {
   const button = page.getByRole("button", { name: /^提交并添加(?:视频|合同)$/u }).filter({ visible: true });
   await button.click({ timeout: 20_000 });
   await confirmAuthorizationContractIfPresent(page, options);
   await page.waitForTimeout(500);
-  const errors = await page.locator('[class*="error"],[role="alert"]').filter({ visible: true }).allInnerTexts();
-  const message = errors.map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean).join("；");
+  const message = await visibleFormErrorMessage(page);
   if (message) throw new Error(`TENCENT_HUOLONG_DRAMA_FORM_INVALID: ${message}`);
-  const localUpload = page.getByText("本地上传", { exact: true }).filter({ visible: true });
-  if (await localUpload.count() > 0) await localUpload.first().click();
-  await page.locator('input[type="file"][accept*="video"],input[type="file"][accept*="mp4"]').first()
-    .waitFor({ state: "attached", timeout: 60_000 });
+  await ensureTencentHuolongVideoUploadStep(page, options);
   log(options, "[tencent-huolong-drama] 已进入添加视频页面");
 }
 
 export async function submitTencentHuolongVideos(page: Page, options: TencentHuolongRuntimeOptions) {
   const postSubmitSettleMs = 10_000;
-  const submit = page.getByRole("button", { name: "提交", exact: true }).filter({ visible: true });
-  await submit.last().click({ timeout: 30_000 });
+  const preciseSubmit = page.locator('button[dt-mpid="video_submit_click"]').filter({ visible: true });
+  const submit = await preciseSubmit.count() > 0
+    ? preciseSubmit.last()
+    : page.getByRole("button", { name: "提交", exact: true }).filter({ visible: true }).last();
+  await submit.waitFor({ state: "visible", timeout: 30_000 });
+  const submitEnableDeadline = Date.now() + 30_000;
+  while (!await submit.isEnabled().catch(() => false) && Date.now() < submitEnableDeadline) {
+    await page.waitForTimeout(200);
+  }
+  if (!await submit.isEnabled().catch(() => false)) {
+    throw new Error("TENCENT_HUOLONG_DRAMA_VIDEO_SUBMIT_DISABLED");
+  }
+  log(options, "[tencent-huolong-drama] 剧集视频上传完成，准备点击提交");
+  await submit.click({ timeout: 30_000 });
   let finalSubmitClickedAt = Date.now();
+  log(options, "[tencent-huolong-drama] 已点击剧集视频提交按钮");
 
   const continueSubmit = page.getByRole("button", { name: "继续提交", exact: true }).filter({ visible: true });
   await continueSubmit.last().waitFor({ state: "visible", timeout: 3_000 })

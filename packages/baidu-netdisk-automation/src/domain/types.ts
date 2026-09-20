@@ -53,6 +53,7 @@ export type BaiduNetdiskShareDownloadOptions = {
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  expectedMetadataTextFiles?: number;
   downloadEpisodeVideos?: boolean;
   downloadAssetMaterials?: boolean;
   requireAllDiscoveredAssets?: boolean;
@@ -67,12 +68,12 @@ export type BaiduNetdiskShareDownloadOptions = {
     expectedEpisodeCount?: number;
     candidates: Array<{
       id: number;
-      index: number;
+      index?: number;
       name: string;
       path: string;
       size?: number;
     }>;
-  }) => Promise<string[]>;
+  }) => Promise<Array<{ path: string; index: number }>>;
 };
 
 export type BaiduNetdiskRemoteOwnershipFile = {
@@ -154,6 +155,12 @@ export type BaiduNetdiskRemoteAiProductionProofListing = {
   roots: Array<{ path: string; fsId?: number | string }>;
 };
 
+export type BaiduNetdiskRemoteMetadataListing = {
+  files: BaiduNetdiskRemoteOwnershipFile[];
+  textFiles: BaiduNetdiskRemoteOwnershipFile[];
+  roots: Array<{ path: string; fsId?: number | string }>;
+};
+
 export type BaiduNetdiskShareDownloadResult = {
   share: BaiduNetdiskShareInfo;
   downloadRoot?: string;
@@ -162,10 +169,13 @@ export type BaiduNetdiskShareDownloadResult = {
   remoteOwnership?: BaiduNetdiskRemoteOwnershipListing;
   remotePosters?: BaiduNetdiskRemotePosterListing;
   remoteAiProductionProofs?: BaiduNetdiskRemoteAiProductionProofListing;
+  remoteMetadata?: BaiduNetdiskRemoteMetadataListing;
   expectedOwnershipImages?: number;
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  expectedMetadataTextFiles?: number;
+  expectedMetadataFiles?: number;
   inferredEpisodeCount?: number;
   temporaryTransfer?: BaiduNetdiskTemporaryTransfer;
   completed: boolean;

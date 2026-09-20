@@ -12,7 +12,7 @@ test("sends every candidate filename to AI and maps selected IDs back to paths",
       return {
         finishReason: "stop",
         model: "test",
-        text: '{"selectedIds":[2,4],"reason":"统一的正片命名"}',
+        text: '{"selected":[{"id":2,"episode":1},{"id":4,"episode":2}],"reason":"统一的正片命名"}',
       };
     },
   } as DramaAiClient;
@@ -28,6 +28,34 @@ test("sends every candidate filename to AI and maps selected IDs back to paths",
     resourceName: "剧名",
     expectedEpisodeCount: 2,
     candidates,
-  }), ["/剧名-第1集.mp4", "/剧名-第2集.mp4"]);
+  }), [
+    { path: "/剧名-第1集.mp4", index: 1 },
+    { path: "/剧名-第2集.mp4", index: 2 },
+  ]);
   assert.ok(candidates.every((candidate) => prompt.includes(candidate.name)));
+  assert.ok(candidates.every((candidate) => prompt.includes(candidate.path)));
+  assert.match(prompt, /程序初步集数可能错误/);
+});
+
+test("lets AI correct a misleading trailing segment number", async () => {
+  const client = {
+    generateText: async () => ({
+      finishReason: "stop",
+      model: "test",
+      text: '{"selected":[{"id":1,"episode":14},{"id":2,"episode":58}],"reason":"开头是连续总集数"}',
+    }),
+  } as DramaAiClient;
+
+  assert.deepEqual(await selectBaiduEpisodePathsWithAi({
+    client,
+    resourceName: "三分钱的取舍",
+    expectedEpisodeCount: 58,
+    candidates: [
+      { id: 1, index: 1, name: "14·桃-2-1.mp4", path: "/14.mp4", size: 100 },
+      { id: 2, index: 22, name: "58·桃-3-22.mp4", path: "/58.mp4", size: 100 },
+    ],
+  }), [
+    { path: "/14.mp4", index: 14 },
+    { path: "/58.mp4", index: 58 },
+  ]);
 });

@@ -20,3 +20,17 @@ const result = await ai.analyzeImages({
 `apiKey`、`baseURL` 和 `model` 均由应用主进程从项目配置注入，不从环境变量读取。分析图片时，应使用服务商提供的、支持视觉输入的模型。
 
 为了兼容既有调用，包内仍保留 `createDoubaoAiClient` 和豆包默认地址；新代码优先使用通用的 `createOpenAiCompatibleClient`。
+
+平台字段有长度限制时，统一使用 `optimizeTextLength`。合规文本会原样返回且不调用模型；超限文本会经过 AI 精炼、重试和最终安全长度兜底：
+
+```ts
+import { optimizeTextLength } from "@drama/ai";
+
+const summary = await optimizeTextLength({
+  client: ai,
+  text: originalSummary,
+  maxLength: 200,
+  fieldName: "作品简介",
+  contentDescription: "平台上剧页展示的剧情简介",
+});
+```

@@ -31,3 +31,26 @@ export const tencentHuolongThemeValues = tencentHuolongThemeOptionValues.map(
 export const tencentHuolongThemeOptionId = Object.fromEntries(
   tencentHuolongThemeOptionValues,
 ) as Record<(typeof tencentHuolongThemeValues)[number], string>;
+
+export const tencentHuolongKeywordValues = [
+  "主旋律",
+  "脱贫攻坚",
+  "青春校园",
+  "职业剧",
+  "情感",
+  "都市",
+  "喜剧",
+  "古装",
+  "科幻",
+  "奇幻",
+  "玄幻",
+  "公安刑侦",
+  "乡村",
+  "犯罪",
+  "年代剧",
+  "探险",
+  "美食",
+  "武侠",
+  "体育竞技",
+  "战争军旅",
+] as const;

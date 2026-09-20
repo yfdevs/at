@@ -1,11 +1,17 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import {
+  classifyOwnershipProjectProofName,
   listLocalOwnershipMaterials,
   listLocalPosterImages,
   prepareStretchedImageVariant,
+  readImageDimensions,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
+import {
+  DOUYIN_DRAMA_DOUYIN_COVER,
+  DOUYIN_DRAMA_HONGGUO_COVER,
+} from "./constants.js";
 import { log } from "./logger.js";
 import type { ClaimedDouyinDramaTask, DouyinDramaRuntimeOptions } from "./types.js";
 
@@ -73,6 +79,7 @@ async function prepareMaterialReferences(
   category: string,
   task: ClaimedDouyinDramaTask,
   options: DouyinDramaRuntimeOptions,
+  allowedExtensions?: ReadonlySet<string>,
 ) {
   const outputDir = path.join(
     options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/douyin-drama/assets"),
@@ -91,6 +98,12 @@ async function prepareMaterialReferences(
       if (!fileStat?.isFile() || fileStat.size <= 0) {
         throw new Error(`DOUYIN_DRAMA_MATERIAL_FILE_NOT_FOUND: ${candidate}`);
       }
+      const extension = path.extname(candidate).toLowerCase();
+      if (allowedExtensions && !allowedExtensions.has(extension)) {
+        throw new Error(
+          `DOUYIN_DRAMA_MATERIAL_FORMAT_INVALID: ${category}仅支持${[...allowedExtensions].join("/")}，实际=${extension || "无扩展名"}`,
+        );
+      }
       return candidate;
     }
 
@@ -103,6 +116,11 @@ async function prepareMaterialReferences(
       throw new Error(`DOUYIN_DRAMA_MATERIAL_DOWNLOAD_FAILED: HTTP ${response.status}: ${reference}`);
     }
     const extension = remoteMaterialExtension(url, response.headers.get("content-type"));
+    if (allowedExtensions && !allowedExtensions.has(extension.toLowerCase())) {
+      throw new Error(
+        `DOUYIN_DRAMA_MATERIAL_FORMAT_INVALID: ${category}仅支持${[...allowedExtensions].join("/")}，实际=${extension}`,
+      );
+    }
     const target = path.join(outputDir, `${category}-${index + 1}${extension}`);
     await writeFile(target, Buffer.from(await response.arrayBuffer()));
     log(options, `[douyin-drama] 公共材料下载完成：字段=${category} 文件=${target}`, undefined, "resources");
@@ -110,11 +128,82 @@ async function prepareMaterialReferences(
   }));
 }
 
+const douyinImageMaterialExtensions = new Set([".png", ".jpg", ".jpeg"]);
+
+export function selectDouyinJianyingProjectScreenshots(
+  ownershipMaterials: Awaited<ReturnType<typeof listLocalOwnershipMaterials>>,
+  count = 4,
+) {
+  const classified = ownershipMaterials.map((material) => ({
+    kind: classifyOwnershipProjectProofName(
+      `${path.basename(path.dirname(material.file))}/${material.name}`,
+    ),
+    material,
+  }));
+  const selectedMaterials = classified
+    .filter((item) => item.kind === "jianying")
+    .map((item) => item.material)
+    .sort((left, right) =>
+      (left.index ?? Number.MAX_SAFE_INTEGER) - (right.index ?? Number.MAX_SAFE_INTEGER)
+      || left.name.localeCompare(right.name, "zh-CN", { numeric: true }))
+    .slice(0, count);
+  if (selectedMaterials.length < count) {
+    const juchuangCount = classified.filter((item) => item.kind === "juchuang").length;
+    const unknown = classified
+      .filter((item) => item.kind === undefined)
+      .map((item) => item.material.name)
+      .slice(0, 8);
+    throw new Error(
+      `DOUYIN_DRAMA_JIANYING_SCREENSHOTS_REQUIRED: 工程文件截图需要${count}张剪映图片，`
+        + `实际=${selectedMaterials.length}，剧创=${juchuangCount}，未识别=${unknown.length}`
+        + (unknown.length > 0 ? `（${unknown.join("、")}）` : ""),
+    );
+  }
+  return selectedMaterials.map((material) => material.file);
+}
+
 function assertMaterialCount(label: string, files: string[], minimum: number, maximum?: number) {
   if (files.length < minimum || (maximum !== undefined && files.length > maximum)) {
     const expected = maximum === undefined ? `至少${minimum}个` : `${minimum}-${maximum}个`;
     throw new Error(`DOUYIN_DRAMA_MATERIAL_COUNT_INVALID: ${label}需要${expected}，实际=${files.length}`);
   }
+}
+
+type DouyinCoverCandidate = {
+  file: string;
+  height?: number;
+  width?: number;
+};
+
+function coverRatioDistance(candidate: DouyinCoverCandidate, targetRatio: number) {
+  if (!candidate.width || !candidate.height) return Number.POSITIVE_INFINITY;
+  return Math.abs(candidate.width / candidate.height - targetRatio);
+}
+
+/**
+ * A netdisk folder may contain one shared poster or two platform-specific posters.
+ * When there are two usable images, choose the distinct pair whose ratios most
+ * closely match 7:10 (Hongguo) and 2:3 (Douyin) before producing exact-size files.
+ */
+export function selectDouyinCoverSources<T extends DouyinCoverCandidate>(posters: T[]) {
+  if (posters.length === 0) {
+    throw new Error("[poster-material-invalid] 未找到文件名或目录名包含‘封面’或‘海报’的图片");
+  }
+  if (posters.length === 1) {
+    return { douyin: posters[0], hongguo: posters[0] };
+  }
+
+  let best: { douyin: T; hongguo: T; score: number } | undefined;
+  for (const hongguo of posters) {
+    for (const douyin of posters) {
+      if (hongguo === douyin) continue;
+      const score = coverRatioDistance(hongguo, DOUYIN_DRAMA_HONGGUO_COVER.aspectRatio)
+        + coverRatioDistance(douyin, DOUYIN_DRAMA_DOUYIN_COVER.aspectRatio);
+      if (!best || score < best.score) best = { douyin, hongguo, score };
+    }
+  }
+
+  return best ?? { douyin: posters[0], hongguo: posters[0] };
 }
 
 export async function prepareDouyinDramaResources(
@@ -133,14 +222,8 @@ export async function prepareDouyinDramaResources(
     root: localEpisodeVideoRoot,
     resourceName,
     includePortraitImages: true,
+    deduplicateByContent: false,
   });
-  if (task.playlet.costConfigurationFiles.length === 0) {
-    task.playlet.costConfigurationFiles = await findLocalMaterialFiles(
-      task,
-      options,
-      ["成本配置", "制作成本"],
-    );
-  }
   if (task.playlet.payCommitmentFiles.length === 0) {
     task.playlet.payCommitmentFiles = await findLocalMaterialFiles(
       task,
@@ -148,28 +231,16 @@ export async function prepareDouyinDramaResources(
       ["片酬承诺"],
     );
   }
-  if (task.playlet.ownershipProofFiles.length === 0) {
-    const localCopyrightFiles = await findLocalMaterialFiles(
-      task,
-      options,
-      ["版权证明", "权属文件", "制作协议", "授权协议"],
-    );
-    task.playlet.ownershipProofFiles = localCopyrightFiles.length > 0
-      ? localCopyrightFiles.slice(0, 5)
-      : ownershipMaterials.slice(0, 2).map((file) => file.file);
-  }
-  if (task.playlet.nonInfringementCommitmentFiles.length === 0) {
-    task.playlet.nonInfringementCommitmentFiles = await findLocalMaterialFiles(
-      task,
-      options,
-      ["不侵权承诺", "承诺函"],
-    );
-  }
-  if (task.playlet.projectScreenshotFiles.length === 0) {
-    task.playlet.projectScreenshotFiles = ownershipMaterials
-      .slice(0, 5)
-      .map((file) => file.file);
-  }
+  // 抖音要求的是当前剧目的剪映工程截图。即使接口或 mock 误传了通用
+  // 图片，也必须由百度网盘下载目录重新选择，避免把占位图/封面传上去。
+  task.playlet.projectScreenshotFiles = selectDouyinJianyingProjectScreenshots(
+    ownershipMaterials,
+    4,
+  );
+  log(options, "[douyin-drama] 已从百度网盘权属目录选择 4 张剪映工程截图。", {
+    accountTaskId: task.accountTaskId,
+    files: task.playlet.projectScreenshotFiles,
+  }, "resources");
 
   const [
     costConfigurationFiles,
@@ -178,7 +249,13 @@ export async function prepareDouyinDramaResources(
     nonInfringementCommitmentFiles,
     projectScreenshotFiles,
   ] = await Promise.all([
-    prepareMaterialReferences(task.playlet.costConfigurationFiles, "cost-configuration", task, options),
+    prepareMaterialReferences(
+      task.playlet.costConfigurationFiles,
+      "cost-configuration",
+      task,
+      options,
+      douyinImageMaterialExtensions,
+    ),
     prepareMaterialReferences(task.playlet.payCommitmentFiles, "pay-commitment", task, options),
     prepareMaterialReferences(task.playlet.ownershipProofFiles, "ownership-proof", task, options),
     prepareMaterialReferences(
@@ -186,13 +263,20 @@ export async function prepareDouyinDramaResources(
       "non-infringement-commitment",
       task,
       options,
+      douyinImageMaterialExtensions,
     ),
-    prepareMaterialReferences(task.playlet.projectScreenshotFiles, "project-screenshots", task, options),
+    prepareMaterialReferences(
+      task.playlet.projectScreenshotFiles,
+      "project-screenshots",
+      task,
+      options,
+      douyinImageMaterialExtensions,
+    ),
   ]);
   assertMaterialCount("成本配置情况", costConfigurationFiles, 1);
   assertMaterialCount("权属文件", ownershipProofFiles, 1);
   assertMaterialCount("不侵权承诺函", nonInfringementCommitmentFiles, 1);
-  assertMaterialCount("工程文件截图", projectScreenshotFiles, 4, 5);
+  assertMaterialCount("工程文件截图", projectScreenshotFiles, 4, 4);
   task.playlet.costConfigurationFiles = costConfigurationFiles;
   task.playlet.payCommitmentFiles = payCommitmentFiles;
   task.playlet.ownershipProofFiles = ownershipProofFiles;
@@ -204,12 +288,7 @@ export async function prepareDouyinDramaResources(
     resourceName,
     includeAllMatches: true,
   });
-  if (posters.length === 0) {
-    throw new Error("[poster-material-invalid] 未找到文件名或目录名包含‘封面’或‘海报’的图片");
-  }
-  const sourcePoster = posters.find((poster) => (
-    poster.width !== undefined && poster.height !== undefined && poster.height > poster.width
-  )) ?? posters[0];
+  const coverSources = selectDouyinCoverSources(posters);
   const outputDir = path.join(
     options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/douyin-drama/assets"),
     "poster-upload",
@@ -218,19 +297,19 @@ export async function prepareDouyinDramaResources(
   const onResizeLog = (message: string) => log(options, `[douyin-drama] ${message}`, undefined, "resources");
   const [hongguoCover, douyinCover] = await Promise.all([
     prepareStretchedImageVariant({
-      inputFile: sourcePoster.file,
+      inputFile: coverSources.hongguo.file,
       outputFile: path.join(outputDir, "hongguo-cover-700x1000.jpg"),
-      width: 700,
-      height: 1_000,
+      width: DOUYIN_DRAMA_HONGGUO_COVER.width,
+      height: DOUYIN_DRAMA_HONGGUO_COVER.height,
       jpegQuality: 92,
       maxFileBytes: 4_700_000,
       onLog: onResizeLog,
     }),
     prepareStretchedImageVariant({
-      inputFile: sourcePoster.file,
+      inputFile: coverSources.douyin.file,
       outputFile: path.join(outputDir, "douyin-cover-720x1080.jpg"),
-      width: 720,
-      height: 1_080,
+      width: DOUYIN_DRAMA_DOUYIN_COVER.width,
+      height: DOUYIN_DRAMA_DOUYIN_COVER.height,
       jpegQuality: 92,
       maxFileBytes: 4_700_000,
       onLog: onResizeLog,
@@ -238,10 +317,39 @@ export async function prepareDouyinDramaResources(
   ]);
   task.playlet.localHongguoCoverFile = hongguoCover.file;
   task.playlet.localDouyinCoverFile = douyinCover.file;
+  const rolePhotoOutputDir = path.join(
+    options.assetDownloadDir ?? path.resolve(process.cwd(), ".drama-runs/douyin-drama/assets"),
+    "role-photo-upload",
+  );
+  await rm(rolePhotoOutputDir, { recursive: true, force: true });
+  for (const [index, role] of task.playlet.roles.entries()) {
+    if (!role.photoFile) {
+      throw new Error(`DOUYIN_DRAMA_ROLE_PHOTO_REQUIRED: 网盘中找不到角色图片：${role.name}`);
+    }
+    const [sourceRolePhoto] = await prepareMaterialReferences(
+      [role.photoFile],
+      `role-photo-${index + 1}`,
+      task,
+      options,
+    );
+    const dimensions = await readImageDimensions(sourceRolePhoto);
+    const preparedRolePhoto = await prepareStretchedImageVariant({
+      inputFile: sourceRolePhoto,
+      outputFile: path.join(rolePhotoOutputDir, `role-${index + 1}.jpg`),
+      width: dimensions.width,
+      height: dimensions.height,
+      jpegQuality: 92,
+      maxFileBytes: 4_700_000,
+      onLog: onResizeLog,
+    });
+    role.photoFile = preparedRolePhoto.file;
+  }
 
   return {
     localEpisodeVideoRoot,
     resourceName,
+    hongguoCoverSourceFile: coverSources.hongguo.file,
+    douyinCoverSourceFile: coverSources.douyin.file,
     hongguoCoverFile: hongguoCover.file,
     douyinCoverFile: douyinCover.file,
     projectScreenshotFiles,

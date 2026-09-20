@@ -1,4 +1,5 @@
 import { z } from "zod";
+import type { DramaAiClient } from "@drama/ai";
 
 export type QqDramaLoginState = "login-required" | "logged-in" | "unknown";
 export type QqDramaTaskStatus = "READY" | "RUNNING" | "SUCCESS" | "FAILED";
@@ -255,6 +256,7 @@ export type QqDramaRuntimeOptions = {
   episodeUploadWaitTimeoutMinutes?: number;
   episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
+  aiClientFactory?: () => DramaAiClient;
   config?: {
     browser?: {
       headless?: boolean;

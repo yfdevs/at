@@ -10,9 +10,7 @@ import {
 } from "@/platforms/douyin-drama/service"
 
 const emptyConfig: DouyinDramaConfig = {
-  accountProfileName: "default",
-  apiBaseUrl: "",
-  useMockTask: "false",
+  apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
@@ -21,26 +19,19 @@ const emptyConfig: DouyinDramaConfig = {
   taskPollIntervalSeconds: "10",
   runDataDir: ".drama-runs/douyin-drama",
   logRetentionDays: "3",
+  closeFailedTaskPages: "false",
 }
 
 const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
   {
     title: "任务与素材",
-    description: "领取接口接入前可启用内置测试任务；网盘素材会按原始剧名下载并校验。",
+    description: "业务选项由后台 RPA 任务配置；桌面端只负责领取、执行和回报任务。",
     fields: [
       {
         key: "apiBaseUrl",
         label: "接口地址",
-        description: "预留的抖音 RPA 后端接口根地址，空 API 接入后直接复用。",
+        description: "用于读取后台启用账号、领取任务并回报执行结果，默认连接 180.184.76.232:19090。",
         type: "url",
-      },
-      {
-        kind: "switch",
-        key: "useMockTask",
-        label: "内置测试任务",
-        description: "开启后只领取一次真实结构的假数据，submit=false，不会自动点击最终提交。",
-        activeLabel: "已启用",
-        inactiveLabel: "已关闭",
       },
       {
         key: "taskPollIntervalSeconds",
@@ -73,11 +64,6 @@ const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
     description: "抖音短剧使用独立 Chromium 登录态；共享目录在全局配置中统一管理。",
     fields: [
       {
-        key: "accountProfileName",
-        label: "账号配置名",
-        description: "用于隔离浏览器登录态目录。",
-      },
-      {
         key: "logRetentionDays",
         label: "日志保留",
         description: "超过天数的日志文件会在服务启动时清理。",
@@ -101,6 +87,14 @@ const sections: ConfigSectionDefinition<DouyinDramaConfig>[] = [
         activeLabel: "无头运行",
         inactiveLabel: "显示浏览器",
       },
+      {
+        kind: "switch",
+        key: "closeFailedTaskPages",
+        label: "失败任务页面",
+        description: "默认保留失败现场，便于结合截图和日志排查页面变化。",
+        activeLabel: "自动关闭失败页",
+        inactiveLabel: "保留失败页",
+      },
     ],
   },
 ]
@@ -111,7 +105,6 @@ export function DouyinDramaConfigurationPage() {
     getConfig: douyinDramaService.getConfig,
     saveConfig: douyinDramaService.saveConfig,
   })
-
   return (
     <ConfigurationPageFrame
       hasChanges={configState.hasChanges}

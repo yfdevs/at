@@ -47,8 +47,10 @@ export function createKuaishouDramaPublishVariants(
   const extraAds: KuaishouDramaPublishVariant[] = [
     { kind: "ad-unlock-2", title: withoutBookTitleMarks(task.adVersion2Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
     { kind: "ad-unlock-3", title: withoutBookTitleMarks(task.adVersion3Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
+    { kind: "ad-unlock-4", title: withoutBookTitleMarks(task.adVersion4Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
+    { kind: "ad-unlock-5", title: withoutBookTitleMarks(task.adVersion5Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
   ];
-  return task.publishType === "三个广告版本"
+  return task.publishType === "五个广告版本"
     ? [variants[1]!, ...extraAds]
     : [...variants, ...extraAds];
 }

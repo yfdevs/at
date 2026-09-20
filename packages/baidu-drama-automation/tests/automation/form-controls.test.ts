@@ -6,7 +6,45 @@ import test from "node:test";
 
 import { chromium } from "playwright";
 
-import { selectDropdownOption, selectFormItem, uploadCoverSlot } from "../../src/automation/form-controls.js";
+import {
+  confirmBaiduDramaTypeChangeIfPresent,
+  selectDropdownOption,
+  selectFormItem,
+  uploadCoverSlot,
+} from "../../src/automation/form-controls.js";
+
+test("confirms a delayed Baidu drama-type change dialog before continuing", async () => {
+  const browser = await chromium.launch({ channel: "chromium", headless: true });
+
+  try {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <button class="type-card" type="button">非真人短剧</button>
+      <div class="cheetah-modal-wrap" style="display: none" role="dialog">
+        <div class="cheetah-modal-content">
+          <p>变更短剧类型后需重新填写短剧信息，是否确认变更？</p>
+          <button type="button">取消</button>
+          <button class="confirm" type="button">确定</button>
+        </div>
+      </div>
+      <script>
+        const dialog = document.querySelector('.cheetah-modal-wrap');
+        document.querySelector('.type-card').addEventListener('click', () => {
+          setTimeout(() => { dialog.style.display = 'block'; }, 50);
+        });
+        document.querySelector('.confirm').addEventListener('click', () => {
+          dialog.style.display = 'none';
+        });
+      </script>
+    `);
+
+    await page.getByText("非真人短剧", { exact: true }).click();
+    assert.equal(await confirmBaiduDramaTypeChangeIfPresent(page, 1_000), true);
+    assert.equal(await page.locator(".cheetah-modal-wrap").isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
 
 test("selects both Baidu categories promptly when neither has a selected item yet", async () => {
   const browser = await chromium.launch({ channel: "chromium", headless: true });

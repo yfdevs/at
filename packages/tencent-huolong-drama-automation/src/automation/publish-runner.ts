@@ -12,7 +12,7 @@ import {
   validateEpisodeVideos,
 } from "../shared/local-materials.js";
 import { log } from "../shared/logger.js";
-import { resolveTencentHuolongSubtitle } from "../shared/subtitle.js";
+import { resolveTencentHuolongCreativeMetadata } from "../shared/subtitle.js";
 import type { ClaimedTencentHuolongDramaTask, TencentHuolongRuntimeOptions } from "../shared/types.js";
 import { saveCredentialState, waitForLoginIfNeeded } from "./browser-session.js";
 import {
@@ -39,6 +39,33 @@ type EpisodeUploadRowSnapshot = FailedEpisodeUpload & {
   statuses: string[];
 };
 
+type EpisodeUploadProgress = {
+  completed: number;
+  total: number;
+};
+
+const maxEpisodeFilesPerSelection = 60;
+
+export function splitTencentHuolongEpisodeUploadBatches(files: string[]) {
+  const batches: string[][] = [];
+  for (let offset = 0; offset < files.length; offset += maxEpisodeFilesPerSelection) {
+    batches.push(files.slice(offset, offset + maxEpisodeFilesPerSelection));
+  }
+  return batches;
+}
+
+export function parseTencentHuolongEpisodeUploadProgress(
+  titles: string[],
+): EpisodeUploadProgress | undefined {
+  for (const title of titles) {
+    if (!/(?:正在上传|上传完成)/u.test(title)) continue;
+    const match = title.match(/[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/u);
+    if (!match) continue;
+    return { completed: Number(match[1]), total: Number(match[2]) };
+  }
+  return undefined;
+}
+
 export function findFailedEpisodeUploads(rows: EpisodeUploadRowSnapshot[]): FailedEpisodeUpload[] {
   return rows
     .filter(({ statuses }) => statuses.includes("上传失败"))
@@ -61,6 +88,107 @@ export async function readFailedEpisodeUploads(page: Page): Promise<FailedEpisod
   return findFailedEpisodeUploads(rows);
 }
 
+async function readSuccessfulEpisodeUploadCount(page: Page) {
+  return page.locator("section[data-g-index]").evaluateAll((elements) => elements.filter((row) => {
+    const statuses = Array.from(row.querySelectorAll("header div, header span"))
+      .map((element) => element.textContent?.trim() ?? "");
+    return statuses.some((status) => /上传成功|上传完成/u.test(status));
+  }).length);
+}
+
+async function waitForEpisodeUploadBatch(options: {
+  page: Page;
+  runtimeOptions: TencentHuolongRuntimeOptions;
+  batchNumber: number;
+  batchSize: number;
+  uploadedBeforeBatch: number;
+  expectedUploadedTotal: number;
+  deadline: number;
+}) {
+  const {
+    page,
+    runtimeOptions,
+    batchNumber,
+    batchSize,
+    uploadedBeforeBatch,
+    expectedUploadedTotal,
+    deadline,
+  } = options;
+  const progressTitles = page.locator('header[class*="_header_"] div[class*="_title_"]').filter({ visible: true });
+  let lastProgress = "";
+  let sawCurrentBatchInProgress = false;
+
+  while (Date.now() < deadline) {
+    const failedUploads = await readFailedEpisodeUploads(page);
+    if (failedUploads.length > 0) {
+      const failedEpisodes = failedUploads
+        .map(({ episodeNumber, title }) => `视频${episodeNumber}${title ? `（${title}）` : ""}`)
+        .join("、");
+      throw new Error(
+        `TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED: failed=${failedEpisodes}`
+        + (lastProgress ? `; progress=${lastProgress}` : ""),
+      );
+    }
+
+    const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
+    if (/上传失败/.test(bodyText)) {
+      throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED${lastProgress ? `: progress=${lastProgress}` : ""}`);
+    }
+
+    const successfulCount = await readSuccessfulEpisodeUploadCount(page);
+    if (successfulCount >= expectedUploadedTotal) {
+      log(
+        runtimeOptions,
+        `[tencent-huolong-drama] 第${batchNumber}批剧集视频已上传完成：累计${expectedUploadedTotal}集`,
+      );
+      return;
+    }
+
+    const progress = parseTencentHuolongEpisodeUploadProgress(await progressTitles.allInnerTexts());
+    if (progress) {
+      const isCumulativeProgress = progress.total >= expectedUploadedTotal;
+      const isCurrentBatchProgress = progress.total === batchSize;
+      if (!isCumulativeProgress && !isCurrentBatchProgress) {
+        await page.waitForTimeout(1_000);
+        continue;
+      }
+      if (isCurrentBatchProgress && progress.completed < progress.total) {
+        sawCurrentBatchInProgress = true;
+      }
+      const cumulativeCompleted = isCumulativeProgress
+        ? progress.completed
+        : uploadedBeforeBatch + progress.completed;
+      const cumulativeTotal = isCumulativeProgress
+        ? progress.total
+        : uploadedBeforeBatch + progress.total;
+      const progressText = `${Math.min(cumulativeCompleted, expectedUploadedTotal)}/${cumulativeTotal}`;
+      if (progressText !== lastProgress) {
+        log(runtimeOptions, `[tencent-huolong-drama] 剧集视频上传进度：${progressText}`);
+        lastProgress = progressText;
+      }
+
+      const currentBatchFinished = progress.completed >= progress.total
+        && (
+          isCumulativeProgress
+          || (isCurrentBatchProgress && (batchNumber === 1 || sawCurrentBatchInProgress || batchSize < maxEpisodeFilesPerSelection))
+        );
+      if (currentBatchFinished) {
+        log(
+          runtimeOptions,
+          `[tencent-huolong-drama] 第${batchNumber}批剧集视频已上传完成：累计${expectedUploadedTotal}集`,
+        );
+        return;
+      }
+    }
+    await page.waitForTimeout(1_000);
+  }
+
+  throw new Error(
+    `TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_TIMEOUT: batch=${batchNumber}`
+    + (lastProgress ? `; progress=${lastProgress}` : ""),
+  );
+}
+
 async function uploadEpisodeVideos(
   page: Page,
   task: ClaimedTencentHuolongDramaTask,
@@ -78,48 +206,30 @@ async function uploadEpisodeVideos(
     if (prepared.files.length !== task.playlet.episodeCount) {
       throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_COUNT_MISMATCH: expected=${task.playlet.episodeCount} actual=${prepared.files.length}`);
     }
-    const input = page.locator('input[type="file"][accept*="video"],input[type="file"][accept*="mp4"]').first();
-    await input.setInputFiles(prepared.files, { timeout: 120_000 });
     const timeoutMs = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
-    const startedAt = Date.now();
-    const progressTitles = page.locator('header[class*="_header_"] div[class*="_title_"]').filter({ visible: true });
-    let lastProgress = "";
-    while (Date.now() - startedAt < timeoutMs) {
-      const failedUploads = await readFailedEpisodeUploads(page);
-      if (failedUploads.length > 0) {
-        const failedEpisodes = failedUploads
-          .map(({ episodeNumber, title }) => `视频${episodeNumber}${title ? `（${title}）` : ""}`)
-          .join("、");
-        throw new Error(
-          `TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED: failed=${failedEpisodes}`
-          + (lastProgress ? `; progress=${lastProgress}` : ""),
-        );
-      }
-
-      const bodyText = (await page.locator("body").innerText()).replace(/\s+/g, " ");
-      if (/上传失败/.test(bodyText)) {
-        throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_FAILED${lastProgress ? `: progress=${lastProgress}` : ""}`);
-      }
-
-      const titles = await progressTitles.allInnerTexts();
-      const progressText = titles.find((text) => /(?:正在上传|上传完成).*?[（(]\s*\d+\s*\/\s*\d+\s*[)）]/u.test(text));
-      const match = progressText?.match(/[（(]\s*(\d+)\s*\/\s*(\d+)\s*[)）]/u);
-      if (match) {
-        const completed = Number(match[1]);
-        const total = Number(match[2]);
-        const progress = `${completed}/${total}`;
-        if (progress !== lastProgress) {
-          log(options, `[tencent-huolong-drama] 剧集视频上传进度：${progress}`);
-          lastProgress = progress;
-        }
-        if (completed >= prepared.files.length && total === prepared.files.length) {
-          log(options, `[tencent-huolong-drama] 剧集视频已全部上传完成：${progress}`);
-          return;
-        }
-      }
-      await page.waitForTimeout(1_000);
+    const deadline = Date.now() + timeoutMs;
+    const batches = splitTencentHuolongEpisodeUploadBatches(prepared.files);
+    let uploadedCount = 0;
+    for (const [batchIndex, batch] of batches.entries()) {
+      const batchNumber = batchIndex + 1;
+      log(
+        options,
+        `[tencent-huolong-drama] 开始上传第${batchNumber}/${batches.length}批剧集视频：${batch.length}集`,
+      );
+      const input = page.locator('input[type="file"][accept*="video"],input[type="file"][accept*="mp4"]').first();
+      await input.setInputFiles(batch, { timeout: 120_000 });
+      await waitForEpisodeUploadBatch({
+        page,
+        runtimeOptions: options,
+        batchNumber,
+        batchSize: batch.length,
+        uploadedBeforeBatch: uploadedCount,
+        expectedUploadedTotal: uploadedCount + batch.length,
+        deadline,
+      });
+      uploadedCount += batch.length;
     }
-    throw new Error(`TENCENT_HUOLONG_DRAMA_EPISODE_UPLOAD_TIMEOUT${lastProgress ? `: progress=${lastProgress}` : ""}`);
+    log(options, `[tencent-huolong-drama] 剧集视频已全部上传完成：${uploadedCount}/${prepared.files.length}`);
   } finally {
     await cleanupEpisodeUploadFiles(prepared);
   }
@@ -134,9 +244,9 @@ export async function runTencentHuolongPublishTask(
   await openTencentHuolongAddPage(page, context, options);
   await prepareTencentHuolongRequiredMaterials(task, options);
   const poster = await sourcePoster(task, options);
-  const subtitle = await resolveTencentHuolongSubtitle(task.playlet, options);
+  const metadata = await resolveTencentHuolongCreativeMetadata(task.playlet, options);
   const covers = await prepareTencentHuolongCovers(poster, task, options);
-  await fillTencentHuolongFirstPage(page, task, subtitle, covers, options);
+  await fillTencentHuolongFirstPage(page, task, metadata.subtitle, metadata.keywords, covers, options);
   await submitAndOpenVideoStep(page, options);
   await uploadEpisodeVideos(page, task, options);
   await submitTencentHuolongVideos(page, options);

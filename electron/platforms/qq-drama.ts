@@ -18,6 +18,7 @@ import { createElectronPlatformLogger } from "../platform-logger";
 import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
+  createConfiguredAiClient,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 
@@ -553,6 +554,7 @@ async function startRuntime() {
         episodeUploadWaitTimeoutMinutes,
         episodeUploadFailedRetryAttempts,
         taskPollIntervalMs,
+        aiClientFactory: createConfiguredAiClient,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
           requesterPlatform: "qq-drama",

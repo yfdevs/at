@@ -28,6 +28,25 @@ export const KUAISHOU_EPISODE_COVER_SIZE = {
 } as const;
 
 type KuaishouCoverKind = "drama" | "episode";
+type KuaishouTextlessVariant = 2 | 3 | 4 | 5;
+type KuaishouTextlessVariantKind = "ad-unlock-2" | "ad-unlock-3" | "ad-unlock-4" | "ad-unlock-5";
+
+const textlessVariants = [
+  { variant: 2, kind: "ad-unlock-2", titleKey: "adVersion2Title" },
+  { variant: 3, kind: "ad-unlock-3", titleKey: "adVersion3Title" },
+  { variant: 4, kind: "ad-unlock-4", titleKey: "adVersion4Title" },
+  { variant: 5, kind: "ad-unlock-5", titleKey: "adVersion5Title" },
+] as const satisfies ReadonlyArray<{
+  variant: KuaishouTextlessVariant;
+  kind: KuaishouTextlessVariantKind;
+  titleKey: "adVersion2Title" | "adVersion3Title" | "adVersion4Title" | "adVersion5Title";
+}>;
+
+const textlessVariantKinds = new Set<string>(textlessVariants.map(({ kind }) => kind));
+
+function isTextlessVariantKind(value: string | undefined): value is KuaishouTextlessVariantKind {
+  return value !== undefined && textlessVariantKinds.has(value);
+}
 
 const promptVersion = "kuaishou-cover-counterpart-v4-commercial-copy";
 const normalizationVersion = "kuaishou-cover-contain-v1";
@@ -120,16 +139,19 @@ export function buildKuaishouCounterpartCoverPrompt(options: {
 
 export function buildKuaishouTextlessVariantCoverPrompt(options: {
   kind: KuaishouCoverKind;
-  variant: 2 | 3;
+  variant: KuaishouTextlessVariant;
   summary: string;
 }) {
-  const direction = options.variant === 2
-    ? "突出核心人物之间的情绪张力，采用具有电影感的近景和自然背景。"
-    : "突出故事发生的场景、关键道具和人物关系，采用有纵深感的中景构图。";
+  const direction: Record<KuaishouTextlessVariant, string> = {
+    2: "突出核心人物之间的情绪张力，采用具有电影感的近景和自然背景。",
+    3: "突出故事发生的场景、关键道具和人物关系，采用有纵深感的中景构图。",
+    4: "突出主角的行动力和关键转折，采用富有动势的构图与清晰的前后景层次。",
+    5: "突出人物命运对比与剧情高潮，采用完整群像或具有悬念感的环境构图。",
+  };
   return [
     `参考原剧封面及剧情简介，创作第 ${options.variant} 个广告版本的${coverDetails[options.kind].label}。`,
     `剧情简介：${options.summary}`,
-    direction,
+    direction[options.variant],
     "保留原剧主要人物的外貌、服饰、时代和作品辨识度；重新设计画面，不要简单裁切、拼接、镜像或复制原封面。",
     "这是一张纯画面封面。彻底去掉参考图中所有剧名、标题、文字、字母、数字、标志、水印、二维码、字幕、按钮和排版元素；不要绘制任何新文字。",
     "人物面部与关键道具完整自然，主体处于安全区域，四周留出裁切余量。直接输出可发布的成品图。",
@@ -329,7 +351,7 @@ async function generateMissingCover(options: {
   sourceKind: "landscape" | "portrait" | "generic";
   kind: KuaishouCoverKind;
   title: string;
-  textlessVariant?: 2 | 3;
+  textlessVariant?: KuaishouTextlessVariant;
   summary?: string;
   runtime: KuaishouDramaRuntimeOptions;
 }) {
@@ -514,9 +536,8 @@ export async function prepareKuaishouDramaCoverFiles(
   task.localEpisodeCoverFile = episodeCover;
   if (task.publishType !== "付费" && task.publishType !== "广告") {
     task.localVariantCoverFiles = {};
-    for (const variant of [2, 3] as const) {
-      const kind = variant === 2 ? "ad-unlock-2" : "ad-unlock-3";
-      const title = variant === 2 ? task.adVersion2Title! : task.adVersion3Title!;
+    for (const { variant, kind, titleKey } of textlessVariants) {
+      const title = task[titleKey]!;
       const generated = await Promise.allSettled([
         generateMissingCover({
           sourceFile: selected.landscape?.file ?? selected.fallback.file,
@@ -559,7 +580,7 @@ export async function prepareKuaishouDramaCoverFiles(
 }
 
 export function resolveKuaishouDramaCoverFile(task: KuaishouDramaTaskConfig, variant?: string) {
-  const file = (variant === "ad-unlock-2" || variant === "ad-unlock-3"
+  const file = (isTextlessVariantKind(variant)
     ? task.localVariantCoverFiles?.[variant]?.drama
     : task.localCoverFile)?.trim();
   if (!file) throw new Error("KUAISHOU_DRAMA_LOCAL_COVER_FILE_REQUIRED");
@@ -567,7 +588,7 @@ export function resolveKuaishouDramaCoverFile(task: KuaishouDramaTaskConfig, var
 }
 
 export function resolveKuaishouEpisodeCoverFile(task: KuaishouDramaTaskConfig, variant?: string) {
-  const file = (variant === "ad-unlock-2" || variant === "ad-unlock-3"
+  const file = (isTextlessVariantKind(variant)
     ? task.localVariantCoverFiles?.[variant]?.episode
     : task.localEpisodeCoverFile)?.trim();
   if (!file) throw new Error("KUAISHOU_DRAMA_LOCAL_EPISODE_COVER_FILE_REQUIRED");

@@ -106,7 +106,14 @@ type BaiduNetdiskShareDownloadResult = {
   expectedOwnershipFiles?: number;
   expectedPosterImages?: number;
   expectedAiProductionProofFiles?: number;
+  expectedMetadataTextFiles?: number;
+  expectedMetadataFiles?: number;
   remoteVideos?: BaiduNetdiskRemoteVideoListing;
+  remoteMetadata?: {
+    files: Array<{ name: string; path: string; size?: number }>;
+    textFiles: Array<{ name: string; path: string; size?: number }>;
+    roots: Array<{ path: string; fsId?: number | string }>;
+  };
   inferredEpisodeCount?: number;
   temporaryTransfer?: {
     path: string;
@@ -145,6 +152,7 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
     summary: string;
   };
   requiredAiProductionProofFiles?: number;
+  requiredMetadataTextFiles?: number;
   mergeOwnershipMaterials?: boolean;
   videoTranscode?: {
     runDataDir: string;
@@ -715,6 +723,7 @@ function normalizeEnsureDownloadRequest(
         }
       : undefined,
     requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
+    requiredMetadataTextFiles: request.requiredMetadataTextFiles,
     mergeOwnershipMaterials: request.mergeOwnershipMaterials,
     requesterPlatform: request.requesterPlatform,
     videoTranscode: request.videoTranscode,
@@ -832,6 +841,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       expectedOwnershipFiles?: number;
       expectedPosterImages?: number;
       expectedAiProductionProofFiles?: number;
+      expectedMetadataTextFiles?: number;
       downloadEpisodeVideos?: boolean;
       downloadAssetMaterials?: boolean;
       requireAllDiscoveredAssets?: boolean;
@@ -848,12 +858,12 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
         expectedEpisodeCount?: number;
         candidates: Array<{
           id: number;
-          index: number;
+          index?: number;
           name: string;
           path: string;
           size?: number;
         }>;
-      }) => Promise<string[]>;
+      }) => Promise<Array<{ path: string; index: number }>>;
     }) => Promise<Omit<BaiduNetdiskShareDownloadResult, "downloadDir">>;
     getBaiduNetdiskDownloadTaskStatus: (options: { port: number; targetName: string }) => Promise<{
       found: boolean;
@@ -1153,6 +1163,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       requiredOwnershipFiles: request.requiredOwnershipFiles,
       requiredPosterImages: request.requiredPosterImages,
       requiredAiProductionProofFiles: request.requiredAiProductionProofFiles,
+      requiredMetadataTextFiles: request.requiredMetadataTextFiles,
       mergeOwnershipMaterials: request.mergeOwnershipMaterials,
       timeoutMs,
       downloadDir: uniqueDownloadDir,
@@ -1169,6 +1180,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             expectedOwnershipFiles: downloadRequest.expectedOwnershipFiles,
             expectedPosterImages: downloadRequest.expectedPosterImages,
             expectedAiProductionProofFiles: downloadRequest.expectedAiProductionProofFiles,
+            expectedMetadataTextFiles: downloadRequest.expectedMetadataTextFiles,
             downloadEpisodeVideos: downloadRequest.downloadEpisodeVideos,
             downloadAssetMaterials: downloadRequest.downloadAssetMaterials,
             requireAllDiscoveredAssets: downloadRequest.requireAllDiscoveredAssets,

@@ -1,4 +1,5 @@
 import { z } from "zod";
+import { optimizeTextLength } from "@drama/ai";
 import { formatAutomationErrorReport, isBrowserClosedError } from "@drama/automation-logging";
 import { log } from "../shared/logger.js";
 import {
@@ -172,11 +173,11 @@ function classifyClaimedTaskFailStage(error: unknown): QqDramaTaskFailStage {
     : "OTHER";
 }
 
-function normalizeClaimedTask(options: {
+async function normalizeClaimedTask(options: {
   claimed: ClaimResponseData;
   listedTask?: ReadyAccountTask;
   runtimeOptions?: QqDramaRuntimeOptions;
-}): ClaimedQqDramaTask {
+}): Promise<ClaimedQqDramaTask> {
   const { claimed, listedTask, runtimeOptions } = options;
   const expectedAccountId = runtimeOptions?.qqAccountId?.trim();
   const claimedAccountId = claimed.accountId?.trim();
@@ -195,11 +196,33 @@ function normalizeClaimedTask(options: {
   const copyright = recordValue(payload.copyright);
   const productionCostProofFiles = uniqueStrings(stringArray(productionCost.proofFiles));
   const productionProofFiles = uniqueStrings(stringArray(copyright.productionProofFiles));
+  const rawSummary = stringValue(playletPayload.summary) ?? stringValue(payload.summary);
+  let summary = rawSummary;
+  if (rawSummary && rawSummary.length > 200) {
+    if (!runtimeOptions?.aiClientFactory) throw new Error("DRAMA_AI_API_KEY_REQUIRED");
+    log(runtimeOptions, "[qq-drama] 作品简介超过 200 字符，开始使用 AI 优化", {
+      accountTaskId: claimed.accountTaskId,
+      originalLength: rawSummary.length,
+    });
+    summary = await optimizeTextLength({
+      client: runtimeOptions.aiClientFactory(),
+      text: rawSummary,
+      maxLength: 200,
+      fieldName: "QQ 短剧作品简介",
+      contentDescription: "QQ 短剧上剧页展示的剧情简介",
+      instructions: "使用自然、完整的中文句子，保留主要人物、冲突、转折和结局走向。",
+    });
+    log(runtimeOptions, "[qq-drama] AI 作品简介优化完成", {
+      accountTaskId: claimed.accountTaskId,
+      originalLength: rawSummary.length,
+      optimizedLength: summary.length,
+    });
+  }
 
   const playlet = {
     ...playletPayload,
     title: stringValue(playletPayload.title) ?? stringValue(payload.name),
-    summary: stringValue(playletPayload.summary) ?? stringValue(payload.summary),
+    summary,
     localCoverFile: undefined,
     episodeCount: numberValue(playletPayload.episodeCount) ?? numberValue(payload.episodeCount),
     baiduPanResourceLink:
@@ -272,7 +295,7 @@ async function claimTask(
           `actual=${payload.data.accountTaskId}`,
       );
     }
-    return normalizeClaimedTask({
+    return await normalizeClaimedTask({
       claimed: payload.data,
       listedTask,
       runtimeOptions: options.runtimeOptions,

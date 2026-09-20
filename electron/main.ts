@@ -35,6 +35,15 @@ import {
   stopMeituanCreationPlatformRuntime,
 } from "./platforms/meituan-drama";
 import {
+  getTaobaoDramaBrowserInstanceCount,
+  getTaobaoDramaPlatformRuntimeSummary,
+  getTaobaoDramaRunningPlatformCount,
+  openTaobaoDramaLogDir,
+  registerTaobaoDramaPlatformHandlers,
+  stopTaobaoDramaPlatformService,
+  stopTaobaoDramaPlatformRuntime,
+} from "./platforms/taobao-drama";
+import {
   getKuaishouDramaBrowserInstanceCount,
   getKuaishouDramaPlatformRuntimeSummary,
   getKuaishouDramaRunningPlatformCount,
@@ -141,6 +150,7 @@ type PlatformId =
   | "wechat-drama"
   | "wechat-miniprogram-drama"
   | "meituan-drama"
+  | "taobao-drama"
   | "kuaishou-drama"
   | "qq-drama"
   | "tencent-huolong-drama"
@@ -243,6 +253,7 @@ app.on("before-quit", () => {
   stopWechatVideoPlatformRuntime();
   stopWechatMiniProgramPlatformRuntime();
   stopMeituanCreationPlatformRuntime();
+  stopTaobaoDramaPlatformRuntime();
   stopKuaishouDramaPlatformRuntime();
   stopQqDramaPlatformRuntime();
   stopTencentHuolongDramaPlatformRuntime();
@@ -270,6 +281,7 @@ app.whenReady().then(() => {
     registerWechatVideoPlatformHandlers();
     registerWechatMiniProgramPlatformHandlers();
     registerMeituanCreationPlatformHandlers();
+    registerTaobaoDramaPlatformHandlers();
     registerKuaishouDramaPlatformHandlers();
     registerQqDramaPlatformHandlers();
     registerTencentHuolongDramaPlatformHandlers();
@@ -352,6 +364,8 @@ function getPlatformRuntimeSummary(platformId: PlatformId) {
       return getWechatMiniProgramPlatformRuntimeSummary();
     case "meituan-drama":
       return getMeituanCreationPlatformRuntimeSummary();
+    case "taobao-drama":
+      return getTaobaoDramaPlatformRuntimeSummary();
     case "kuaishou-drama":
       return getKuaishouDramaPlatformRuntimeSummary();
     case "qq-drama":
@@ -381,6 +395,8 @@ function openPlatformLogDir(platformId: PlatformId) {
       return openWechatMiniProgramLogDir();
     case "meituan-drama":
       return openMeituanCreationLogDir();
+    case "taobao-drama":
+      return openTaobaoDramaLogDir();
     case "kuaishou-drama":
       return openKuaishouDramaLogDir();
     case "qq-drama":
@@ -407,6 +423,7 @@ function getGlobalBrowserInstanceCount() {
     getWechatVideoBrowserInstanceCount,
     getWechatMiniProgramBrowserInstanceCount,
     getMeituanCreationBrowserInstanceCount,
+    getTaobaoDramaBrowserInstanceCount,
     getKuaishouDramaBrowserInstanceCount,
     getQqDramaBrowserInstanceCount,
     getTencentHuolongDramaBrowserInstanceCount,
@@ -431,6 +448,7 @@ function getGlobalRunningPlatformStatus() {
     getWechatVideoRunningPlatformCount,
     getWechatMiniProgramRunningPlatformCount,
     getMeituanCreationRunningPlatformCount,
+    getTaobaoDramaRunningPlatformCount,
     getKuaishouDramaRunningPlatformCount,
     getQqDramaRunningPlatformCount,
     getTencentHuolongDramaRunningPlatformCount,
@@ -458,6 +476,7 @@ async function stopAllPlatformServices() {
     { label: "微信视频号", stop: stopWechatVideoPlatformService },
     { label: "微信小程序", stop: stopWechatMiniProgramPlatformService },
     { label: "美团短剧", stop: stopMeituanCreationPlatformService },
+    { label: "淘宝短剧", stop: stopTaobaoDramaPlatformService },
     { label: "快手短剧", stop: stopKuaishouDramaPlatformService },
     { label: "QQ 短剧", stop: stopQqDramaPlatformService },
     { label: "腾讯火龙", stop: stopTencentHuolongDramaPlatformService },

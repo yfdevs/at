@@ -1,0 +1,92 @@
+// oxlint-disable typescript/no-floating-promises
+import assert from "node:assert/strict";
+import test from "node:test";
+
+import type { KuaishouDramaHttpClient } from "../../src/api/http-client.js";
+import { claimNextKuaishouDramaTaskApi } from "../../src/api/task.js";
+import { createKuaishouDramaPublishVariants } from "../../src/shared/publish-variants.js";
+
+test("keeps the five-ad-version fields when claiming a backend task", async () => {
+  const calls: Array<{ path: string; payload: unknown }> = [];
+  const client: KuaishouDramaHttpClient = {
+    async post(path, payload) {
+      calls.push({ path, payload });
+      if (path.endsWith("/accountTask/page")) {
+        return {
+          code: 0,
+          msg: "操作成功",
+          data: {
+            total: 1,
+            data: [{
+              id: 401,
+              dramaId: 901,
+              accountId: "kuaishou-account-1",
+              accountName: "快手一号",
+              status: "READY",
+              originalTitle: "逆风归途",
+            }],
+          },
+        } as never;
+      }
+      if (path.endsWith("/rpa/claim")) {
+        return {
+          code: 0,
+          msg: "操作成功",
+          data: {
+            accountTaskId: 401,
+            accountId: "kuaishou-account-1",
+            originalTitle: "逆风归途",
+            rpaProfileKey: null,
+            accountConfigJson: null,
+            payloadJson: {
+              name: "逆风归途",
+              summary:
+                "女主在事业与家庭的双重低谷中重新出发，凭借坚韧和智慧找回人生方向。她在一次次误解与挑战中守住初心，也逐渐揭开旧事背后的真相。面对亲情、友情和爱情的选择，她不再逃避，而是与伙伴并肩前行，最终完成自我成长并迎来新的生活。",
+              episodeCount: 60,
+              producerName: "制作方",
+              productionCost: { amountWan: 1 },
+              baiduPanResourceLink: "https://pan.baidu.com/s/example?pwd=1234",
+              kuaishouPlaylet: {
+                genderChannel: "不限",
+                categories: ["脑洞"],
+                plotTags: ["其他"],
+                publishType: "五个广告版本",
+                adVersion2Title: "雨夜归人",
+                adVersion3Title: "旧城来信",
+                adVersion4Title: "长街灯火",
+                adVersion5Title: "故园春深",
+              },
+            },
+          },
+        } as never;
+      }
+      throw new Error(`unexpected path: ${path}`);
+    },
+  };
+
+  const claimed = await claimNextKuaishouDramaTaskApi({
+    client,
+    runtimeOptions: { kuaishouAccountId: "kuaishou-account-1" },
+  });
+
+  assert.ok(claimed);
+  assert.equal(claimed.task.publishType, "五个广告版本");
+  assert.equal(claimed.task.adVersion2Title, "雨夜归人");
+  assert.equal(claimed.task.adVersion3Title, "旧城来信");
+  assert.equal(claimed.task.adVersion4Title, "长街灯火");
+  assert.equal(claimed.task.adVersion5Title, "故园春深");
+  assert.deepEqual(
+    createKuaishouDramaPublishVariants(claimed.task).map(({ kind, title }) => ({ kind, title })),
+    [
+      { kind: "ad-unlock", title: "逆风归途" },
+      { kind: "ad-unlock-2", title: "雨夜归人" },
+      { kind: "ad-unlock-3", title: "旧城来信" },
+      { kind: "ad-unlock-4", title: "长街灯火" },
+      { kind: "ad-unlock-5", title: "故园春深" },
+    ],
+  );
+  assert.deepEqual(calls.map(({ path }) => path), [
+    "/dramaAiRpa/kuaishou/accountTask/page",
+    "/dramaAiRpa/kuaishou/rpa/claim",
+  ]);
+});

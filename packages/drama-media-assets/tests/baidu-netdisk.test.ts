@@ -1,5 +1,5 @@
 import assert from "node:assert/strict";
-import { mkdtemp, mkdir, rm, writeFile } from "node:fs/promises";
+import { mkdtemp, mkdir, readdir, rm, writeFile } from "node:fs/promises";
 import { tmpdir } from "node:os";
 import path from "node:path";
 import test from "node:test";
@@ -151,6 +151,139 @@ test("resource readiness returns when only unrequested remote ownership is incom
 
     assert.equal(result.completed, true);
     assert.equal(result.localPath, path.join(root, resourceName));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("keeps the exact episode directory separate from sibling assets and preserves all covers", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-sibling-assets-"));
+  const resourceName = "货车被当免费拉货站，我收车";
+  const batch = path.join(root, "download-batch");
+  const videoDir = path.join(batch, `成片-${resourceName}`);
+  const ownershipDir = path.join(batch, "权属工程文件");
+  const posterDir = path.join(batch, "海报");
+  const unrelatedDir = path.join(batch, "其他下载");
+  const targetRoot = path.join(root, "standardized");
+  try {
+    await Promise.all([
+      mkdir(videoDir, { recursive: true }),
+      mkdir(ownershipDir, { recursive: true }),
+      mkdir(posterDir, { recursive: true }),
+      mkdir(unrelatedDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(path.join(videoDir, `${resourceName}-第1集.mp4`), Buffer.from([1, 2, 3])),
+      writeFile(path.join(unrelatedDir, `${resourceName}-第1集.mp4`), Buffer.from([9, 9, 9])),
+      writeFile(path.join(ownershipDir, `${resourceName}-工程文件1.png`), Buffer.from([4])),
+      writeFile(path.join(posterDir, "封面2比3.jpg"), Buffer.from([5])),
+      writeFile(path.join(posterDir, "封面7比10.jpg"), Buffer.from([6])),
+    ]);
+
+    const result = await ensureBaiduNetdiskEpisodeVideos({
+      shareText: "https://pan.baidu.com/s/test?pwd=test",
+      resourceName,
+      localEpisodeVideoRoot: targetRoot,
+      episodeCount: 1,
+      requiredOwnership: { minimumImages: 1 },
+      requiredPosterImages: 1,
+      timeoutMs: 1_000,
+      pollIntervalMs: 1,
+      stableCompletePolls: 1,
+      downloadShare: async () => ({
+        share: { link: "https://pan.baidu.com/s/test", pwd: "test", name: resourceName },
+        downloadRoot: batch,
+        localPath: videoDir,
+        expectedOwnershipImages: 1,
+        expectedOwnershipFiles: 1,
+        expectedPosterImages: 2,
+        completed: true,
+        skippedExisting: false,
+      }),
+    });
+
+    assert.equal(result.completed, true);
+    assert.deepEqual(
+      (await readdir(path.join(targetRoot, resourceName, "海报封面")))
+        .filter((name) => name.endsWith(".jpg")),
+      [`${resourceName} - 海报.jpg`, `${resourceName} - 海报2.jpg`],
+    );
+    assert.deepEqual(
+      (await readdir(path.join(targetRoot, resourceName))).filter((name) => name.endsWith(".mp4")),
+      [`${resourceName} - 第1集.mp4`],
+    );
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("downloads and preserves a sibling synopsis directory for Douyin metadata", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-metadata-"));
+  const resourceName = "货车被当免费拉货站，我收车";
+  const batch = path.join(root, "download-batch");
+  const resourceDir = path.join(batch, resourceName);
+  const posterDir = path.join(batch, "海报");
+  const metadataDir = path.join(batch, "简介");
+  const targetRoot = path.join(root, "standardized");
+  let requestedMetadataTextFiles = 0;
+  try {
+    await Promise.all([
+      mkdir(resourceDir, { recursive: true }),
+      mkdir(posterDir, { recursive: true }),
+      mkdir(metadataDir, { recursive: true }),
+    ]);
+    await Promise.all([
+      writeFile(path.join(posterDir, "封面.jpg"), Buffer.from([1, 2, 3])),
+      writeFile(path.join(metadataDir, "剧情及角色介绍.txt"), "刘晓是货车司机。", "utf8"),
+      writeFile(path.join(metadataDir, "刘晓-角色头像.png"), Buffer.from([4, 5, 6])),
+    ]);
+
+    const result = await ensureBaiduNetdiskEpisodeVideos({
+      shareText: "https://pan.baidu.com/s/test?pwd=test",
+      resourceName,
+      localEpisodeVideoRoot: targetRoot,
+      episodeCount: 0,
+      downloadEpisodeVideos: false,
+      requiredPosterImages: 1,
+      requiredMetadataTextFiles: 1,
+      timeoutMs: 1_000,
+      pollIntervalMs: 1,
+      stableCompletePolls: 1,
+      downloadShare: async (request) => {
+        requestedMetadataTextFiles = request.expectedMetadataTextFiles ?? 0;
+        return {
+          share: { link: "https://pan.baidu.com/s/test", pwd: "test", name: resourceName },
+          downloadRoot: batch,
+          localPath: resourceDir,
+          expectedPosterImages: 1,
+          expectedMetadataTextFiles: 1,
+          expectedMetadataFiles: 2,
+          remoteMetadata: {
+            files: [
+              { name: "剧情及角色介绍.txt", path: `/分享/${resourceName}/简介/剧情及角色介绍.txt` },
+              { name: "刘晓-角色头像.png", path: `/分享/${resourceName}/简介/刘晓-角色头像.png` },
+            ],
+            textFiles: [
+              { name: "剧情及角色介绍.txt", path: `/分享/${resourceName}/简介/剧情及角色介绍.txt` },
+            ],
+            roots: [{ path: `/分享/${resourceName}/简介`, fsId: 1 }],
+          },
+          completed: true,
+          skippedExisting: false,
+        };
+      },
+    });
+
+    assert.equal(result.completed, true);
+    assert.equal(requestedMetadataTextFiles, 1);
+    assert.deepEqual(
+      await readdir(path.join(targetRoot, resourceName, "海报封面", "剧情资料")),
+      ["剧情及角色介绍.txt"],
+    );
+    assert.deepEqual(
+      await readdir(path.join(targetRoot, resourceName, "海报封面", "原始图片")),
+      ["刘晓-角色头像.png", "封面.jpg"],
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

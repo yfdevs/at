@@ -45,7 +45,8 @@ export type RemoteMaterialKind =
   | "ownership-images"
   | "ownership-files"
   | "poster"
-  | "ai-production-proof";
+  | "ai-production-proof"
+  | "metadata-text";
 
 export class RemoteMaterialValidationError extends Data.TaggedError("RemoteMaterialValidationError")<
   ErrorDetails & {

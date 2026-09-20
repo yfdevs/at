@@ -55,7 +55,7 @@ const configSections: ConfigSectionDefinition<KuaishouDramaConfig>[] = [
       {
         key: "taskPollIntervalSeconds",
         label: "任务轮询间隔",
-        description: "没有可领取任务或单次双版本上传结束后，再次请求任务的间隔。",
+        description: "没有可领取任务或单次多版本上传结束后，再次请求任务的间隔。",
         type: "number",
         suffix: "秒",
         min: 1,

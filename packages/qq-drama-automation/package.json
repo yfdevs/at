@@ -13,9 +13,11 @@
   },
   "scripts": {
     "build": "vp pack",
-    "check": "tsc --noEmit"
+    "check": "tsc --noEmit",
+    "test": "tsx --conditions=development --test tests/**/*.test.ts"
   },
   "dependencies": {
+    "@drama/ai": "workspace:*",
     "@drama/automation-logging": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "playwright": "1.61.1",
@@ -23,6 +25,7 @@
   },
   "devDependencies": {
     "@types/node": "latest",
+    "tsx": "^4.23.12",
     "typescript": "^6.0.3",
     "vite": "catalog:"
   }

@@ -1,6 +1,6 @@
 import type { DramaAiClient } from "@drama/ai";
 import { z } from "zod";
-import { tencentHuolongThemeValues } from "./constants.js";
+import { tencentHuolongKeywordValues, tencentHuolongThemeValues } from "./constants.js";
 
 const requiredText = z.string().trim().min(1);
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
@@ -18,6 +18,7 @@ export const tencentHuolongTaskPayloadSchema = z.object({
   protagonistName: z.string().trim().max(9).optional(),
   isAiRealPersonShortDrama: z.enum(tencentHuolongYesNoValues).default("否"),
   themeType: z.enum(tencentHuolongThemeValues),
+  keywords: z.array(z.enum(tencentHuolongKeywordValues)).default([]),
   costAnalysisFiles: z.array(fileReference).default([]),
   copyrightProofFiles: z.array(fileReference).default([]),
   productionProcessFiles: z.array(fileReference).default([]),
@@ -33,6 +34,7 @@ export const claimedTencentHuolongDramaTaskSchema = z.object({
 });
 
 export type TencentHuolongTheme = (typeof tencentHuolongThemeValues)[number];
+export type TencentHuolongKeyword = (typeof tencentHuolongKeywordValues)[number];
 export type TencentHuolongTaskFailStage = (typeof tencentHuolongTaskFailStageValues)[number];
 export type TencentHuolongTaskStatus = "READY" | "RUNNING" | "SUCCESS" | "FAILED";
 export type TencentHuolongTaskPayload = z.infer<typeof tencentHuolongTaskPayloadSchema>;

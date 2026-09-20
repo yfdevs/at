@@ -7,6 +7,67 @@ import type { DouyinDramaLoginState, DouyinDramaRuntimeOptions } from "../shared
 
 const DOUYIN_DRAMA_CREATE_PAGE_READY_TEXTS = ["上传漫剧", "剧壳信息", "基础信息", "下一步"];
 
+type DouyinDramaTitleWindow = Window & {
+  __douyinDramaFixedTitle?: string;
+  __douyinDramaFixedTitleInstalled?: boolean;
+};
+
+export function douyinDramaBrowserPageTitle(options: DouyinDramaRuntimeOptions) {
+  const accountName = options.douyinAccountName?.trim();
+  const accountId = options.douyinAccountId?.trim();
+  const profileName = options.accountProfileName?.trim();
+  const accountLabel = accountName && accountId && accountName !== accountId
+    ? `${accountName}（${accountId}）`
+    : accountName || accountId || profileName || "默认账号";
+  return `[抖音短剧] ${accountLabel}`;
+}
+
+function installFixedDouyinDramaPageTitle(fixedTitle: string) {
+  const pageWindow = window as DouyinDramaTitleWindow;
+  pageWindow.__douyinDramaFixedTitle = fixedTitle;
+
+  const applyTitle = () => {
+    const title = pageWindow.__douyinDramaFixedTitle ?? fixedTitle;
+    if (document.title !== title) document.title = title;
+  };
+  const watchTitle = () => {
+    applyTitle();
+    const titleElement = document.querySelector("title")
+      ?? document.head?.appendChild(document.createElement("title"));
+    if (!titleElement || titleElement.dataset.fixedDouyinDramaTitle === "true") return;
+    titleElement.dataset.fixedDouyinDramaTitle = "true";
+    new MutationObserver(applyTitle).observe(titleElement, {
+      characterData: true,
+      childList: true,
+      subtree: true,
+    });
+  };
+
+  if (pageWindow.__douyinDramaFixedTitleInstalled) {
+    applyTitle();
+    return;
+  }
+  pageWindow.__douyinDramaFixedTitleInstalled = true;
+  watchTitle();
+  window.addEventListener("DOMContentLoaded", watchTitle);
+  window.addEventListener("load", watchTitle);
+  window.setInterval(applyTitle, 1_000);
+}
+
+async function installDouyinDramaBrowserPageTitles(
+  context: BrowserContext,
+  options: DouyinDramaRuntimeOptions,
+) {
+  const title = douyinDramaBrowserPageTitle(options);
+  await context.addInitScript(installFixedDouyinDramaPageTitle, title);
+
+  const applyToPage = (page: Page) => {
+    void page.evaluate(installFixedDouyinDramaPageTitle, title).catch(() => undefined);
+  };
+  context.on("page", applyToPage);
+  for (const page of context.pages()) applyToPage(page);
+}
+
 export function douyinDramaLoginStateFromUrl(url: string | undefined): DouyinDramaLoginState {
   if (!url || url === "about:blank") return "unknown";
   try {
@@ -27,7 +88,7 @@ export async function launchDouyinDramaBrowserContext(
   userDataDir: string,
   options: DouyinDramaRuntimeOptions,
 ) {
-  return chromium.launchPersistentContext(userDataDir, {
+  const context = await chromium.launchPersistentContext(userDataDir, {
     args: ["--disable-blink-features=AutomationControlled"],
     extraHTTPHeaders: { "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" },
     headless: options.config?.browser?.headless ?? false,
@@ -37,6 +98,8 @@ export async function launchDouyinDramaBrowserContext(
     timezoneId: "Asia/Shanghai",
     viewport: null,
   });
+  await installDouyinDramaBrowserPageTitles(context, options);
+  return context;
 }
 
 async function saveDouyinDramaCredentialState(

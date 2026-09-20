@@ -7,12 +7,11 @@ import {
 const initialStatus: DouyinDramaServiceStatus = {
   platform: "douyin-drama",
   running: false,
-  loginState: "unknown",
   createUrl:
     "https://www.shortdramas.com/page/copyright/short-play/motion-comic-manage-edit-page/?from=book",
   loginUrl:
     "https://www.shortdramas.com/page/login?redirect=%2Fcopyright%2Fshort-play%2Fmotion-comic-manage-edit-page%2F%3Ffrom%3Dbook",
-  userDataDir: "",
+  accounts: [],
   pid: null,
 }
 
@@ -21,7 +20,7 @@ export function DouyinDramaServiceControlPage() {
     initialStatus,
     service: douyinDramaService,
     successMessage: (status) => status.running
-      ? "抖音短剧服务已启动"
+      ? `抖音短剧服务已启动 ${status.accounts.filter((account) => account.launched).length} 个账号浏览器`
       : "抖音短剧服务已停止",
   })
 

@@ -1,0 +1,83 @@
+import assert from "node:assert/strict";
+import test from "node:test";
+import {
+  selectDouyinCoverSources,
+  selectDouyinJianyingProjectScreenshots,
+} from "../../src/shared/resources.js";
+
+test("uses distinct closest-ratio covers when netdisk provides two images", () => {
+  const hongguo = { file: "hongguo.jpg", width: 700, height: 1_000 };
+  const douyin = { file: "douyin.jpg", width: 720, height: 1_080 };
+  const selected = selectDouyinCoverSources([douyin, hongguo]);
+
+  assert.equal(selected.hongguo.file, "hongguo.jpg");
+  assert.equal(selected.douyin.file, "douyin.jpg");
+});
+
+test("reuses a single cover source for both required output sizes", () => {
+  const source = { file: "cover.png", width: 1_024, height: 1_536 };
+  const selected = selectDouyinCoverSources([source]);
+
+  assert.equal(selected.hongguo, source);
+  assert.equal(selected.douyin, source);
+});
+
+test("rejects a resource folder without any cover", () => {
+  assert.throws(() => selectDouyinCoverSources([]), /poster-material-invalid/);
+});
+
+test("selects exactly four Jianying screenshots and excludes other ownership images", () => {
+  const materials = [
+    ...Array.from({ length: 5 }, (_, index) => ({
+      file: `D:\\素材\\权属文件\\测试剧 - 剪映${index + 1}.png`,
+      index: index + 1,
+      name: `测试剧 - 剪映${index + 1}.png`,
+      size: 100 + index,
+    })),
+    {
+      file: "D:\\素材\\权属文件\\测试剧 - 剧创1.png",
+      index: 1,
+      name: "测试剧 - 剧创1.png",
+      size: 200,
+    },
+    {
+      file: "D:\\素材\\海报封面\\测试剧 - 海报.jpg",
+      name: "测试剧 - 海报.jpg",
+      size: 300,
+    },
+  ];
+
+  assert.deepEqual(selectDouyinJianyingProjectScreenshots(materials), [
+    "D:\\素材\\权属文件\\测试剧 - 剪映1.png",
+    "D:\\素材\\权属文件\\测试剧 - 剪映2.png",
+    "D:\\素材\\权属文件\\测试剧 - 剪映3.png",
+    "D:\\素材\\权属文件\\测试剧 - 剪映4.png",
+  ]);
+});
+
+test("recognizes Jianying screenshots from the netdisk directory name", () => {
+  const materials = Array.from({ length: 5 }, (_, index) => ({
+    file: `D:\\素材\\权属文件\\剪映\\工程截图${index + 1}.png`,
+    index: index + 1,
+    name: `工程截图${index + 1}.png`,
+    size: 100 + index,
+  }));
+
+  assert.deepEqual(selectDouyinJianyingProjectScreenshots(materials), [
+    "D:\\素材\\权属文件\\剪映\\工程截图1.png",
+    "D:\\素材\\权属文件\\剪映\\工程截图2.png",
+    "D:\\素材\\权属文件\\剪映\\工程截图3.png",
+    "D:\\素材\\权属文件\\剪映\\工程截图4.png",
+  ]);
+});
+
+test("rejects fewer than four Jianying screenshots", () => {
+  assert.throws(
+    () => selectDouyinJianyingProjectScreenshots([
+      { file: "D:\\素材\\剪映1.png", index: 1, name: "剪映1.png", size: 100 },
+      { file: "D:\\素材\\剪映2.png", index: 2, name: "剪映2.png", size: 100 },
+      { file: "D:\\素材\\剧创1.png", index: 1, name: "剧创1.png", size: 100 },
+    ]),
+    /DOUYIN_DRAMA_JIANYING_SCREENSHOTS_REQUIRED.*实际=2/,
+  );
+});

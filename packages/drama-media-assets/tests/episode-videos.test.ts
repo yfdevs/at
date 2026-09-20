@@ -8,11 +8,18 @@ import {
   collapseIdenticalLocalEpisodeAliases,
   cleanupEpisodeUploadFiles,
   findEpisodeMinimumDurationViolations,
+  matchLocalEpisodeIndex,
   findLocalEpisodeVideos,
   isCompleteEpisodeFileSet,
   listDirectLocalEpisodeFiles,
   prepareEpisodeUploadFiles,
 } from "../src/index.js";
+
+test("prefers a leading episode ordinal over trailing segment numbers", () => {
+  assert.equal(matchLocalEpisodeIndex("1·三分钱的取舍.mp4", "三分钱的取舍"), 1);
+  assert.equal(matchLocalEpisodeIndex("14·桃-2-1.mp4", "三分钱的取舍"), 14);
+  assert.equal(matchLocalEpisodeIndex("58·桃-3-22.mp4", "三分钱的取舍"), 58);
+});
 
 test("treats episode durations at or below the configured minimum as invalid", () => {
   const episodes = [

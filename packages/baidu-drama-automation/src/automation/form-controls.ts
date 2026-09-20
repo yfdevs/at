@@ -217,6 +217,29 @@ export async function clickBaiduNext(page: Page) {
   await assertNoBaiduFormError(page, "下一步");
 }
 
+export async function confirmBaiduDramaTypeChangeIfPresent(
+  page: Page,
+  timeoutMs = 3_000,
+) {
+  const dialog = page
+    .locator(".cheetah-modal-wrap:visible")
+    .filter({ hasText: /变更短剧类型后需重新填写短剧信息/ })
+    .last();
+  const appeared = await dialog.waitFor({ state: "visible", timeout: timeoutMs }).then(
+    () => true,
+    () => false,
+  );
+  if (!appeared) return false;
+
+  const confirm = dialog.getByRole("button", { name: "确定", exact: true }).last();
+  await confirm.waitFor({ state: "visible", timeout: 5_000 });
+  await confirm.click();
+  await dialog.waitFor({ state: "hidden", timeout: 10_000 }).catch(() => {
+    throw new Error("BAIDU_DRAMA_TYPE_CHANGE_CONFIRM_NOT_CLOSED");
+  });
+  return true;
+}
+
 export async function confirmBaiduDramaInformation(page: Page) {
   const dialog = page
     .locator(".cheetah-modal-content:visible")

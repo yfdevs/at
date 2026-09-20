@@ -13,7 +13,9 @@ const [
   {
     fillTencentHuolongAiCreationDeclaration,
     fillTencentHuolongNonInfringementCommitment,
+    ensureTencentHuolongVideoUploadStep,
     resolveFile,
+    selectTencentHuolongKeywords,
   },
   {
     tencentHuolongAiCreationDeclarationFile,
@@ -111,6 +113,71 @@ test("uploads the bundled rights declaration as the non-infringement commitment"
       (element) => Array.from((element as HTMLInputElement).files ?? [], (file) => file.name),
     );
     assert.deepEqual(uploadedNames, ["权利声明.pdf"]);
+  } finally {
+    await page.close();
+  }
+});
+
+test("selects two keywords in the micro_series_keyword field", async () => {
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div data-field-name="micro_series_keyword">
+        <span class="_item_demo" role="button"><span>情感</span></span>
+        <span class="_item_demo" role="button"><span>都市</span></span>
+        <span class="_item_demo" role="button"><span>喜剧</span></span>
+        <div id="keyword-error">关键词至少选择2个</div>
+      </div>
+      <script>
+        const root = document.querySelector('[data-field-name="micro_series_keyword"]');
+        root.querySelectorAll('[role="button"]').forEach((button) => {
+          button.addEventListener('click', () => {
+            button.classList.toggle('_selected_demo');
+            const selected = root.querySelectorAll('._selected_demo').length;
+            document.querySelector('#keyword-error').hidden = selected >= 2;
+          });
+        });
+      </script>
+    `);
+
+    await selectTencentHuolongKeywords(page, ["都市", "情感"], {});
+
+    assert.match(await page.getByRole("button", { name: "都市" }).getAttribute("class") ?? "", /selected/u);
+    assert.match(await page.getByRole("button", { name: "情感" }).getAttribute("class") ?? "", /selected/u);
+    assert.equal(await page.locator("#keyword-error").isVisible(), false);
+  } finally {
+    await page.close();
+  }
+});
+
+test("refreshes once when the post-contract video step stays blank", async () => {
+  const page = await browser.newPage();
+  let loadCount = 0;
+  try {
+    await page.route("https://huolong.test/upload", async (route) => {
+      loadCount += 1;
+      await route.fulfill({
+        contentType: "text/html; charset=utf-8",
+        body: loadCount === 1
+          ? "<html><body><main></main></body></html>"
+          : `<html><body>
+              <button id="local-upload" type="button">本地上传</button>
+              <div id="upload-slot"></div>
+              <script>
+                document.querySelector('#local-upload').addEventListener('click', () => {
+                  document.querySelector('#upload-slot').innerHTML =
+                    '<input id="video-input" type="file" accept="video/mp4">';
+                });
+              </script>
+            </body></html>`,
+      });
+    });
+    await page.goto("https://huolong.test/upload");
+
+    await ensureTencentHuolongVideoUploadStep(page, {}, 100);
+
+    assert.equal(loadCount, 2);
+    assert.equal(await page.locator("#video-input").count(), 1);
   } finally {
     await page.close();
   }

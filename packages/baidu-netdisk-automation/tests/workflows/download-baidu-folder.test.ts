@@ -14,6 +14,7 @@ import {
   isBaiduNetdiskScreenshotCandidateDirectory,
   isGenericBaiduNetdiskMaterialDirectoryName,
   isSupportedEpisodeVideoFileName,
+  matchBaiduLeadingEpisodeIndex,
   validateRemoteEpisodePathSelection,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
@@ -141,17 +142,45 @@ test("accepts only one complete continuous AI-selected episode set", () => {
     { index: 2, name: "B-2.mp4", path: "/B-2.mp4", size: 201 },
   ];
   assert.deepEqual(
-    validateRemoteEpisodePathSelection(candidates, ["/B-1.mp4", "/B-2.mp4"], 2)
+    validateRemoteEpisodePathSelection(candidates, [
+      { path: "/B-1.mp4", index: 1 },
+      { path: "/B-2.mp4", index: 2 },
+    ], 2)
       ?.map((file) => file.path),
     ["/B-1.mp4", "/B-2.mp4"],
   );
   assert.equal(
-    validateRemoteEpisodePathSelection(candidates, ["/A-1.mp4", "/B-1.mp4"], 2),
+    validateRemoteEpisodePathSelection(candidates, [
+      { path: "/A-1.mp4", index: 1 },
+      { path: "/B-1.mp4", index: 1 },
+    ], 2),
     undefined,
   );
   assert.equal(
-    validateRemoteEpisodePathSelection(candidates, ["/A-1.mp4"], 2),
+    validateRemoteEpisodePathSelection(candidates, [{ path: "/A-1.mp4", index: 1 }], 2),
     undefined,
+  );
+});
+
+test("uses a leading ordinal as the episode for segmented source names", () => {
+  assert.equal(matchBaiduLeadingEpisodeIndex("1·三分钱的取舍.mp4"), 1);
+  assert.equal(matchBaiduLeadingEpisodeIndex("14·桃-2-1.mp4"), 14);
+  assert.equal(matchBaiduLeadingEpisodeIndex("58·桃-3-22.mp4"), 58);
+  assert.equal(matchBaiduLeadingEpisodeIndex("桃-3-22.mp4"), undefined);
+});
+
+test("recognizes the complete 58-episode naming scheme from the reported Baidu share", () => {
+  const names = Array.from({ length: 58 }, (_, offset) => {
+    const episode = offset + 1;
+    if (episode <= 10) return `${episode}·三分钱的取舍.mp4`;
+    if (episode <= 13) return `${episode}·桃-1-${episode}.mp4`;
+    if (episode <= 36) return `${episode}·桃-2-${episode - 13}.mp4`;
+    return `${episode}·桃-3-${episode - 36}.mp4`;
+  });
+
+  assert.deepEqual(
+    names.map(matchBaiduLeadingEpisodeIndex),
+    Array.from({ length: 58 }, (_, offset) => offset + 1),
   );
 });
 

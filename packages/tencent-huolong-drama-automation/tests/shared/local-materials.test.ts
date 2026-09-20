@@ -1,19 +1,19 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { getLocalTencentHuolongDramaTask } from "../../src/api/task.js";
 import { ensureTencentHuolongTaskResource } from "../../src/app/runtime.js";
 import { validateTencentHuolongTaskMaterialReferences } from
   "../../src/shared/local-materials.js";
+import { createTencentHuolongTaskFixture } from "../fixtures/task-fixture.js";
 
 test("accepts the task-provided cost analysis reference before netdisk download", () => {
-  const task = getLocalTencentHuolongDramaTask();
+  const task = createTencentHuolongTaskFixture();
 
   assert.doesNotThrow(() => validateTencentHuolongTaskMaterialReferences(task));
 });
 
 test("rejects a missing cost analysis commitment before netdisk download", () => {
-  const task = getLocalTencentHuolongDramaTask();
+  const task = createTencentHuolongTaskFixture();
   task.playlet.costAnalysisFiles = [];
 
   assert.throws(
@@ -23,14 +23,14 @@ test("rejects a missing cost analysis commitment before netdisk download", () =>
 });
 
 test("does not require a task-provided non-infringement commitment", () => {
-  const task = getLocalTencentHuolongDramaTask();
+  const task = createTencentHuolongTaskFixture();
 
   assert.equal("nonInfringementCommitmentFiles" in task.playlet, false);
   assert.doesNotThrow(() => validateTencentHuolongTaskMaterialReferences(task));
 });
 
 test("only reports a missing task-provided cost analysis commitment", () => {
-  const task = getLocalTencentHuolongDramaTask();
+  const task = createTencentHuolongTaskFixture();
   task.playlet.costAnalysisFiles = [];
 
   assert.throws(
@@ -42,7 +42,7 @@ test("only reports a missing task-provided cost analysis commitment", () => {
 });
 
 test("does not start a netdisk download when contract material references are missing", async () => {
-  const task = getLocalTencentHuolongDramaTask();
+  const task = createTencentHuolongTaskFixture();
   task.playlet.costAnalysisFiles = [];
   let downloadCalls = 0;
 

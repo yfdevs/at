@@ -37,7 +37,11 @@ import {
   openTencentHuolongAddPage,
   runTencentHuolongPublishTask,
 } from "../automation/publish-runner.js";
-import { claimNextTencentHuolongDramaTask, reportTencentHuolongDramaTask } from "../api/task.js";
+import {
+  claimNextTencentHuolongDramaTaskApi,
+  reportTencentHuolongDramaTaskErrorApi,
+  reportTencentHuolongDramaTaskSuccessApi,
+} from "../api/task.js";
 
 type LastTask = TencentHuolongRuntimeStatus["lastTask"];
 
@@ -119,10 +123,10 @@ async function runTask(
         await runTencentHuolongPublishTask(page, context, task, options);
       },
     );
-    await reportTencentHuolongDramaTask({
-      ...options,
+    await reportTencentHuolongDramaTaskSuccessApi({
+      apiConfig: options.apiConfig,
+      runtimeOptions: options,
       accountTaskId: task.accountTaskId,
-      status: "SUCCESS",
       resultJson: { activeUrl: page.url(), accountId: task.accountId },
     });
     setLastTask({
@@ -151,10 +155,10 @@ async function runTask(
       errorMessage: message,
       updatedAt: new Date().toISOString(),
     });
-    await reportTencentHuolongDramaTask({
-      ...options,
+    await reportTencentHuolongDramaTaskErrorApi({
+      apiConfig: options.apiConfig,
+      runtimeOptions: options,
       accountTaskId: task.accountTaskId,
-      status: "FAILED",
       failStage: stage,
       errorMessage: message,
       resultJson: { activeUrl: page.url(), accountId: task.accountId },
@@ -209,7 +213,10 @@ export async function startTencentHuolongDramaRuntime(
     while (running && !activePage.isClosed()) {
       try {
         await waitForLoginIfNeeded(activePage, activeContext, options);
-        const task = await claimNextTencentHuolongDramaTask(options);
+        const task = await claimNextTencentHuolongDramaTaskApi({
+          apiConfig: options.apiConfig,
+          runtimeOptions: options,
+        });
         if (task) {
           const taskPage = await activeContext.newPage();
           let taskFailed = false;
