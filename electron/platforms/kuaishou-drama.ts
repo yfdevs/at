@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
@@ -101,6 +102,7 @@ type KuaishouDramaStoragePaths = {
 
 type KuaishouDramaStore = {
   config: Partial<KuaishouDramaConfig> & Record<string, string | undefined>;
+  dailyUploadLimitResumeAtByAccount?: Record<string, number>;
 };
 
 const defaultKuaishouDramaConfig: KuaishouDramaConfig = {
@@ -233,6 +235,20 @@ function readConfig(): KuaishouDramaConfig {
 
 function writeConfig(config: KuaishouDramaConfig) {
   getStore().set("config", config);
+}
+
+function dailyUploadLimitResumeAt(accountId: string) {
+  const resumeAt = getStore().get("dailyUploadLimitResumeAtByAccount", {})[accountId];
+  if (!resumeAt || resumeAt <= Date.now()) return undefined;
+  return resumeAt;
+}
+
+function saveDailyUploadLimitResumeAt(accountId: string, resumeAt: number) {
+  const resumeAtByAccount = getStore().get("dailyUploadLimitResumeAtByAccount", {});
+  getStore().set("dailyUploadLimitResumeAtByAccount", {
+    ...resumeAtByAccount,
+    [accountId]: resumeAt,
+  });
 }
 
 function configPath() {
@@ -487,6 +503,9 @@ async function startRuntime() {
         baiduNetdiskDownloadRetryAttempts,
         videoUploadTimeoutMinutes,
         taskPollIntervalMs,
+        dailyUploadLimitResumeAt: dailyUploadLimitResumeAt(account.accountId),
+        onDailyUploadLimitReached: (resumeAt: number) =>
+          saveDailyUploadLimitResumeAt(account.accountId, resumeAt),
         aiClient,
         aiImageModel,
         aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
@@ -545,6 +564,11 @@ async function startRuntime() {
 }
 
 export function registerKuaishouDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "kuaishou-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/kuaishou",
+  });
   registerKuaishouRuntimeAssetCleanup();
   ipcMain.handle("kuaishou-drama:config:get", () => ({
     config: readConfig(),

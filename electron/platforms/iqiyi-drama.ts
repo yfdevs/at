@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 
@@ -428,6 +429,11 @@ async function startRuntime() {
 }
 
 export function registerIqiyiDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "iqiyi-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/iqiyi",
+  });
   registerIqiyiRuntimeAssetCleanup();
   ipcMain.handle("iqiyi-drama:config:get", () => ({
     config: readConfig(),

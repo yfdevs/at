@@ -1,5 +1,6 @@
 import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -364,6 +365,12 @@ async function startRuntime() {
 }
 
 export function registerPinduoduoDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "pinduoduo-drama",
+    apiPrefix: "/pinduoduoDramaRpa",
+    accountIdField: "pinduoduoAccountId",
+    statusField: "rpaStatus",
+  });
   ipcMain.handle("pinduoduo-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),

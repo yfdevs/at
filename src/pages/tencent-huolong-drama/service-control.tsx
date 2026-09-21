@@ -23,6 +23,7 @@ export function TencentHuolongDramaServiceControlPage() {
   })
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="tencent-huolong-drama"
       loading={state.loading}
       pendingAction={state.pendingAction}
       running={state.status.running}

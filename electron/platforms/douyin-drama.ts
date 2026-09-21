@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -388,6 +389,11 @@ export function openDouyinDramaLogDir() {
 }
 
 export function registerDouyinDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "douyin-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/douyin",
+  });
   registerDouyinRuntimeAssetCleanup();
   ipcMain.handle("douyin-drama:config:get", () => ({
     config: readConfig(),

@@ -369,6 +369,8 @@ export type KuaishouDramaRuntimeOptions = {
   baiduNetdiskDownloadRetryAttempts?: number;
   videoUploadTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
+  dailyUploadLimitResumeAt?: number;
+  onDailyUploadLimitReached?: (resumeAt: number) => void;
   aiClient?: DramaAiClient;
   aiImageModel?: string;
   aiCoverGenerationRetryAttempts?: number;

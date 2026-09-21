@@ -37,6 +37,7 @@ export function QqDramaServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="qq-drama"
       loading={loading}
       pendingAction={pendingAction}
       running={status.running}

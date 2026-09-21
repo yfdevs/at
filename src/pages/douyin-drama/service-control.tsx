@@ -26,6 +26,7 @@ export function DouyinDramaServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="douyin-drama"
       loading={serviceState.loading}
       pendingAction={serviceState.pendingAction}
       running={serviceState.status.running}

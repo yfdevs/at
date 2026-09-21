@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import cron, { type ScheduledTask } from "node-cron";
 import { existsSync, mkdirSync, statSync } from "node:fs";
 import { lstat, readdir, rm, stat } from "node:fs/promises";
@@ -527,6 +528,11 @@ export function openBaiduDramaLogDir() {
 }
 
 export function registerBaiduDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "baidu-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/baidu",
+  });
   registerBaiduRuntimeAssetCleanup();
   scheduleBaiduTemporaryAssetCleanup();
 

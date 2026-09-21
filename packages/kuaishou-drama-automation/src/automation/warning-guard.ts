@@ -5,6 +5,14 @@ import { log } from "./browser-session.js";
 const pagesWithWarningGuard = new WeakSet<Page>();
 const capturedWarningMessages = new WeakMap<Page, Set<string>>();
 
+export function isKuaishouDailyUploadLimitError(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return (
+    message.includes("KUAISHOU_DRAMA_WARNING_MESSAGE") &&
+    /今日\s*(?:的\s*)?短剧\s*上传\s*已达\s*上限/.test(message)
+  );
+}
+
 function normalizeMessages(messages: string[]) {
   return Array.from(new Set(
     messages.map((text) => text.replace(/\s+/g, " ").trim()).filter(Boolean),

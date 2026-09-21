@@ -37,6 +37,7 @@ export function MeituanCreationServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="meituan-drama"
       loading={loading}
       pendingAction={pendingAction}
       running={status.running}

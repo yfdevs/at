@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { mkdirSync } from "node:fs";
 import path from "node:path";
 import { formatDateKey } from "@drama/automation-logging";
@@ -227,6 +228,10 @@ async function startRuntime() {
 }
 
 export function registerTiktokDramaCenterPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "tiktok-drama",
+    unsupportedReason: "TikTok 任务日志接口尚未接入",
+  });
   ipcMain.handle("tiktok-drama:config:get", () => ({
     config: readConfig(),
     path: configPath(),

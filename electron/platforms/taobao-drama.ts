@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -337,6 +338,11 @@ export function openTaobaoDramaLogDir() {
 }
 
 export function registerTaobaoDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "taobao-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/taobao",
+  });
   registerRuntimeAssetCleanupRoot({
     platform: "taobao-drama",
     rootPath: path.join(storagePaths().runDataDir, "assets"),

@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import Store from 'electron-store'
+import { registerTaskAnalyticsHandler } from './task-analytics'
 import cron, { type ScheduledTask } from 'node-cron'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import { lstat, readdir, rm } from 'node:fs/promises'
@@ -504,6 +505,14 @@ async function startRuntime() {
 }
 
 export function registerWechatVideoPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: 'wechat-drama',
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: '/dramaAiRpa',
+    accountConfigPath: '/dramaAiRpa/videoAccountConfig/page',
+    accountIdField: 'videoAccountId',
+    statusField: 'rpaStatus',
+  })
   registerWechatRuntimeAssetCleanup()
   scheduleWechatCopyrightProofCleanup()
 

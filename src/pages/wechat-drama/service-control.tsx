@@ -41,6 +41,7 @@ export function WechatServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="wechat-drama"
       loading={loading}
       pendingAction={pendingAction}
       running={status.running}

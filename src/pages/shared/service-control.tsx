@@ -5,6 +5,8 @@ import { toast } from "sonner";
 
 import { Button } from "@/components/ui/button";
 import { cn } from "@/lib/utils";
+import type { TaskAnalyticsPlatform } from "@/platforms/task-analytics/service";
+import { TaskStatisticsChart } from "./task-statistics-chart";
 
 type RuntimeStatus = {
   running: boolean;
@@ -143,6 +145,7 @@ export function ServiceControlButtonPage({
   startLabel = "启动服务",
   stopLabel = "关闭服务",
   additionalAction,
+  analyticsPlatform,
   onToggle,
 }: {
   loading: boolean;
@@ -151,6 +154,7 @@ export function ServiceControlButtonPage({
   startLabel?: string;
   stopLabel?: string;
   additionalAction?: ReactNode;
+  analyticsPlatform?: TaskAnalyticsPlatform;
   onToggle: () => void;
 }) {
   const label =
@@ -164,7 +168,7 @@ export function ServiceControlButtonPage({
 
   return (
     <main className="relative flex min-h-svh flex-1 items-center justify-center bg-transparent p-6">
-      <div className="flex items-center justify-center gap-3">
+      <div className="relative z-10 flex items-center justify-center gap-3">
         <Button
           aria-busy={loading}
           aria-label={label}
@@ -197,6 +201,7 @@ export function ServiceControlButtonPage({
         </Button>
         {additionalAction}
       </div>
+      {analyticsPlatform ? <TaskStatisticsChart platform={analyticsPlatform} /> : null}
     </main>
   );
 }

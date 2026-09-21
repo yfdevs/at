@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import cron, { type ScheduledTask } from "node-cron";
 import { mkdirSync } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
@@ -372,6 +373,11 @@ async function startRuntime() {
 }
 
 export function registerMeituanCreationPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "meituan-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/meituan",
+  });
   scheduleMeituanCopyrightProofCleanup();
 
   ipcMain.handle("meituan-drama:config:get", () => ({

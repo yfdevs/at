@@ -26,6 +26,7 @@ export function BaiduDramaServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="baidu-drama"
       loading={serviceState.loading}
       pendingAction={serviceState.pendingAction}
       running={serviceState.status.running}

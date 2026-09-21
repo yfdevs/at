@@ -33,6 +33,7 @@ export function IqiyiDramaServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="iqiyi-drama"
       loading={control.loading}
       pendingAction={control.pendingAction}
       running={control.status.running}

@@ -37,6 +37,11 @@ import { resolveUploadAssetFile } from "./upload/remote-assets.js";
 import { fillKuaishouDramaSaleAndEpisodes } from "./episodes.js";
 import { maximizeKuaishouImageCropArea } from "./image-crop.js";
 import {
+  openExistingKuaishouDramaVideoStep,
+  queryExistingKuaishouDrama,
+} from "./existing-drama.js";
+import { uploadKuaishouDramaEpisodeVideos } from "./video-upload.js";
+import {
   installWarningMessageGuard,
   throwIfKuaishouWarningCaptured,
 } from "./warning-guard.js";
@@ -1471,6 +1476,7 @@ export async function runPublishTask(
     resourceName: string;
     claimedTask?: ClaimedKuaishouDramaTask;
   },
+  prepareTask?: (needsFormMaterials: boolean) => Promise<void>,
 ) {
   log(options, "[kuaishou-drama] opening edit page in dedicated task tab");
   await openKuaishouDramaEditPage(context, page, options, true);
@@ -1481,6 +1487,18 @@ export async function runPublishTask(
     options,
     `[kuaishou-drama] publish variants selected: ${variants.map((item) => item.kind).join(",")}`,
   );
+  const existingDramas = new Map<
+    KuaishouDramaPublishVariant["kind"],
+    Awaited<ReturnType<typeof queryExistingKuaishouDrama>>
+  >();
+  for (const variant of variants) {
+    existingDramas.set(
+      variant.kind,
+      await queryExistingKuaishouDrama(page, variant, options),
+    );
+  }
+  await prepareTask?.(Array.from(existingDramas.values()).some((existing) => !existing));
+
   const runVariant = async (
     targetPage: Page,
     variant: KuaishouDramaPublishVariant,
@@ -1488,7 +1506,19 @@ export async function runPublishTask(
     log(options, `[kuaishou-drama] tab started: ${variant.kind}`);
     try {
       await targetPage.bringToFront();
-      await fillKuaishouDramaEditForm(targetPage, taskConfig, variant, resourceName, options);
+      const existing = existingDramas.get(variant.kind);
+      if (existing) {
+        await openExistingKuaishouDramaVideoStep(targetPage, existing.miniSeriesId, options);
+        await uploadKuaishouDramaEpisodeVideos(
+          targetPage,
+          taskConfig,
+          variant,
+          resourceName,
+          options,
+        );
+      } else {
+        await fillKuaishouDramaEditForm(targetPage, taskConfig, variant, resourceName, options);
+      }
       await throwIfKuaishouWarningCaptured(targetPage, options);
       log(options, `[kuaishou-drama] tab completed: ${variant.kind}`);
     } catch (error) {

@@ -25,6 +25,7 @@ export function KuaishouDramaServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="kuaishou-drama"
       loading={loading}
       pendingAction={pendingAction}
       running={status.running}

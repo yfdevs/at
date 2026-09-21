@@ -1,5 +1,6 @@
 import { app, BrowserWindow, ipcMain } from 'electron'
 import Store from 'electron-store'
+import { registerTaskAnalyticsHandler } from './task-analytics'
 import cron, { type ScheduledTask } from 'node-cron'
 import { mkdirSync, readdirSync, statSync } from 'node:fs'
 import { lstat, readdir, rm } from 'node:fs/promises'
@@ -451,6 +452,11 @@ async function startRuntime() {
 }
 
 export function registerWechatMiniProgramPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: 'wechat-miniprogram-drama',
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: '/dramaAiRpa/wechatMiniProgram',
+  })
   registerWechatMiniProgramRuntimeAssetCleanup()
   scheduleWechatCopyrightProofCleanup()
   directUploadCoordinator.registerHandlers()

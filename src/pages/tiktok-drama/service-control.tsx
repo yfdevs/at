@@ -33,6 +33,7 @@ export function TiktokDramaCenterServiceControlPage() {
 
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="tiktok-drama"
       loading={loading}
       pendingAction={pendingAction}
       running={status.running}

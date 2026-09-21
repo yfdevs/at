@@ -25,8 +25,16 @@ import {
   validateKuaishouDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
 import { prepareKuaishouDramaTaskMaterials } from "../shared/poster-materials.js";
+import { isKuaishouDailyUploadLimitError } from "../automation/warning-guard.js";
 
 const baiduNetdiskRetryDelayMs = 5_000;
+
+function millisecondsUntilNextLocalDay(now = new Date()) {
+  const nextDay = new Date(now);
+  nextDay.setDate(nextDay.getDate() + 1);
+  nextDay.setHours(0, 0, 0, 0);
+  return nextDay.getTime() - now.getTime();
+}
 
 function classifyFailStage(error: unknown) {
   const message = errorMessage(error);
@@ -123,6 +131,10 @@ export async function startKuaishouDramaRuntime(
   let taskLoopPromise: Promise<void> | null = null;
   let pollTimer: ReturnType<typeof setTimeout> | null = null;
   let wakePoll: (() => void) | null = null;
+  let dailyUploadLimitResumeAt =
+    options.dailyUploadLimitResumeAt && options.dailyUploadLimitResumeAt > Date.now()
+      ? options.dailyUploadLimitResumeAt
+      : null;
 
   await cleanupOldLogFiles(options).catch(() => undefined);
   log(options, "[kuaishou-drama] starting browser");
@@ -177,6 +189,7 @@ export async function startKuaishouDramaRuntime(
 
   const prepareTask = async (
     resolvedTask: NonNullable<Awaited<ReturnType<typeof resolveTask>>>,
+    needsFormMaterials: boolean,
   ) => {
     await ensureBaiduNetdiskResourceReady(
       resolvedTask.taskConfig,
@@ -184,6 +197,13 @@ export async function startKuaishouDramaRuntime(
       resolvedTask.claimedTask?.accountTaskId,
       options,
     );
+    if (!needsFormMaterials) {
+      log(
+        options,
+        "[kuaishou-drama] all drama records already exist; form material preparation skipped",
+      );
+      return;
+    }
     const covers = await prepareKuaishouDramaTaskMaterials(
       resolvedTask.taskConfig,
       resolvedTask.resourceName,
@@ -196,10 +216,10 @@ export async function startKuaishouDramaRuntime(
     );
   };
 
-  const waitForNextPoll = async () => {
+  const waitForNextPoll = async (delayMs = options.taskPollIntervalMs ?? 10_000) => {
     await new Promise<void>((resolve) => {
       wakePoll = resolve;
-      pollTimer = setTimeout(resolve, Math.max(1_000, options.taskPollIntervalMs ?? 10_000));
+      pollTimer = setTimeout(resolve, Math.max(1_000, delayMs));
     });
     if (pollTimer) clearTimeout(pollTimer);
     pollTimer = null;
@@ -232,8 +252,13 @@ export async function startKuaishouDramaRuntime(
             `[kuaishou-drama] opened dedicated task tab: ` +
               `accountTaskId=${resolvedTask.claimedTask?.accountTaskId ?? "configured"}`,
           );
-          await prepareTask(resolvedTask);
-          publishedVariants = await runPublishTask(context!, taskPage, options, resolvedTask);
+          publishedVariants = await runPublishTask(
+            context!,
+            taskPage,
+            options,
+            resolvedTask,
+            (needsFormMaterials) => prepareTask(resolvedTask, needsFormMaterials),
+          );
         }
         if (resolvedTask?.claimedTask) {
           const completedTask = resolvedTask.claimedTask;
@@ -274,6 +299,15 @@ export async function startKuaishouDramaRuntime(
           options,
           `[kuaishou-drama] task failed: ${message} diagnostics=${diagnostics?.directory ?? "unavailable"}`,
         );
+        if (isKuaishouDailyUploadLimitError(error)) {
+          dailyUploadLimitResumeAt = Date.now() + millisecondsUntilNextLocalDay();
+          options.onDailyUploadLimitReached?.(dailyUploadLimitResumeAt);
+          log(
+            options,
+            `[kuaishou-drama] daily upload limit reached; task claims paused until ` +
+              `${new Date(dailyUploadLimitResumeAt).toLocaleString()}`,
+          );
+        }
         if (failedTask) {
           lastTask = {
             accountTaskId: failedTask.accountTaskId,
@@ -306,7 +340,12 @@ export async function startKuaishouDramaRuntime(
         }
       }
       if (!running || page.isClosed()) break;
-      await waitForNextPoll();
+      if (dailyUploadLimitResumeAt && dailyUploadLimitResumeAt > Date.now()) {
+        await waitForNextPoll(dailyUploadLimitResumeAt - Date.now());
+        dailyUploadLimitResumeAt = null;
+      } else {
+        await waitForNextPoll();
+      }
     }
   })();
 

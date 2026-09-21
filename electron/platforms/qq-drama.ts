@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import cron, { type ScheduledTask } from "node-cron";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { lstat, readdir, rm } from "node:fs/promises";
@@ -609,6 +610,11 @@ async function startRuntime() {
 }
 
 export function registerQqDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "qq-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/qq",
+  });
   registerQqRuntimeAssetCleanup();
   scheduleQqCopyrightProofCleanup();
 

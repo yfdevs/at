@@ -1,5 +1,6 @@
 ﻿import { app, ipcMain } from "electron";
 import Store from "electron-store";
+import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
 import {
@@ -331,6 +332,11 @@ export function openTencentHuolongDramaLogDir() {
 }
 
 export function registerTencentHuolongDramaPlatformHandlers() {
+  registerTaskAnalyticsHandler({
+    platform: "tencent-huolong-drama",
+    apiBaseUrl: () => readConfig().apiBaseUrl,
+    apiPrefix: "/dramaAiRpa/tencent",
+  });
   registerRuntimeAssetCleanupRoot({
     platform: "tencent-huolong-drama",
     rootPath: path.join(storagePaths().runDataDir, "assets"),

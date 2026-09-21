@@ -32,6 +32,7 @@ export function TaobaoDramaServiceControlPage() {
   })
   return (
     <ServiceControlButtonPage
+      analyticsPlatform="taobao-drama"
       loading={state.loading}
       pendingAction={state.pendingAction}
       running={state.status.running}
