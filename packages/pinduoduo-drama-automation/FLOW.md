@@ -1033,9 +1033,21 @@ markAuditChecked(..., "APPROVED", ...)
 
 自动从 `NOT_READY` 改成 `READY`。
 
-### 16.3 审核通过判断比较宽
+### 16.3 审核状态枚举已确认
 
-当前代码把 `record.status !== 1 && record.status !== 3` 都当成通过。需要确认拼多多平台真实状态枚举，否则可能误判。
+2026-09-21 用真实账号实测 `/mms/gaia/topic/apply/list`（`tab_type=1` 已提报短剧）确认：
+
+```text
+status = 1 -> 已提报，待审核（页面显示“已提报，待审核”，reject_reason 为空）
+status = 2 -> 审核通过（reject_reason 为空）
+status = 3 -> 审核驳回（reject_reason 有值，如“备案号验证无效”）
+```
+
+该接口不支持服务端状态筛选：请求体里传 `status` / `audit_status` / `apply_status` 会被忽略，返回未筛选的全量列表。页面本身也没有状态筛选控件，只能靠本地按 `status` 过滤。
+
+`fetchApprovedShortplays` 已改为按 `status === 2` 本地筛选，并按原始分页（每页 50 条）扫描，扫到 `total_count` 为止；`runApprovedShortplayCycle` 处理每页筛出的全部通过记录。
+
+`task-runner.ts` 的审核结论仍把 `status !== 1 && status !== 3` 当作通过，与上述枚举一致（实测只出现 1/2/3），如未来出现新状态值需要再收紧。
 
 ### 16.4 内容管理流程已经接入，但只打开页面
 
@@ -1135,3 +1147,80 @@ video_status = READY
 4. 给后端失败回调记录设计重试或人工处理入口。
 5. 给本地数据库记录做一个 UI 列表，方便观察 `audit_status`、`video_status` 和错误原因。
 6. 把内容管理页的后续上传逻辑继续放在 `approved-shortplay-flow.ts` 或其子模块中，保持审核通过后流程独立。
+
+## 19. 审核通过短剧上传记录表和循环上传
+
+新增独立表（与 `pinduoduo_apply_records` 同一个 `automation.sqlite`）：
+
+```text
+pinduoduo_approved_upload_records
+```
+
+建表 / 索引迁移在 `src/storage/pinduoduo-upload-records-schema.ts` 的 `migratePinduoduoUploadRecords()`，幂等执行。
+
+主键：
+
+- `platform_apply_id`（拼多多已提报记录 id）
+
+关键字段：
+
+- `status`
+- `stage`
+- `error_message`
+- `attempts`
+- `demo_url`
+- `episode_count`
+- `uploaded_at`
+- `last_attempt_at`
+
+状态机：
+
+```text
+PENDING -> DOWNLOADING -> READY -> UPLOADING -> UPLOADED
+   任一阶段失败 -> FAILED（带 stage / error_message）
+   FAILED 且 attempts < 3 时，下一轮可重试
+   平台明确拒绝（页面出现“视频上传失败”）-> REJECTED（终态，不再重试，「重试失败」也不会重置）
+```
+
+`stage` 只在失败时写入，取值：
+
+```text
+DOWNLOAD   下载 / 本地视频检查失败
+OPEN_PAGE  打开发布页失败（含未配置 creatorUid）
+UPLOAD     setInputFiles 上传动作失败
+VERIFY     等待上传完成超时或页面错误（REJECTED 的 stage 也记为 VERIFY）
+BIND       逐集“添加至已有短剧”绑定失败
+PUBLISH    点击发布或发布成功校验失败
+```
+
+`attempts` 只在进入 `DOWNLOADING`（一次尝试的起点）时加一，同时写入 `last_attempt_at` 并清空上一轮的 `stage` / `error_message`。
+
+仓库类：`src/storage/pinduoduo-upload-records-repository.ts` 的 `PinduoduoUploadRecordsRepository`，方法：
+
+```text
+upsertFromApprovedList(records)
+findProcessableRecords(maxAttempts = 3)
+markDownloading(id) / markReady(id) / markUploading(id)
+markUploaded(id)
+markFailed(id, stage, errorMessage)
+markRejected(id, errorMessage)
+```
+
+`upsertFromApprovedList` 对已有行只刷新 `title` / `episode_count` / `demo_url` / `raw_json` / `updated_at`，不会覆盖 `status` / `stage` / `error_message` / `attempts`，所以已 `UPLOADED` 的行不会被重新拉回待处理。
+
+循环入口：`src/app/approved-shortplay-cycle.ts` 的 `runApprovedShortplayCycle(page, context, options)`，每轮分两阶段：
+
+1. 同步阶段：用 `fetchApprovedShortplays` 按原始分页扫完全部“审核通过”（`status === 2`）记录，全部 `upsertFromApprovedList` 落库，替代原来的内存 `seenIds` 去重。
+2. 执行阶段：取 `findProcessableRecords()`（`PENDING` 或可重试的 `FAILED`，按 `updated_at` 升序），逐条独立 try/catch 处理，单条失败不会中断队列：
+   - 未配置 `config.creatorUid` 时直接 `markFailed(id, 'OPEN_PAGE', ...)` 并跳到下一条，不抛错。
+   - `markDownloading` 后调用 `options.ensureBaiduNetdiskResource` 下载视频，成功 `markReady`；下载目录里没有 `.mp4/.wmv/.mov/.avi/.m4v` 文件时 `markFailed(id, 'DOWNLOAD', ...)`。
+   - `markUploading` 后打开 `https://mcn.pinduoduo.com/home/creator/publish?uid=<creatorUid>`，`setInputFiles` 到视频专用 input（`input[data-testid="beast-core-upload-input"][accept*=".mp4"]`，页面上还有另一个同样 class 的图片 input，靠 `accept` 区分）。
+   - 等第一张视频卡片出现后，逐集填写表单：视频描述填入文件名去掉扩展名（`剧名 - 第x集`），内容声明下拉选「含AI生成内容」。卡片按 `文件名：<fileName>` 的 `p` 元素向上定位到包含「添加至已有短剧」按钮的容器。
+   - 等待页面不再出现 /上传中|处理中/（最多 10 分钟）；超时或页面错误记 `VERIFY` 失败。
+   - 上传完成后检查页面是否出现「视频上传失败」（如“视频分辨率不能低于1080P”）：出现则 `markRejected` 记 `REJECTED` 终态并带上平台原因，不再重试这部剧。
+   - 全部上传成功后逐集点「添加至已有短剧」，在弹窗里搜索剧名并选中确认，把每集绑定到已有短剧；绑定失败记 `BIND` 失败（可重试）。
+   - 绑定完成后逐集点击「发布」（点击会自动等按钮从禁用变为可用；若弹出确认框则点确认）。每集发布后校验成功信号：页面出现“发布成功/已发布”或该集发布按钮重新变为禁用，60 秒内无信号记 `PUBLISH` 失败（可重试）。
+   - 最后一集发布完成后页面保留 10 秒再关闭，然后 `markUploaded`。
+   - 上传页在 finally 中必定关闭。
+
+调度：`src/app/runtime.ts` 里启动后立即跑一轮，之后按 `pinduoduoTaskPollIntervalMs(options)`（配置 `taskPollIntervalMinutes`，默认 120 分钟）循环执行。循环用可唤醒的 `setTimeout` 等待，串行不重叠；`stop()` 置 `running=false` 并唤醒等待后循环退出，单轮异常只记日志不会终止循环。

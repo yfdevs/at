@@ -18,6 +18,10 @@ import {
 } from "./shared";
 import { automationDatabasePath } from "../storage/database";
 import {
+  PinduoduoApprovedUploadRecordsRepository,
+  type ListUploadRecordsFilter,
+} from "../storage/pinduoduo-drama/upload-records-repository";
+import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
@@ -101,6 +105,15 @@ const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
 
 const runtimeController = new RuntimeController<PinduoduoDramaRuntime>();
 let store: Store<PinduoduoDramaStore> | null = null;
+let uploadRecordsRepository: PinduoduoApprovedUploadRecordsRepository | null = null;
+
+function getUploadRecordsRepository() {
+  if (!uploadRecordsRepository) {
+    uploadRecordsRepository = new PinduoduoApprovedUploadRecordsRepository();
+  }
+
+  return uploadRecordsRepository;
+}
 
 export function getPinduoduoDramaBrowserInstanceCount() {
   return runtimeController.current?.getStatus().running ? 1 : 0;
@@ -463,6 +476,16 @@ export function registerPinduoduoDramaPlatformHandlers() {
     await runtimeController.stop();
     return status();
   });
+
+  ipcMain.handle(
+    "pinduoduo-drama:upload-records:list",
+    (_event, filter?: ListUploadRecordsFilter) =>
+      getUploadRecordsRepository().listUploadRecords(filter ?? {}),
+  );
+
+  ipcMain.handle("pinduoduo-drama:upload-records:retry-failed", () => ({
+    reset: getUploadRecordsRepository().resetFailedForRetry(),
+  }));
 }
 
 export function stopPinduoduoDramaPlatformRuntime() {

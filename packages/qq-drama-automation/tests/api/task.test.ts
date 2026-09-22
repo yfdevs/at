@@ -10,6 +10,8 @@ function taskPayload(summary: string) {
   return {
     qqPlaylet: {
       title: "测试漫剧",
+      secondVersionEnabled: true,
+      secondVersionTitle: "测试漫剧第二版",
       summary,
       audienceType: "通用",
       episodeCount: 12,
@@ -75,6 +77,8 @@ test("optimizes an overlong claimed summary before schema validation", async () 
   });
 
   assert.equal(task?.playlet.summary, "一段忠于原剧情且长度合规的简介。");
+  assert.equal(task?.playlet.secondVersionEnabled, true);
+  assert.equal(task?.playlet.secondVersionTitle, "测试漫剧第二版");
   assert.equal(requests.length, 1);
   assert.match(requests[0]?.prompt ?? "", /QQ 短剧作品简介/u);
 });

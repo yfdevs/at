@@ -514,13 +514,33 @@ export async function fetchSubmittedShortplayApplyRecords(
   };
 }
 
+const APPROVED_SHORTPLAY_STATUS = 2;
+const APPROVED_SHORTPLAY_LIST_PAGE_SIZE = 50;
+
+export type ApprovedShortplayListPage = {
+  page: number;
+  pageSize: number;
+  rawCount: number;
+  records: ShortplayApplyRecord[];
+  totalCount?: number;
+};
+
 export async function fetchApprovedShortplays(
   page: Page,
   options: PinduoduoDramaRuntimeOptions,
   pageNumber = 1,
-): Promise<ShortplayApplyRecord[]> {
-  const result = await fetchSubmittedShortplayApplyRecords(page, options, { page: pageNumber, pageSize: 1 });
-  return result.records.filter((record) => record.status === 1);
+): Promise<ApprovedShortplayListPage> {
+  const result = await fetchSubmittedShortplayApplyRecords(page, options, {
+    page: pageNumber,
+    pageSize: APPROVED_SHORTPLAY_LIST_PAGE_SIZE,
+  });
+  return {
+    page: result.page,
+    pageSize: result.pageSize,
+    rawCount: result.records.length,
+    records: result.records.filter((record) => record.status === APPROVED_SHORTPLAY_STATUS),
+    totalCount: result.totalCount,
+  };
 }
 
 async function clickShortplayManageTabAndWaitForList(

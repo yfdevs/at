@@ -73,56 +73,85 @@ export function TaskStatisticsChart({ platform }: { platform: TaskAnalyticsPlatf
 
     const dark = document.documentElement.classList.contains("dark");
     const chart = echarts.init(element, undefined, { renderer: "canvas" });
+    const ink = dark ? "#fafafa" : "#18181b";
+    const muted = dark ? "#a1a1aa" : "#71717a";
+    const hairline = dark ? "#3f3f46" : "#e4e4e7";
+    const splitLine = dark ? "#27272a" : "#f4f4f5";
+    const warning = dark ? "#fbbf24" : "#f5a623";
     chart.setOption({
-      animationDuration: 450,
-      color: ["#2563eb", "#ef4444"],
+      animationDuration: 600,
+      animationEasing: "cubicOut",
+      color: [ink, warning],
       title: {
         text: "近30天上传统计",
         left: 0,
         top: 0,
         textStyle: {
-          color: dark ? "#f4f4f5" : "#18181b",
+          color: ink,
           fontFamily: "Geist Variable, sans-serif",
           fontSize: 14,
           fontWeight: 600,
         },
       },
       legend: {
-        top: 0,
+        top: 2,
         right: 0,
+        icon: "roundRect",
         itemHeight: 8,
-        itemWidth: 12,
-        textStyle: { color: dark ? "#a1a1aa" : "#71717a", fontSize: 11 },
+        itemWidth: 8,
+        itemGap: 16,
+        textStyle: { color: muted, fontSize: 11 },
       },
-      tooltip: { trigger: "axis", axisPointer: { type: "shadow" } },
-      grid: { left: 4, right: 4, top: 42, bottom: 12, containLabel: true },
+      tooltip: {
+        trigger: "axis",
+        axisPointer: {
+          type: "shadow",
+          shadowStyle: { color: dark ? "rgba(250,250,250,0.06)" : "rgba(24,24,27,0.05)" },
+        },
+        backgroundColor: dark ? "#27272a" : "#ffffff",
+        borderColor: hairline,
+        borderWidth: 1,
+        padding: [8, 12],
+        textStyle: { color: ink, fontSize: 11 },
+        extraCssText:
+          "border-radius:8px;box-shadow:0 4px 12px rgba(0,0,0,0.12);",
+      },
+      grid: { left: 4, right: 4, top: 44, bottom: 8, containLabel: true },
       xAxis: {
         type: "category",
         data: result.days.map((day) => shortDate(day.date)),
-        axisLine: { lineStyle: { color: dark ? "#3f3f46" : "#e4e4e7" } },
+        axisLine: { lineStyle: { color: hairline } },
         axisTick: { show: false },
-        axisLabel: { color: dark ? "#a1a1aa" : "#71717a", fontSize: 10 },
+        axisLabel: {
+          color: muted,
+          fontSize: 10,
+          interval: 4,
+          margin: 10,
+        },
       },
       yAxis: {
         type: "value",
         minInterval: 1,
-        axisLabel: { color: dark ? "#a1a1aa" : "#71717a", fontSize: 10 },
-        splitLine: { lineStyle: { color: dark ? "#27272a" : "#f1f1f3" } },
+        axisLabel: { color: muted, fontSize: 10 },
+        splitLine: { lineStyle: { color: splitLine, type: [4, 4] } },
       },
       series: [
         {
           name: "成功任务",
           type: "bar",
-          barMaxWidth: 13,
+          barMaxWidth: 12,
+          barGap: "40%",
           data: result.days.map((day) => day.succeeded),
           itemStyle: { borderRadius: [3, 3, 0, 0] },
+          emphasis: { itemStyle: { opacity: 0.75 } },
         },
         {
           name: "失败任务",
           type: "bar",
-          barMaxWidth: 13,
+          barMaxWidth: 12,
           data: result.days.map((day) => day.failed),
           itemStyle: { borderRadius: [3, 3, 0, 0] },
+          emphasis: { itemStyle: { opacity: 0.75 } },
         },
       ],
     });
@@ -135,13 +164,15 @@ export function TaskStatisticsChart({ platform }: { platform: TaskAnalyticsPlatf
     };
   }, [hasData, loading, result]);
 
+  if (result.unavailableReason) {
+    return null;
+  }
+
   const stateText = loading
     ? "正在加载任务统计…"
-    : result.unavailableReason
-      ? "统计数据暂不可用"
-      : !hasData
-        ? "近30天暂无任务统计数据"
-        : null;
+    : !hasData
+      ? "近30天暂无任务统计数据"
+      : null;
 
   return (
     <section

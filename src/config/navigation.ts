@@ -1,5 +1,5 @@
 import type { Icon } from "@mynaui/icons-react";
-import { FineTune, Terminal } from "@mynaui/icons-react";
+import { CloudUpload, FineTune, Terminal } from "@mynaui/icons-react";
 
 export type PlatformId =
   | "wechat-drama"
@@ -46,6 +46,7 @@ export type AppRoute =
   | "tiktok-drama/service"
   | "tiktok-drama/config"
   | "pinduoduo-drama/service"
+  | "pinduoduo-drama/records"
   | "pinduoduo-drama/config";
 
 const appRoutes = [
@@ -79,6 +80,7 @@ const appRoutes = [
   "tiktok-drama/service",
   "tiktok-drama/config",
   "pinduoduo-drama/service",
+  "pinduoduo-drama/records",
   "pinduoduo-drama/config",
 ] as const satisfies readonly AppRoute[];
 
@@ -398,6 +400,11 @@ export const navigationGroups: NavigationGroup[] = [
         title: "服务控制",
         route: "pinduoduo-drama/service",
         icon: Terminal,
+      },
+      {
+        title: "上传记录",
+        route: "pinduoduo-drama/records",
+        icon: CloudUpload,
       },
       {
         title: "配置管理",

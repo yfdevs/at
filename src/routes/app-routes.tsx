@@ -31,6 +31,7 @@ import { TaobaoDramaConfigurationPage } from "@/pages/taobao-drama/configuration
 import { TaobaoDramaServiceControlPage } from "@/pages/taobao-drama/service-control"
 import { PinduoduoDramaConfigurationPage } from "@/pages/pinduoduo-drama/configuration"
 import { PinduoduoDramaServiceControlPage } from "@/pages/pinduoduo-drama/service-control"
+import { PinduoduoDramaUploadRecordsPage } from "@/pages/pinduoduo-drama/upload-records"
 import { TiktokDramaCenterConfigurationPage } from "@/pages/tiktok-drama/configuration"
 import { TiktokDramaCenterServiceControlPage } from "@/pages/tiktok-drama/service-control"
 
@@ -65,6 +66,7 @@ const appRouteComponents: Record<AppRoute, ComponentType> = {
   "tiktok-drama/service": TiktokDramaCenterServiceControlPage,
   "tiktok-drama/config": TiktokDramaCenterConfigurationPage,
   "pinduoduo-drama/service": PinduoduoDramaServiceControlPage,
+  "pinduoduo-drama/records": PinduoduoDramaUploadRecordsPage,
   "pinduoduo-drama/config": PinduoduoDramaConfigurationPage,
 }
 

@@ -24,7 +24,8 @@ import {
   getQqDramaOriginalTitle,
   validateQqDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
-import { prepareQqDramaPosterMaterial } from "../shared/poster-materials.js";
+import { prepareQqDramaPosterMaterials } from "../shared/poster-materials.js";
+import { createQqDramaPublishVariants } from "../shared/publish-variants.js";
 import {
   launchQqDramaBrowserContext,
   qqDramaLoginStateFromUrl,
@@ -218,6 +219,7 @@ async function runTask(
   setLastTask: (status: LastTaskStatus) => void,
 ) {
   let publishSucceeded = false;
+  const publishedVariants: Array<{ kind: "primary" | "secondary"; title: string }> = [];
   setLastTask({
     accountTaskId: task.accountTaskId,
     originalTitle: task.originalTitle,
@@ -235,9 +237,28 @@ async function runTask(
       async () => {
         await ensureBaiduNetdiskResourceReady(task, options);
         await validateQqDramaLocalEpisodeVideos(task, options);
-        const poster = await prepareQqDramaPosterMaterial(task, options);
-        log(options, `[qq-drama] local cover ready: ${poster.file}`);
-        await runQqDramaPublishTask(page, context, task, options);
+        const posters = await prepareQqDramaPosterMaterials(task, options);
+        log(options, `[qq-drama] publish covers ready`, posters);
+        for (const variant of createQqDramaPublishVariants(task)) {
+          const localCoverFile = variant.kind === "primary" ? posters.primary : posters.secondary;
+          if (!localCoverFile) {
+            throw new Error(`QQ_DRAMA_VARIANT_COVER_MISSING: ${variant.kind}`);
+          }
+          const variantTask: ClaimedQqDramaTask = {
+            ...task,
+            playlet: {
+              ...task.playlet,
+              title: variant.title,
+              localCoverFile,
+            },
+          };
+          log(options, `[qq-drama] publishing variant`, {
+            kind: variant.kind,
+            title: variant.title,
+          });
+          await runQqDramaPublishTask(page, context, variantTask, options);
+          publishedVariants.push(variant);
+        }
       },
     );
     publishSucceeded = true;
@@ -250,6 +271,7 @@ async function runTask(
           activeUrl: page.url(),
           accountId: task.qqAccountId,
           accountName: task.qqAccountName,
+          variants: publishedVariants,
         },
       }),
     );

@@ -51,7 +51,6 @@ function formatChinaTimeIso(date: Date): string {
   return `${chinaDate.toISOString().replace("Z", "")}+08:00`;
 }
 
-void nextTaskPollDelayMs;
 void formatChinaTimeIso;
 
 export async function startPinduoduoDramaRuntime(
@@ -90,8 +89,6 @@ export async function startPinduoduoDramaRuntime(
     wakeTaskLoop = null;
   }
 
-  void waitForNextTaskPoll;
-
   await cleanupOldLogFiles(options).catch(() => undefined);
   log(options, "info", "runtime", "starting browser", {
     userDataDir,
@@ -115,14 +112,21 @@ export async function startPinduoduoDramaRuntime(
       });
     });
 
-  if (managePageReady && context) {
-    taskLoopPromise = runApprovedShortplayCycle(page, context, options)
-      .then((opened) => {
-        log(options, "info", "runtime", "approved shortplay cycle completed", { opened });
-      })
-      .catch((error: unknown) => {
-        log(options, "error", "runtime", "approved shortplay cycle failed", { error });
-      });
+  if (managePageReady && context && page) {
+    const cyclePage = page;
+    const cycleContext = context;
+    taskLoopPromise = (async () => {
+      while (running) {
+        try {
+          const uploaded = await runApprovedShortplayCycle(cyclePage, cycleContext, options);
+          log(options, "info", "runtime", "approved shortplay cycle completed", { uploaded });
+        } catch (error: unknown) {
+          log(options, "error", "runtime", "approved shortplay cycle failed", { error });
+        }
+        if (!running) break;
+        await waitForNextTaskPoll(nextTaskPollDelayMs(options));
+      }
+    })();
   }
 
   return {

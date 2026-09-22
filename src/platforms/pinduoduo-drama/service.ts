@@ -49,6 +49,43 @@ export type PinduoduoDramaServiceStatus = {
   pid: number | null;
 };
 
+export type PinduoduoUploadRecord = {
+  platformApplyId: number;
+  title: string;
+  episodeCount?: number;
+  demoUrl?: string;
+  status?: string;
+  stage?: string;
+  errorMessage?: string;
+  attempts?: number;
+  rawJson?: string;
+  accountProfileName?: string;
+  uploadedAt?: string;
+  lastAttemptAt?: string;
+  createdAt?: string;
+  updatedAt?: string;
+};
+
+export type PinduoduoUploadRecordsSummary = {
+  total: number;
+  pending: number;
+  uploading: number;
+  uploaded: number;
+  failed: number;
+};
+
+export type PinduoduoUploadRecordsFilter = {
+  status?: string;
+  limit?: number;
+  offset?: number;
+};
+
+export type PinduoduoUploadRecordsResult = {
+  records: PinduoduoUploadRecord[];
+  total: number;
+  summary: PinduoduoUploadRecordsSummary;
+};
+
 async function invokePinduoduoDrama<T>(channel: string, ...args: unknown[]): Promise<T> {
   if (!window.ipcRenderer) {
     throw new Error("拼多多短剧服务控制仅在 Electron 应用内可用。");
@@ -94,5 +131,16 @@ export const pinduoduoDramaService = {
   },
   stop() {
     return invokePinduoduoDrama<PinduoduoDramaServiceStatus>("pinduoduo-drama:service:stop");
+  },
+  listUploadRecords(filter?: PinduoduoUploadRecordsFilter) {
+    return invokePinduoduoDrama<PinduoduoUploadRecordsResult>(
+      "pinduoduo-drama:upload-records:list",
+      filter,
+    );
+  },
+  retryFailedUploadRecords() {
+    return invokePinduoduoDrama<{ reset: number }>(
+      "pinduoduo-drama:upload-records:retry-failed",
+    );
   },
 };

@@ -20,6 +20,8 @@ import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiCoverGenerationRetryAttempts,
+  getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 
@@ -556,6 +558,8 @@ async function startRuntime() {
         episodeUploadFailedRetryAttempts,
         taskPollIntervalMs,
         aiClientFactory: createConfiguredAiClient,
+        aiImageModel: getConfiguredAiImageModel(),
+        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
           requesterPlatform: "qq-drama",

@@ -149,6 +149,8 @@ export const qqDramaTaskFileSchema = z
 export const qqDramaTaskPayloadSchema = z
   .object({
     title: requiredText.max(20).describe("新剧名"),
+    secondVersionEnabled: z.boolean().default(false).describe("是否同时发布第二版本"),
+    secondVersionTitle: z.string().trim().max(20).optional().describe("第二版本剧名，最多 20 个字"),
     summary: requiredText.max(200).describe("作品简介，最多 200 个字"),
     audienceType: z.enum(qqDramaAudienceTypeValues).describe("受众类型"),
     localCoverFile: fileReference
@@ -195,7 +197,25 @@ export const qqDramaTaskPayloadSchema = z
     contractName: requiredText.describe("与本剧目绑定的合同，绑定后不可更改"),
     submit: z.boolean().default(false),
   })
-  .passthrough();
+  .passthrough()
+  .superRefine((payload, context) => {
+    if (!payload.secondVersionEnabled) return;
+    if (!payload.secondVersionTitle) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["secondVersionTitle"],
+        message: "启用第二版本时必须填写第二版本剧名",
+      });
+      return;
+    }
+    if (payload.secondVersionTitle === payload.title) {
+      context.addIssue({
+        code: z.ZodIssueCode.custom,
+        path: ["secondVersionTitle"],
+        message: "第二版本剧名不能与原剧名相同",
+      });
+    }
+  });
 
 export const claimedQqDramaTaskSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
@@ -257,6 +277,8 @@ export type QqDramaRuntimeOptions = {
   episodeUploadFailedRetryAttempts?: number;
   taskPollIntervalMs?: number;
   aiClientFactory?: () => DramaAiClient;
+  aiImageModel?: string;
+  aiCoverGenerationRetryAttempts?: number;
   config?: {
     browser?: {
       headless?: boolean;

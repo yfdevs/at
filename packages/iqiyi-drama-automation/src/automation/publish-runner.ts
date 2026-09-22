@@ -144,22 +144,17 @@ export async function openIqiyiCreatePage(
   await saveCredentialState(context, options).catch(() => undefined);
 }
 
-export async function runIqiyiPublishTask(
+async function runIqiyiPublishAttempt(
   page: Page,
   context: BrowserContext,
   task: ClaimedIqiyiDramaTask,
   options: IqiyiDramaRuntimeOptions,
   materials: PreparedIqiyiMaterials,
+  recommendation: string,
+  taskRunTime: Date,
 ) {
   const payload = task.playlet;
-  const recommendation = await resolveIqiyiRecommendation(payload, options);
-  await openIqiyiCreatePage(page, context, task, options);
-  log(
-    options,
-    `[iqiyi-drama] filling ${payload.dramaType} project: accountTaskId=${task.accountTaskId}`,
-  );
   const isShortDrama = payload.dramaType === "short-drama";
-  const taskRunTime = new Date();
 
   if (isShortDrama) {
     await fillIqiyiField(page, options, {
@@ -337,4 +332,54 @@ export async function runIqiyiPublishTask(
   await page.waitForTimeout(postSubmitSettleMs);
   await throwIfIqiyiFormInvalid(page);
   await saveCredentialState(context, options).catch(() => undefined);
+}
+
+function isIqiyiFieldNotFoundError(error: unknown): error is Error {
+  return error instanceof Error && error.message.includes("IQIYI_DRAMA_FIELD_NOT_FOUND");
+}
+
+export async function runIqiyiPublishTask(
+  page: Page,
+  context: BrowserContext,
+  task: ClaimedIqiyiDramaTask,
+  options: IqiyiDramaRuntimeOptions,
+  materials: PreparedIqiyiMaterials,
+) {
+  const payload = task.playlet;
+  const recommendation = await resolveIqiyiRecommendation(payload, options);
+  const taskRunTime = new Date();
+  await openIqiyiCreatePage(page, context, task, options);
+
+  const fillFromStart = () => {
+    log(
+      options,
+      `[iqiyi-drama] filling ${payload.dramaType} project: accountTaskId=${task.accountTaskId}`,
+    );
+    return runIqiyiPublishAttempt(
+      page,
+      context,
+      task,
+      options,
+      materials,
+      recommendation,
+      taskRunTime,
+    );
+  };
+
+  try {
+    await fillFromStart();
+  } catch (error) {
+    if (!isIqiyiFieldNotFoundError(error)) throw error;
+    log(options, "[iqiyi-drama] required field was not rendered; refreshing and refilling once", {
+      accountTaskId: task.accountTaskId,
+      error: error.message,
+    });
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+    await page.waitForTimeout(1_000);
+    if (iqiyiDramaLoginStateFromUrl(page.url()) !== "logged-in") {
+      throw new Error(`IQIYI_DRAMA_LOGIN_REQUIRED: url=${page.url()}`);
+    }
+    await waitForCreateForm(page);
+    await fillFromStart();
+  }
 }
