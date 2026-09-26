@@ -11,6 +11,8 @@ export type UploadRecord = {
   errorMessage?: string;
   attempts?: number;
   rawJson?: string;
+  resourceSource?: string;
+  resourceSourceRows?: number[];
   accountProfileName?: string;
   uploadedAt?: string;
   lastAttemptAt?: string;
@@ -42,6 +44,8 @@ type UploadRecordRow = {
   errorMessage: string | null;
   attempts: number | null;
   rawJson: string | null;
+  resourceSource: string | null;
+  resourceSourceRows: string | null;
   accountProfileName: string | null;
   uploadedAt: string | null;
   lastAttemptAt: string | null;
@@ -59,6 +63,8 @@ const selectUploadRecordColumns = `
   error_message AS errorMessage,
   attempts,
   raw_json AS rawJson,
+  resource_source AS resourceSource,
+  resource_source_rows AS resourceSourceRows,
   account_profile_name AS accountProfileName,
   uploaded_at AS uploadedAt,
   last_attempt_at AS lastAttemptAt,
@@ -67,6 +73,15 @@ const selectUploadRecordColumns = `
 `;
 
 const inProgressStatuses = ["DOWNLOADING", "READY", "UPLOADING"];
+
+function ensureColumn(database: Database.Database, name: string, definition: string): void {
+  const columns = database.prepare("PRAGMA table_info(pinduoduo_approved_upload_records)").all() as Array<{
+    name: string;
+  }>;
+  if (!columns.some((column) => column.name === name)) {
+    database.exec(`ALTER TABLE pinduoduo_approved_upload_records ADD COLUMN ${definition}`);
+  }
+}
 
 function migratePinduoduoApprovedUploadRecords(database: Database.Database): void {
   database.exec(`
@@ -80,6 +95,8 @@ function migratePinduoduoApprovedUploadRecords(database: Database.Database): voi
       error_message TEXT,
       attempts INTEGER,
       raw_json TEXT,
+      resource_source TEXT,
+      resource_source_rows TEXT,
       account_profile_name TEXT,
       uploaded_at TEXT,
       last_attempt_at TEXT,
@@ -93,6 +110,8 @@ function migratePinduoduoApprovedUploadRecords(database: Database.Database): voi
     CREATE INDEX IF NOT EXISTS idx_pinduoduo_upload_records_status
       ON pinduoduo_approved_upload_records(status, updated_at);
   `);
+  ensureColumn(database, "resource_source", "resource_source TEXT");
+  ensureColumn(database, "resource_source_rows", "resource_source_rows TEXT");
 }
 
 function readUploadRecord(row: UploadRecordRow): UploadRecord {
@@ -106,6 +125,10 @@ function readUploadRecord(row: UploadRecordRow): UploadRecord {
     errorMessage: row.errorMessage ?? undefined,
     attempts: row.attempts ?? undefined,
     rawJson: row.rawJson ?? undefined,
+    resourceSource: row.resourceSource ?? undefined,
+    resourceSourceRows: row.resourceSourceRows
+      ? JSON.parse(row.resourceSourceRows) as number[]
+      : undefined,
     accountProfileName: row.accountProfileName ?? undefined,
     uploadedAt: row.uploadedAt ?? undefined,
     lastAttemptAt: row.lastAttemptAt ?? undefined,
@@ -188,6 +211,26 @@ export class PinduoduoApprovedUploadRecordsRepository {
       `,
       )
       .run({ now: new Date().toISOString() });
+    return result.changes;
+  }
+
+  resetFailedRecordForRetry(platformApplyId: number): number {
+    const result = this.database
+      .prepare(
+        `
+        UPDATE pinduoduo_approved_upload_records
+        SET status='PENDING',
+            stage=NULL,
+            error_message=NULL,
+            updated_at=@now
+        WHERE platform_apply_id=@platformApplyId
+          AND status='FAILED'
+      `,
+      )
+      .run({
+        platformApplyId,
+        now: new Date().toISOString(),
+      });
     return result.changes;
   }
 

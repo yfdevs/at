@@ -165,7 +165,7 @@ async function uploadPremiereProof(
   await scrollLocatorIntoView(page, proofArea);
   await proofInput.waitFor({ state: "attached", timeout: 30_000 });
   await proofInput.setInputFiles(proofPath, { timeout: 30_000 });
-  await waitUploadDone(page, proofLabel);
+  await waitUploadCount(proofArea, 1, proofLabel, 120_000);
 }
 
 async function proofUploadContainer(page: Page, labelText: string) {
@@ -180,39 +180,12 @@ async function proofUploadContainer(page: Page, labelText: string) {
   return container;
 }
 
-async function waitUploadDone(page: Page, labelText: string, timeout = 30_000) {
-  const container = page.locator(".upload-file-container", {
-    has: page.locator(".label-title", { hasText: labelText }),
-  });
-  const status = container.locator("text=已上传").first();
-  try {
-    await Promise.race([
-      status.waitFor({ state: "visible", timeout }),
-      waitForMtdMessageError(page, timeout),
-    ]);
-    return true;
-  } catch {
-    const message = await visibleMtdMessageError(page);
-    if (message) {
-      throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${message}`);
-    }
-    throw new Error(`上传未完成：${labelText}`);
-  }
-}
-
 async function visibleMtdMessageError(page: Page) {
   const message = page
     .locator(".mtd-message.mtd-message-error .mtd-message-content:visible")
     .last();
   if (!(await message.count())) return undefined;
   return (await message.textContent())?.trim() || undefined;
-}
-
-async function waitForMtdMessageError(page: Page, timeout: number): Promise<never> {
-  const message = page.locator(".mtd-message.mtd-message-error .mtd-message-content").last();
-  await message.waitFor({ state: "visible", timeout });
-  const text = (await message.textContent())?.trim() || "美团页面出现错误提示";
-  throw new Error(`MEITUAN_CREATE_COLLECTION_MESSAGE: ${text}`);
 }
 
 async function waitUploadCount(

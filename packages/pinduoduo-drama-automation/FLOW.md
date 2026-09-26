@@ -1210,16 +1210,16 @@ markRejected(id, errorMessage)
 
 循环入口：`src/app/approved-shortplay-cycle.ts` 的 `runApprovedShortplayCycle(page, context, options)`，每轮分两阶段：
 
-1. 同步阶段：用 `fetchApprovedShortplays` 按原始分页扫完全部“审核通过”（`status === 2`）记录，全部 `upsertFromApprovedList` 落库，替代原来的内存 `seenIds` 去重。
+1. 同步阶段：用 `fetchApprovedShortplays` 按原始分页扫完列表，只保留“审核通过且尚未创建短剧”（`status === 2 && topic_create_status !== 1`）的记录，再 `upsertFromApprovedList` 落库，替代原来的内存 `seenIds` 去重。`topic_create_status === 1` 表示短剧已经创建，必须跳过，并按平台提报 ID 删除本地上传跟踪表中以前遗留的对应记录。
 2. 执行阶段：取 `findProcessableRecords()`（`PENDING` 或可重试的 `FAILED`，按 `updated_at` 升序），逐条独立 try/catch 处理，单条失败不会中断队列：
    - 未配置 `config.creatorUid` 时直接 `markFailed(id, 'OPEN_PAGE', ...)` 并跳到下一条，不抛错。
    - `markDownloading` 后调用 `options.ensureBaiduNetdiskResource` 下载视频，成功 `markReady`；下载目录里没有 `.mp4/.wmv/.mov/.avi/.m4v` 文件时 `markFailed(id, 'DOWNLOAD', ...)`。
    - `markUploading` 后打开 `https://mcn.pinduoduo.com/home/creator/publish?uid=<creatorUid>`，`setInputFiles` 到视频专用 input（`input[data-testid="beast-core-upload-input"][accept*=".mp4"]`，页面上还有另一个同样 class 的图片 input，靠 `accept` 区分）。
    - 等第一张视频卡片出现后，逐集填写表单：视频描述填入文件名去掉扩展名（`剧名 - 第x集`），内容声明下拉选「含AI生成内容」。卡片按 `文件名：<fileName>` 的 `p` 元素向上定位到包含「添加至已有短剧」按钮的容器。
-   - 等待页面不再出现 /上传中|处理中/（最多 10 分钟）；超时或页面错误记 `VERIFY` 失败。
+   - 用首张视频卡片点击「添加至已有短剧」，在无搜索框的剧目列表中滚动找到同名短剧并勾选，再勾选「将所上传视频全部添加至此短剧」并点击「确认添加」，一次绑定全部视频；绑定失败记 `BIND` 失败（可重试）。
+   - 等待页面不再出现 /上传中|处理中/（配置 `videoUploadTimeoutMinutes`，默认 60 分钟）；超时或页面错误记 `VERIFY` 失败。
    - 上传完成后检查页面是否出现「视频上传失败」（如“视频分辨率不能低于1080P”）：出现则 `markRejected` 记 `REJECTED` 终态并带上平台原因，不再重试这部剧。
-   - 全部上传成功后逐集点「添加至已有短剧」，在弹窗里搜索剧名并选中确认，把每集绑定到已有短剧；绑定失败记 `BIND` 失败（可重试）。
-   - 绑定完成后逐集点击「发布」（点击会自动等按钮从禁用变为可用；若弹出确认框则点确认）。每集发布后校验成功信号：页面出现“发布成功/已发布”或该集发布按钮重新变为禁用，60 秒内无信号记 `PUBLISH` 失败（可重试）。
+   - 全部上传成功后点击页面级「一键发布」（若弹出确认框则点确认），不再逐集寻找「发布」按钮。点击后校验“发布成功/已发布”、按钮隐藏或按钮禁用等成功信号，60 秒内无信号记 `PUBLISH` 失败（可重试）。
    - 最后一集发布完成后页面保留 10 秒再关闭，然后 `markUploaded`。
    - 上传页在 finally 中必定关闭。
 

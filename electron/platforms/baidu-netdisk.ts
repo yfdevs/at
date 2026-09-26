@@ -713,6 +713,7 @@ function normalizeEnsureDownloadRequest(
     downloadEpisodeVideos,
     downloadAssetMaterials: request.downloadAssetMaterials,
     forceAssetDownload: request.forceAssetDownload,
+    requireAllDiscoveredAssets: request.requireAllDiscoveredAssets,
     requiredOwnership: request.requiredOwnership,
     requiredOwnershipFiles: request.requiredOwnershipFiles,
     requiredPosterImages: request.requiredPosterImages,

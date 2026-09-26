@@ -6,6 +6,7 @@ import { analyzeImagesAsJson } from "@drama/ai";
 import {
   evaluateCommercialPosterTextValidation,
   findOwnershipProjectProofFiles,
+  listLocalOwnershipMaterials,
   listLocalPosterImages,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
@@ -230,40 +231,96 @@ async function prepareCopyrightProofFiles(
   root: string,
   resourceName: string,
   taskDir: string,
+  fallbackCover: string,
   options: IqiyiDramaRuntimeOptions,
 ) {
   log(options, "[iqiyi-drama] preparing copyright proof screenshots");
-  if (!options.aiClient) {
-    throw new Error("[ownership-project-proof-ai-required] 权属工程截图需要 AI 按图片内容识别，请先配置 AI 服务。");
+  let preferredFiles: string[] = [];
+  if (options.aiClient) {
+    try {
+      const selection = await findOwnershipProjectProofFiles({
+        root,
+        resourceName,
+        aiClient: options.aiClient,
+        onClassificationProgress: (progress) => log(
+          options,
+          progress.fallback
+            ? "[iqiyi-drama] reclassified copyright proof screenshot from image content"
+            : "[iqiyi-drama] classified copyright proof screenshot",
+          {
+            completed: progress.completed,
+            file: path.basename(progress.file),
+            kind: progress.kind,
+            total: progress.total,
+          },
+        ),
+      });
+      preferredFiles = selection.files;
+      log(options, "[iqiyi-drama] copyright proof screenshots selected", {
+        jianying: selection.jianying.map((material) => material.name),
+        juchuang: selection.juchuang.map((material) => material.name),
+        unknown: selection.unknown.map((material) => material.name),
+      });
+    } catch (error) {
+      log(options, "[iqiyi-drama] strict copyright proof selection unavailable; using fallback", {
+        error: error instanceof Error ? error.message : String(error),
+      });
+    }
+  } else {
+    log(options, "[iqiyi-drama] AI is unavailable; using unclassified copyright proof images");
   }
-  const selection = await findOwnershipProjectProofFiles({
-    root,
-    resourceName,
-    aiClient: options.aiClient,
-    onClassificationProgress: (progress) => log(
-      options,
-      progress.fallback
-        ? "[iqiyi-drama] reclassified copyright proof screenshot from image content"
-        : "[iqiyi-drama] classified copyright proof screenshot",
-      {
-        completed: progress.completed,
-        file: path.basename(progress.file),
-        kind: progress.kind,
-        total: progress.total,
-      },
-    ),
+
+  const availableFiles = preferredFiles.length > 0
+    ? preferredFiles
+    : (await listLocalOwnershipMaterials({
+      root,
+      resourceName,
+      deduplicateByContent: true,
+    })).map((material) => material.file);
+  const sources = fillIqiyiCopyrightProofSources(availableFiles, fallbackCover);
+  const prepared: string[] = [];
+  for (const [index, source] of sources.entries()) {
+    const output = path.join(taskDir, `iqiyi-copyright-proof-${index + 1}.jpg`);
+    try {
+      prepared.push(await writeJpegWithinLimit(
+        source,
+        output,
+        undefined,
+        undefined,
+        iqiyiProofMaximumBytes - 100_000,
+      ));
+    } catch (error) {
+      log(options, "[iqiyi-drama] copyright proof image unusable; replacing it with cover", {
+        error: error instanceof Error ? error.message : String(error),
+        file: source,
+      });
+      prepared.push(await writeJpegWithinLimit(
+        fallbackCover,
+        output,
+        undefined,
+        undefined,
+        iqiyiProofMaximumBytes - 100_000,
+      ));
+    }
+  }
+  log(options, "[iqiyi-drama] copyright proof files prepared", {
+    availableOwnershipImages: availableFiles.length,
+    fallbackToCover: availableFiles.length === 0,
+    files: prepared.map((file) => path.basename(file)),
   });
-  log(options, "[iqiyi-drama] copyright proof screenshots selected", {
-    jianying: selection.jianying.map((material) => material.name),
-    juchuang: selection.juchuang.map((material) => material.name),
-    unknown: selection.unknown.map((material) => material.name),
-  });
-  return Promise.all(
-    selection.files.map((file, index) => prepareProofFile(file, index, taskDir, {
-      label: "版权证明文件",
-      filePrefix: "copyright-proof",
-    })),
-  );
+  return prepared;
+}
+
+export function fillIqiyiCopyrightProofSources(
+  availableFiles: string[],
+  fallbackCover: string,
+  count = 4,
+) {
+  if (!Number.isSafeInteger(count) || count < 1) {
+    throw new Error("IQIYI_COPYRIGHT_PROOF_COUNT_INVALID");
+  }
+  const sources = availableFiles.length > 0 ? availableFiles : [fallbackCover];
+  return Array.from({ length: count }, (_unused, index) => sources[index % sources.length]!);
 }
 
 async function generateLandscapeCover(
@@ -424,7 +481,7 @@ export async function prepareIqiyiMaterials(
       taskDir,
       options,
     ),
-    prepareCopyrightProofFiles(root, resourceName, taskDir, options),
+    prepareCopyrightProofFiles(root, resourceName, taskDir, verticalCover, options),
   ]);
 
   task.playlet.verticalCoverFile = verticalCover;

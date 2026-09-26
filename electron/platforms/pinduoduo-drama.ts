@@ -1,8 +1,10 @@
-import { app, ipcMain } from "electron";
+import { app, BrowserWindow, ipcMain } from "electron";
+import { attachTitlebarToWindow } from "custom-electron-titlebar/main";
 import Store from "electron-store";
 import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import path from "node:path";
+import { fileURLToPath } from "node:url";
 import {
   ensureBaiduNetdiskShareDownloaded,
   type BaiduNetdiskEnsureDownloadedRequest,
@@ -25,6 +27,9 @@ import {
   assertGlobalDirectoriesConfigured,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
+
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
+const uploadRecordsWindowMode = "pinduoduo-drama-upload-records";
 
 type PinduoduoDramaRuntimeStatus = {
   platform: "pinduoduo-drama";
@@ -53,6 +58,7 @@ export type PinduoduoDramaConfig = {
   runDataDir: string;
   logRetentionDays: string;
   taskPollIntervalMinutes: string;
+  videoUploadTimeoutMinutes: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
 };
@@ -99,6 +105,7 @@ const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
   taskPollIntervalMinutes: "120",
+  videoUploadTimeoutMinutes: "60",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
 };
@@ -106,6 +113,50 @@ const defaultPinduoduoDramaConfig: PinduoduoDramaConfig = {
 const runtimeController = new RuntimeController<PinduoduoDramaRuntime>();
 let store: Store<PinduoduoDramaStore> | null = null;
 let uploadRecordsRepository: PinduoduoApprovedUploadRecordsRepository | null = null;
+let uploadRecordsWindow: BrowserWindow | null = null;
+
+function openUploadRecordsWindow() {
+  if (uploadRecordsWindow && !uploadRecordsWindow.isDestroyed()) {
+    uploadRecordsWindow.show();
+    uploadRecordsWindow.focus();
+    return;
+  }
+
+  const nextWindow = new BrowserWindow({
+    width: 1080,
+    height: 720,
+    minWidth: 860,
+    minHeight: 560,
+    show: false,
+    title: "拼多多短剧 · 审核与上传状态",
+    titleBarStyle: "hidden",
+    autoHideMenuBar: true,
+    backgroundColor: "#fafafa",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      sandbox: false,
+    },
+  });
+  uploadRecordsWindow = nextWindow;
+  attachTitlebarToWindow(nextWindow);
+  nextWindow.setMenu(null);
+  nextWindow.once("ready-to-show", () => nextWindow.show());
+  nextWindow.on("closed", () => {
+    if (uploadRecordsWindow === nextWindow) uploadRecordsWindow = null;
+  });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    url.searchParams.set("window", uploadRecordsWindowMode);
+    void nextWindow.loadURL(url.toString());
+  } else {
+    void nextWindow.loadFile(
+      path.join(process.env.APP_ROOT ?? path.join(__dirname, "..", ".."), "dist", "index.html"),
+      { query: { window: uploadRecordsWindowMode } },
+    );
+  }
+}
 
 function getUploadRecordsRepository() {
   if (!uploadRecordsRepository) {
@@ -200,6 +251,11 @@ function normalizeConfig(
     taskPollIntervalMinutes: normalizePositiveInteger(
       config.taskPollIntervalMinutes,
       defaultPinduoduoDramaConfig.taskPollIntervalMinutes,
+      1,
+    ),
+    videoUploadTimeoutMinutes: normalizePositiveInteger(
+      config.videoUploadTimeoutMinutes,
+      defaultPinduoduoDramaConfig.videoUploadTimeoutMinutes,
       1,
     ),
     localEpisodeVideoRoot:
@@ -372,6 +428,7 @@ async function startRuntime() {
       video: {
         baiduNetdiskDownloadRetryAttempts: config.baiduNetdiskDownloadRetryAttempts,
         localEpisodeVideoRoot: config.localEpisodeVideoRoot,
+        videoUploadTimeoutMinutes: config.videoUploadTimeoutMinutes,
       },
     },
   });
@@ -483,9 +540,26 @@ export function registerPinduoduoDramaPlatformHandlers() {
       getUploadRecordsRepository().listUploadRecords(filter ?? {}),
   );
 
+  ipcMain.handle("pinduoduo-drama:upload-records:window:open", () => {
+    openUploadRecordsWindow();
+  });
+
   ipcMain.handle("pinduoduo-drama:upload-records:retry-failed", () => ({
     reset: getUploadRecordsRepository().resetFailedForRetry(),
   }));
+
+  ipcMain.handle(
+    "pinduoduo-drama:upload-records:retry-one",
+    (_event, platformApplyId: number) => {
+      if (!Number.isSafeInteger(platformApplyId) || platformApplyId <= 0) {
+        throw new Error("无效的拼多多短剧记录 ID。");
+      }
+
+      return {
+        reset: getUploadRecordsRepository().resetFailedRecordForRetry(platformApplyId),
+      };
+    },
+  );
 }
 
 export function stopPinduoduoDramaPlatformRuntime() {

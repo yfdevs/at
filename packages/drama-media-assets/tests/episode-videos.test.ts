@@ -139,3 +139,20 @@ test("local scanning verifies equal-size aliases by sampled content", async () =
     await rm(root, { recursive: true, force: true });
   }
 });
+
+test("uses AI-selected episode indexes for filenames that local patterns cannot parse", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-selected-episode-indexes-"));
+  const fileName = "最终交付版本甲.mp4";
+
+  try {
+    await writeFile(path.join(root, fileName), "selected-episode");
+
+    const selected = await listDirectLocalEpisodeFiles(root, "识别测试剧", [
+      { index: 88, name: fileName, size: 16 },
+    ]);
+
+    assert.deepEqual(selected.map((file) => file.index), [88]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});

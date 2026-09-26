@@ -20,6 +20,7 @@ const emptyConfig: PinduoduoDramaConfig = {
   runDataDir: ".drama-runs/pinduoduo-drama",
   logRetentionDays: "3",
   taskPollIntervalMinutes: "120",
+  videoUploadTimeoutMinutes: "60",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
 };
@@ -58,6 +59,15 @@ const sections: ConfigSectionDefinition<PinduoduoDramaConfig>[] = [
         label: "任务轮询间隔",
         type: "number",
         description: "每轮任务检查和审核状态复查的间隔。",
+        suffix: "分钟",
+        min: 1,
+        step: 1,
+      },
+      {
+        key: "videoUploadTimeoutMinutes",
+        label: "视频上传等待",
+        type: "number",
+        description: "等待整部剧所有视频上传完成的最长时间。",
         suffix: "分钟",
         min: 1,
         step: 1,

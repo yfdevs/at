@@ -40,6 +40,7 @@ test("optional remotely discovered ownership does not block a poster-only platfo
       ownershipFiles: 0,
       posterImages: 1,
       aiProductionProofFiles: 0,
+      metadataFiles: 0,
     },
   );
 });
@@ -57,6 +58,7 @@ test("explicit ownership requirements remain blocking", () => {
       ownershipFiles: 13,
       posterImages: 0,
       aiProductionProofFiles: 0,
+      metadataFiles: 0,
     },
   );
 });
@@ -70,6 +72,7 @@ test("strict mode waits for every remotely discovered optional asset", () => {
       discoveredOwnershipFiles: 13,
       discoveredPosterImages: 4,
       discoveredAiProductionProofFiles: 2,
+      discoveredMetadataFiles: 7,
       requireAllDiscoveredAssets: true,
     }),
     {
@@ -77,6 +80,7 @@ test("strict mode waits for every remotely discovered optional asset", () => {
       ownershipFiles: 13,
       posterImages: 4,
       aiProductionProofFiles: 2,
+      metadataFiles: 7,
     },
   );
 });
@@ -147,6 +151,41 @@ test("resource readiness returns when only unrequested remote ownership is incom
         completed: false,
         skippedExisting: false,
       }),
+    });
+
+    assert.equal(result.completed, true);
+    assert.equal(result.localPath, path.join(root, resourceName));
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("video-only readiness ignores remotely discovered metadata files", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-video-only-"));
+  const resourceName = "最后一道公差";
+  try {
+    const result = await ensureBaiduNetdiskEpisodeVideos({
+      shareText: "https://pan.baidu.com/s/test?pwd=test",
+      resourceName,
+      localEpisodeVideoRoot: root,
+      episodeCount: 0,
+      downloadEpisodeVideos: false,
+      downloadAssetMaterials: false,
+      forceAssetDownload: true,
+      requireAllDiscoveredAssets: true,
+      timeoutMs: 100,
+      pollIntervalMs: 1,
+      stableCompletePolls: 1,
+      downloadShare: async (request) => {
+        assert.equal(request.requireAllDiscoveredAssets, false);
+        return {
+          share: { link: "https://pan.baidu.com/s/test", pwd: "test", name: resourceName },
+          localPath: path.join(root, "temporary-download", resourceName),
+          expectedMetadataFiles: 7,
+          completed: false,
+          skippedExisting: false,
+        };
+      },
     });
 
     assert.equal(result.completed, true);
@@ -321,6 +360,47 @@ test("aborting a download wait stops promptly and cancels the native task", asyn
 
     await assert.rejects(pending, /用户已终止当前任务/);
     assert.deepEqual(cancelledTasks, [resourceName]);
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
+test("fails after a completed native download remains locally incomplete for 15 polls", async () => {
+  const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-stalled-complete-"));
+  const resourceName = "本地缺集测试剧";
+  const downloadDir = path.join(root, "download");
+
+  try {
+    await mkdir(downloadDir, { recursive: true });
+    await writeFile(path.join(downloadDir, `${resourceName}-第1集.mp4`), "episode-1");
+
+    await assert.rejects(
+      ensureBaiduNetdiskEpisodeVideos({
+        shareText: "https://pan.baidu.com/s/test?pwd=test",
+        resourceName,
+        localEpisodeVideoRoot: root,
+        episodeCount: 2,
+        requiredPosterImages: 0,
+        timeoutMs: 2_000,
+        pollIntervalMs: 1,
+        stableCompletePolls: 1,
+        downloadShare: async () => ({
+          share: { link: "https://pan.baidu.com/s/test", pwd: "test", name: resourceName },
+          localPath: downloadDir,
+          completed: false,
+          skippedExisting: false,
+        }),
+        getDownloadTaskStatus: async () => ({
+          found: true,
+          name: resourceName,
+          localPath: downloadDir,
+          status: "下载完成",
+          completed: true,
+          tasks: [resourceName],
+        }),
+      }),
+      /连续15次检查无变化：期望2集，实际识别1集，缺少第2集/,
+    );
   } finally {
     await rm(root, { recursive: true, force: true });
   }

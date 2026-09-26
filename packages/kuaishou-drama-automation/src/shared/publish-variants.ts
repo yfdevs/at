@@ -44,13 +44,33 @@ export function createKuaishouDramaPublishVariants(
 
   if (task.publishType === "付费") return [variants[0]!];
   if (task.publishType === "广告") return [variants[1]!];
-  const extraAds: KuaishouDramaPublishVariant[] = [
-    { kind: "ad-unlock-2", title: withoutBookTitleMarks(task.adVersion2Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
-    { kind: "ad-unlock-3", title: withoutBookTitleMarks(task.adVersion3Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
-    { kind: "ad-unlock-4", title: withoutBookTitleMarks(task.adVersion4Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
-    { kind: "ad-unlock-5", title: withoutBookTitleMarks(task.adVersion5Title!), saleMode: "观看广告解锁", episodePriceRanges: adUnlockRanges },
-  ];
-  return task.publishType === "五个广告版本"
+  const extraAdDefinitions = [
+    ["ad-unlock-2", task.adVersion2Title],
+    ["ad-unlock-3", task.adVersion3Title],
+    ["ad-unlock-4", task.adVersion4Title],
+    ["ad-unlock-5", task.adVersion5Title],
+    ["ad-unlock-6", task.adVersion6Title],
+  ] as const;
+  const extraAds: KuaishouDramaPublishVariant[] = extraAdDefinitions.flatMap(
+    ([kind, title]) =>
+      title
+        ? [
+            {
+              kind,
+              title: withoutBookTitleMarks(title),
+              saleMode: "观看广告解锁" as const,
+              episodePriceRanges: adUnlockRanges,
+            },
+          ]
+        : [],
+  );
+  if (task.publishType === "三个广告版本") {
+    return [variants[1]!, ...extraAds.slice(0, 2)];
+  }
+  if (task.publishType === "五个广告版本") {
+    return [variants[1]!, ...extraAds.slice(0, 4)];
+  }
+  return task.publishType === "六个广告版本"
     ? [variants[1]!, ...extraAds]
     : [...variants, ...extraAds];
 }

@@ -265,23 +265,24 @@ export async function listDirectLocalEpisodeFiles(
   for (const entry of entries) {
     if (!entry.isFile() || !isSupportedEpisodeVideoFileName(entry.name)) continue;
 
-    const index = matchLocalEpisodeIndex(entry.name, resourceName);
-    if (index === undefined) continue;
-
     const file = path.join(scanDir, entry.name);
     const fileStat = await stat(file).catch(() => undefined);
     if (!fileStat?.isFile() || fileStat.size <= 0) continue;
+
+    const selectedIdentity = selectedEpisodeFiles?.find((expected) =>
+      expected.name.toLowerCase() === entry.name.toLowerCase()
+      && (expected.size === undefined || expected.size === fileStat.size)
+    );
+    if (selectedEpisodeFiles?.length && !selectedIdentity) continue;
+
+    const index = selectedIdentity?.index ?? matchLocalEpisodeIndex(entry.name, resourceName);
+    if (index === undefined) continue;
 
     files.push({ index, file, size: fileStat.size, modifiedAtMs: fileStat.mtimeMs });
   }
 
   if (selectedEpisodeFiles?.length) {
-    const selected = files.filter((file) => selectedEpisodeFiles.some((expected) =>
-      expected.index === file.index
-      && expected.name.toLowerCase() === path.basename(file.file).toLowerCase()
-      && (expected.size === undefined || expected.size === file.size)
-    ));
-    return selected.sort((left, right) => left.index - right.index || left.file.localeCompare(right.file));
+    return files.sort((left, right) => left.index - right.index || left.file.localeCompare(right.file));
   }
 
   return (await collapseIdenticalLocalEpisodeAliasesByContent(files)).files;

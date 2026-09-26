@@ -24,7 +24,11 @@ const pinduoduoUploadRecordSelect = `
   error_message AS errorMessage,
   attempts,
   raw_json AS rawJson,
+  resource_source AS resourceSource,
+  resource_source_rows AS resourceSourceRows,
   account_profile_name AS accountProfileName,
+  uploaded_batch_count AS uploadedBatchCount,
+  total_batch_count AS totalBatchCount,
   uploaded_at AS uploadedAt,
   last_attempt_at AS lastAttemptAt,
   created_at AS createdAt,
@@ -32,7 +36,13 @@ const pinduoduoUploadRecordSelect = `
 `;
 
 function readUploadRecord(row: PinduoduoUploadRecordRow): PinduoduoUploadRecord {
-  return nullsToUndefined(row);
+  const result = nullsToUndefined(row);
+  return {
+    ...result,
+    resourceSourceRows: row.resourceSourceRows
+      ? JSON.parse(row.resourceSourceRows) as number[]
+      : undefined,
+  };
 }
 
 export class PinduoduoUploadRecordsRepository {
@@ -114,6 +124,44 @@ export class PinduoduoUploadRecordsRepository {
     return rows.map(readUploadRecord);
   }
 
+  recoverInterruptedRecords(): number {
+    const timestamp = nowIso();
+    return this.database
+      .prepare(
+        `
+        UPDATE pinduoduo_approved_upload_records
+        SET
+          status='PENDING',
+          stage=NULL,
+          error_message=NULL,
+          attempts=MAX(attempts-1, 0),
+          updated_at=@updatedAt
+        WHERE
+          status IN ('DOWNLOADING', 'READY', 'UPLOADING')
+          OR (
+            status='FAILED'
+            AND error_message LIKE '%Target page, context or browser has been closed%'
+          )
+      `,
+      )
+      .run({ updatedAt: timestamp }).changes;
+  }
+
+  deleteByPlatformApplyIds(platformApplyIds: number[]): number {
+    const uniqueIds = [...new Set(platformApplyIds)];
+    if (uniqueIds.length === 0) return 0;
+
+    const placeholders = uniqueIds.map(() => "?").join(", ");
+    return this.database
+      .prepare(
+        `
+        DELETE FROM pinduoduo_approved_upload_records
+        WHERE platform_apply_id IN (${placeholders})
+      `,
+      )
+      .run(...uniqueIds).changes;
+  }
+
   markDownloading(platformApplyId: number): void {
     const timestamp = nowIso();
     this.database
@@ -135,6 +183,26 @@ export class PinduoduoUploadRecordsRepository {
         platformApplyId,
         updatedAt: timestamp,
       });
+  }
+
+  markResourceSource(
+    platformApplyId: number,
+    resourceSource: NonNullable<PinduoduoUploadRecord["resourceSource"]>,
+    resourceSourceRows?: number[],
+  ): void {
+    this.database.prepare(`
+      UPDATE pinduoduo_approved_upload_records
+      SET
+        resource_source=@resourceSource,
+        resource_source_rows=@resourceSourceRows,
+        updated_at=@updatedAt
+      WHERE platform_apply_id=@platformApplyId
+    `).run({
+      platformApplyId,
+      resourceSource,
+      resourceSourceRows: resourceSourceRows ? JSON.stringify(resourceSourceRows) : null,
+      updatedAt: nowIso(),
+    });
   }
 
   markReady(platformApplyId: number): void {
@@ -169,6 +237,64 @@ export class PinduoduoUploadRecordsRepository {
       });
   }
 
+  markInterrupted(platformApplyId: number): void {
+    const timestamp = nowIso();
+    this.database
+      .prepare(
+        `
+        UPDATE pinduoduo_approved_upload_records
+        SET
+          status='PENDING',
+          stage=NULL,
+          error_message=NULL,
+          attempts=MAX(attempts-1, 0),
+          updated_at=@updatedAt
+        WHERE platform_apply_id=@platformApplyId
+      `,
+      )
+      .run({
+        platformApplyId,
+        updatedAt: timestamp,
+      });
+  }
+
+  prepareUploadBatches(platformApplyId: number, totalBatchCount: number): number {
+    const current = this.database.prepare(`
+      SELECT
+        uploaded_batch_count AS uploadedBatchCount,
+        total_batch_count AS totalBatchCount
+      FROM pinduoduo_approved_upload_records
+      WHERE platform_apply_id=@platformApplyId
+    `).get({ platformApplyId }) as {
+      uploadedBatchCount: number | null;
+      totalBatchCount: number | null;
+    } | undefined;
+
+    if (current?.totalBatchCount === totalBatchCount) {
+      return Math.min(current.uploadedBatchCount ?? 0, totalBatchCount);
+    }
+
+    this.database.prepare(`
+      UPDATE pinduoduo_approved_upload_records
+      SET
+        uploaded_batch_count=0,
+        total_batch_count=@totalBatchCount,
+        updated_at=@updatedAt
+      WHERE platform_apply_id=@platformApplyId
+    `).run({ platformApplyId, totalBatchCount, updatedAt: nowIso() });
+    return 0;
+  }
+
+  markUploadBatchPublished(platformApplyId: number, completedBatchCount: number): void {
+    this.database.prepare(`
+      UPDATE pinduoduo_approved_upload_records
+      SET
+        uploaded_batch_count=MAX(uploaded_batch_count, @completedBatchCount),
+        updated_at=@updatedAt
+      WHERE platform_apply_id=@platformApplyId
+    `).run({ completedBatchCount, platformApplyId, updatedAt: nowIso() });
+  }
+
   markUploaded(platformApplyId: number): void {
     const timestamp = nowIso();
     this.database
@@ -179,6 +305,7 @@ export class PinduoduoUploadRecordsRepository {
           status='UPLOADED',
           stage=NULL,
           error_message=NULL,
+          uploaded_batch_count=COALESCE(total_batch_count, uploaded_batch_count),
           uploaded_at=@uploadedAt,
           updated_at=@updatedAt
         WHERE platform_apply_id=@platformApplyId

@@ -9,8 +9,23 @@ import { createIqiyiDramaTaskFixture } from "../fixtures/task-fixture.js";
 import {
   buildIqiyiLandscapeCoverPrompt,
   evaluateIqiyiLandscapeCoverValidation,
+  fillIqiyiCopyrightProofSources,
   prepareIqiyiMaterials,
 } from "../../src/shared/materials.js";
+
+test("fills four copyright proof slots with the available ownership screenshots", () => {
+  assert.deepEqual(
+    fillIqiyiCopyrightProofSources(["jianying-1.png", "jianying-2.png"], "cover.jpg"),
+    ["jianying-1.png", "jianying-2.png", "jianying-1.png", "jianying-2.png"],
+  );
+});
+
+test("uses the cover for all four copyright proof slots when ownership screenshots are absent", () => {
+  assert.deepEqual(
+    fillIqiyiCopyrightProofSources([], "cover.jpg"),
+    ["cover.jpg", "cover.jpg", "cover.jpg", "cover.jpg"],
+  );
+});
 
 test("requires a readable title while allowing normal supporting poster copy", () => {
   const task = createIqiyiDramaTaskFixture();

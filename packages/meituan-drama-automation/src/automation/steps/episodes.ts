@@ -19,6 +19,10 @@ const videoUploadStartPollMs = 1_000;
 const videoUploadStartWaitMsByAttempt = [20_000, 30_000] as const;
 const maxEpisodeFilesPerSelection = 100;
 
+export function episodeInputFileBatches(files: string[], supportsMultiple: boolean) {
+  return supportsMultiple ? [files] : files.map((file) => [file]);
+}
+
 type VideoUploadRow = {
   indexText: string;
   fileName: string;
@@ -562,15 +566,33 @@ export async function uploadEpisodeVideosStep(
             attempt === 1 ? 60_000 : 15_000,
           );
           lastInputSnapshot = await fileInputSnapshot(videoInput).catch(() => null);
-          if (attempt > 1) {
+          const supportsMultiple = lastInputSnapshot?.multiple !== false;
+          if (attempt > 1 && supportsMultiple) {
             await videoInput.setInputFiles([], { timeout: 30_000 });
           }
-          await videoInput.setInputFiles(batchFiles, { timeout: 120_000 });
+          const inputBatches = episodeInputFileBatches(batchFiles, supportsMultiple);
+          const currentRowCount = (await readVideoUploadRows(page)).length;
+          const alreadyQueuedCount = supportsMultiple
+            ? 0
+            : Math.max(0, Math.min(batchFiles.length, currentRowCount - previousRowCount));
+          for (let inputBatchIndex = alreadyQueuedCount; inputBatchIndex < inputBatches.length; inputBatchIndex += 1) {
+            const currentInput = inputBatchIndex === 0
+              ? videoInput
+              : await episodeVideoInputByDragger(page, 30_000);
+            await currentInput.setInputFiles(inputBatches[inputBatchIndex], { timeout: 120_000 });
+            if (!supportsMultiple) {
+              await waitForVideoUploadBatchQueued(
+                page,
+                previousRowCount + inputBatchIndex + 1,
+              );
+            }
+          }
           log(
             options,
             `[meituan-drama] episode files assigned to upload input: ` +
               `batch=${batchNumber}/${videoFileBatches.length} ` +
-              `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} files=${batchFiles.length}`,
+              `attempt=${attempt}/${videoUploadStartWaitMsByAttempt.length} files=${batchFiles.length} ` +
+              `mode=${supportsMultiple ? "multiple" : "single-sequential"}`,
           );
           lastSnapshot = await waitForVideoUploadStart(
             page,

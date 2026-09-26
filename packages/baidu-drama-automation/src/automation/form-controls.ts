@@ -192,18 +192,33 @@ export async function uploadFormFiles(page: Page, label: string, files: string[]
   await assertNoBaiduFormError(page, `上传${label}`);
 }
 
+function isNavigationContextDestroyed(error: unknown) {
+  const message = error instanceof Error ? error.message : String(error);
+  return /Execution context was destroyed|most likely because of a navigation|Cannot find context with specified id/i.test(message);
+}
+
 export async function assertNoBaiduFormError(page: Page, action: string) {
-  const errors = page.locator([
-    ".cheetah-message-error:visible",
-    ".cheetah-form-item-explain-error:visible",
-    '[class*="message"][class*="error"]:visible',
-  ].join(", "));
-  const alerts = await page.locator('[role="alert"]:visible').allTextContents();
-  const messages = [
-    ...(await errors.allTextContents()),
-    ...alerts.filter((text) => /失败|错误|不能|不可|请(?:上传|填写|输入|选择)|必填|超过|无效/.test(text)),
-  ].map((text) => text.trim()).filter(Boolean);
-  if (messages.length > 0) throw new Error(`BAIDU_DRAMA_FORM_ERROR: ${action}: ${messages.join("；")}`);
+  const maximumAttempts = 3;
+  for (let attempt = 1; attempt <= maximumAttempts; attempt += 1) {
+    try {
+      const errors = page.locator([
+        ".cheetah-message-error:visible",
+        ".cheetah-form-item-explain-error:visible",
+        '[class*="message"][class*="error"]:visible',
+      ].join(", "));
+      const alerts = await page.locator('[role="alert"]:visible').allTextContents();
+      const messages = [
+        ...(await errors.allTextContents()),
+        ...alerts.filter((text) => /失败|错误|不能|不可|请(?:上传|填写|输入|选择)|必填|超过|无效/.test(text)),
+      ].map((text) => text.trim()).filter(Boolean);
+      if (messages.length > 0) throw new Error(`BAIDU_DRAMA_FORM_ERROR: ${action}: ${messages.join("；")}`);
+      return;
+    } catch (error) {
+      if (!isNavigationContextDestroyed(error) || attempt === maximumAttempts || page.isClosed()) throw error;
+      await page.waitForLoadState("domcontentloaded", { timeout: 2_000 }).catch(() => undefined);
+      await page.waitForTimeout(100);
+    }
+  }
 }
 
 export async function clickBaiduNext(page: Page) {

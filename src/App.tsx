@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppRoutes } from "@/routes/app-routes";
 import { WechatMiniProgramBaiduUploadWindow } from "@/pages/wechat-miniprogram-drama/baidu-upload-window";
+import { PinduoduoDramaUploadRecordsPage } from "@/pages/pinduoduo-drama/upload-records";
 
 import "./App.css";
 
@@ -17,6 +18,14 @@ export default function App() {
     return (
       <TooltipProvider delay={120} closeDelay={0} timeout={250}>
         <WechatMiniProgramBaiduUploadWindow />
+        <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
+      </TooltipProvider>
+    );
+  }
+  if (windowMode === "pinduoduo-drama-upload-records") {
+    return (
+      <TooltipProvider delay={120} closeDelay={0} timeout={250}>
+        <PinduoduoDramaUploadRecordsPage />
         <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
       </TooltipProvider>
     );

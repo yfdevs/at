@@ -286,6 +286,7 @@ export type ShortplayApplyRecord = {
   episodeCount?: number;
   rejectReason?: string;
   status?: number;
+  topicCreateStatus?: number;
   title: string;
 };
 
@@ -296,7 +297,7 @@ export type ShortplaySubmittedApplyListResult = {
   totalCount?: number;
 };
 
-function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
+export function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
   if (typeof payload !== "object" || payload === null || !("result" in payload)) {
     return [];
   }
@@ -331,6 +332,10 @@ function readShortplayApplyRecords(payload: unknown): ShortplayApplyRecord[] {
             ? item.reject_reason
             : undefined,
         status: "status" in item && typeof item.status === "number" ? item.status : undefined,
+        topicCreateStatus:
+          "topic_create_status" in item && typeof item.topic_create_status === "number"
+            ? item.topic_create_status
+            : undefined,
         title: title.trim(),
       },
     ];
@@ -515,9 +520,18 @@ export async function fetchSubmittedShortplayApplyRecords(
 }
 
 const APPROVED_SHORTPLAY_STATUS = 2;
+const CREATED_SHORTPLAY_TOPIC_STATUS = 1;
 const APPROVED_SHORTPLAY_LIST_PAGE_SIZE = 50;
 
+export function shouldUploadApprovedShortplay(record: ShortplayApplyRecord): boolean {
+  return (
+    record.status === APPROVED_SHORTPLAY_STATUS &&
+    record.topicCreateStatus !== CREATED_SHORTPLAY_TOPIC_STATUS
+  );
+}
+
 export type ApprovedShortplayListPage = {
+  createdTopicIds: number[];
   page: number;
   pageSize: number;
   rawCount: number;
@@ -534,11 +548,19 @@ export async function fetchApprovedShortplays(
     page: pageNumber,
     pageSize: APPROVED_SHORTPLAY_LIST_PAGE_SIZE,
   });
+  const approvedRecords = result.records.filter(
+    (record) => record.status === APPROVED_SHORTPLAY_STATUS,
+  );
   return {
+    createdTopicIds: approvedRecords.flatMap((record) =>
+      record.topicCreateStatus === CREATED_SHORTPLAY_TOPIC_STATUS && record.id !== undefined
+        ? [record.id]
+        : [],
+    ),
     page: result.page,
     pageSize: result.pageSize,
     rawCount: result.records.length,
-    records: result.records.filter((record) => record.status === APPROVED_SHORTPLAY_STATUS),
+    records: approvedRecords.filter(shouldUploadApprovedShortplay),
     totalCount: result.totalCount,
   };
 }

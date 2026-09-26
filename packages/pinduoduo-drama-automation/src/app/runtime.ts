@@ -67,6 +67,11 @@ export async function startPinduoduoDramaRuntime(
   let taskLoopPromise: Promise<void> | null = null;
   let taskLoopTimer: ReturnType<typeof setTimeout> | null = null;
   let wakeTaskLoop: (() => void) | null = null;
+  const stopController = new AbortController();
+  const cycleOptions: PinduoduoDramaRuntimeOptions = {
+    ...options,
+    signal: stopController.signal,
+  };
 
   async function waitForNextTaskPoll(delayMs: number): Promise<void> {
     await new Promise<void>((resolve) => {
@@ -118,10 +123,14 @@ export async function startPinduoduoDramaRuntime(
     taskLoopPromise = (async () => {
       while (running) {
         try {
-          const uploaded = await runApprovedShortplayCycle(cyclePage, cycleContext, options);
+          const uploaded = await runApprovedShortplayCycle(cyclePage, cycleContext, cycleOptions);
           log(options, "info", "runtime", "approved shortplay cycle completed", { uploaded });
         } catch (error: unknown) {
-          log(options, "error", "runtime", "approved shortplay cycle failed", { error });
+          if (stopController.signal.aborted) {
+            log(options, "info", "runtime", "approved shortplay cycle stopped by service request");
+          } else {
+            log(options, "error", "runtime", "approved shortplay cycle failed", { error });
+          }
         }
         if (!running) break;
         await waitForNextTaskPoll(nextTaskPollDelayMs(options));
@@ -148,6 +157,7 @@ export async function startPinduoduoDramaRuntime(
     },
     async stop() {
       running = false;
+      stopController.abort(new Error("PINDUODUO_DRAMA_RUNTIME_STOPPED"));
       stopTaskLoopWait();
       if (context) {
         await saveCredentialState(context, options).catch(() => undefined);

@@ -28,21 +28,34 @@ export const KUAISHOU_EPISODE_COVER_SIZE = {
 } as const;
 
 type KuaishouCoverKind = "drama" | "episode";
-type KuaishouTextlessVariant = 2 | 3 | 4 | 5;
-type KuaishouTextlessVariantKind = "ad-unlock-2" | "ad-unlock-3" | "ad-unlock-4" | "ad-unlock-5";
+type KuaishouTextlessVariant = 2 | 3 | 4 | 5 | 6;
+type KuaishouTextlessVariantKind = "ad-unlock-2" | "ad-unlock-3" | "ad-unlock-4" | "ad-unlock-5" | "ad-unlock-6";
 
 const textlessVariants = [
   { variant: 2, kind: "ad-unlock-2", titleKey: "adVersion2Title" },
   { variant: 3, kind: "ad-unlock-3", titleKey: "adVersion3Title" },
   { variant: 4, kind: "ad-unlock-4", titleKey: "adVersion4Title" },
   { variant: 5, kind: "ad-unlock-5", titleKey: "adVersion5Title" },
+  { variant: 6, kind: "ad-unlock-6", titleKey: "adVersion6Title" },
 ] as const satisfies ReadonlyArray<{
   variant: KuaishouTextlessVariant;
   kind: KuaishouTextlessVariantKind;
-  titleKey: "adVersion2Title" | "adVersion3Title" | "adVersion4Title" | "adVersion5Title";
+  titleKey: "adVersion2Title" | "adVersion3Title" | "adVersion4Title" | "adVersion5Title" | "adVersion6Title";
 }>;
 
 const textlessVariantKinds = new Set<string>(textlessVariants.map(({ kind }) => kind));
+
+export function listKuaishouTextlessVariantKinds(
+  publishType: KuaishouDramaTaskConfig["publishType"],
+) {
+  if (publishType === "付费" || publishType === "广告") return [];
+  const versionCount = publishType === "三个广告版本"
+    ? 3
+    : publishType === "五个广告版本" ? 5 : 6;
+  return textlessVariants
+    .slice(0, versionCount - 1)
+    .map(({ kind }) => kind);
+}
 
 function isTextlessVariantKind(value: string | undefined): value is KuaishouTextlessVariantKind {
   return value !== undefined && textlessVariantKinds.has(value);
@@ -149,6 +162,7 @@ export function buildKuaishouTextlessVariantCoverPrompt(options: {
     3: "突出故事发生的场景、关键道具和人物关系，采用有纵深感的中景构图。",
     4: "突出主角的行动力和关键转折，采用富有动势的构图与清晰的前后景层次。",
     5: "突出人物命运对比与剧情高潮，采用完整群像或具有悬念感的环境构图。",
+    6: "突出核心冲突后的命运抉择与情感余韵，采用富有故事感的远近景结合构图。",
   };
   return [
     `参考原剧封面及剧情简介，创作第 ${options.variant} 个广告版本的${coverDetails[options.kind].label}。`,
@@ -538,8 +552,13 @@ export async function prepareKuaishouDramaCoverFiles(
   task.localEpisodeCoverFile = episodeCover;
   if (task.publishType !== "付费" && task.publishType !== "广告") {
     task.localVariantCoverFiles = {};
+    const activeVariantKinds = new Set(listKuaishouTextlessVariantKinds(task.publishType));
     for (const { variant, kind, titleKey } of textlessVariants) {
-      const title = task[titleKey]!;
+      if (!activeVariantKinds.has(kind)) continue;
+      const title = task[titleKey];
+      if (!title) {
+        throw new Error(`KUAISHOU_DRAMA_AD_VARIANT_TITLE_REQUIRED: ${titleKey}`);
+      }
       const generated = await Promise.allSettled([
         generateMissingCover({
           sourceFile: selected.landscape?.file ?? selected.fallback.file,

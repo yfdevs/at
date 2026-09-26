@@ -8,6 +8,7 @@ export type PinduoduoDramaConfig = {
   runDataDir: string;
   logRetentionDays: string;
   taskPollIntervalMinutes: string;
+  videoUploadTimeoutMinutes: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
 };
@@ -59,6 +60,8 @@ export type PinduoduoUploadRecord = {
   errorMessage?: string;
   attempts?: number;
   rawJson?: string;
+  resourceSource?: "LEGACY_XLSX_ORIGINAL" | "PINDUODUO_LIST";
+  resourceSourceRows?: number[];
   accountProfileName?: string;
   uploadedAt?: string;
   lastAttemptAt?: string;
@@ -138,9 +141,18 @@ export const pinduoduoDramaService = {
       filter,
     );
   },
+  openUploadRecordsWindow() {
+    return invokePinduoduoDrama<void>("pinduoduo-drama:upload-records:window:open");
+  },
   retryFailedUploadRecords() {
     return invokePinduoduoDrama<{ reset: number }>(
       "pinduoduo-drama:upload-records:retry-failed",
+    );
+  },
+  retryUploadRecord(platformApplyId: number) {
+    return invokePinduoduoDrama<{ reset: number }>(
+      "pinduoduo-drama:upload-records:retry-one",
+      platformApplyId,
     );
   },
 };

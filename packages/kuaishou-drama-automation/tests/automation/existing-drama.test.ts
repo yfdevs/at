@@ -22,6 +22,7 @@ void test("maps paid and ad variants to Kuaishou list sale types", () => {
   assert.equal(kuaishouQuerySaleType(variant("full-paid")), 0);
   assert.equal(kuaishouQuerySaleType(variant("ad-unlock")), 1);
   assert.equal(kuaishouQuerySaleType(variant("ad-unlock-5")), 1);
+  assert.equal(kuaishouQuerySaleType(variant("ad-unlock-6")), 1);
 });
 
 void test("returns the exact pending drama and uses seriesPackageSaleType", () => {

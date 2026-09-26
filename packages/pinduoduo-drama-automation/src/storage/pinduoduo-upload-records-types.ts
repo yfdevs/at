@@ -15,6 +15,10 @@ export type PinduoduoUploadRecordStage =
   | "BIND"
   | "PUBLISH";
 
+export type PinduoduoUploadRecordResourceSource =
+  | "LEGACY_XLSX_ORIGINAL"
+  | "PINDUODUO_LIST";
+
 export type PinduoduoUploadRecord = {
   accountProfileName?: string;
   attempts: number;
@@ -25,10 +29,14 @@ export type PinduoduoUploadRecord = {
   lastAttemptAt?: string;
   platformApplyId: number;
   rawJson?: string;
+  resourceSource?: PinduoduoUploadRecordResourceSource;
+  resourceSourceRows?: number[];
   stage?: PinduoduoUploadRecordStage;
   status: PinduoduoUploadRecordStatus;
   title: string;
+  totalBatchCount?: number;
   updatedAt: string;
+  uploadedBatchCount?: number;
   uploadedAt?: string;
 };
 
@@ -40,8 +48,12 @@ export type PinduoduoUploadRecordRow = Omit<
   | "errorMessage"
   | "lastAttemptAt"
   | "rawJson"
+  | "resourceSource"
+  | "resourceSourceRows"
   | "stage"
+  | "totalBatchCount"
   | "uploadedAt"
+  | "uploadedBatchCount"
 > & {
   accountProfileName: string | null;
   demoUrl: string | null;
@@ -49,6 +61,10 @@ export type PinduoduoUploadRecordRow = Omit<
   errorMessage: string | null;
   lastAttemptAt: string | null;
   rawJson: string | null;
+  resourceSource: PinduoduoUploadRecordResourceSource | null;
+  resourceSourceRows: string | null;
   stage: PinduoduoUploadRecordStage | null;
+  totalBatchCount: number | null;
   uploadedAt: string | null;
+  uploadedBatchCount: number | null;
 };

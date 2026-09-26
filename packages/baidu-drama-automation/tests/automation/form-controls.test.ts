@@ -7,11 +7,38 @@ import test from "node:test";
 import { chromium } from "playwright";
 
 import {
+  assertNoBaiduFormError,
   confirmBaiduDramaTypeChangeIfPresent,
   selectDropdownOption,
   selectFormItem,
   uploadCoverSlot,
 } from "../../src/automation/form-controls.js";
+
+test("retries Baidu form-error inspection when navigation destroys the document context", async () => {
+  let scans = 0;
+  let loadWaits = 0;
+  const page = {
+    isClosed: () => false,
+    locator: () => ({
+      allTextContents: async () => {
+        scans += 1;
+        if (scans === 1) {
+          throw new Error("locator.allTextContents: Execution context was destroyed, most likely because of a navigation");
+        }
+        return [];
+      },
+    }),
+    waitForLoadState: async () => {
+      loadWaits += 1;
+    },
+    waitForTimeout: async () => undefined,
+  } as unknown as import("playwright").Page;
+
+  await assertNoBaiduFormError(page, "提交短剧审核");
+
+  assert.equal(loadWaits, 1);
+  assert.equal(scans, 3);
+});
 
 test("confirms a delayed Baidu drama-type change dialog before continuing", async () => {
   const browser = await chromium.launch({ channel: "chromium", headless: true });

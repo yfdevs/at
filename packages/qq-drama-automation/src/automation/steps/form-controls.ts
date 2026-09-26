@@ -484,53 +484,99 @@ export async function uploadLocalFilesByTarget(page: Page, options: {
   selector?: string;
   files: string[];
 }) {
-  if (options.selector) {
-    await page.locator(options.selector).first().setInputFiles(options.files, { timeout: 120_000 });
-    return;
-  }
-
   const label = options.label ?? "选择视频文件";
-  const result = await page.evaluate((targetLabel) => {
-    const normalize = (text: string | null | undefined) => text?.replace(/\s+/g, " ").trim() ?? "";
-    const isVisible = (element: HTMLElement | null) => {
-      if (!element) return false;
-      const rect = element.getBoundingClientRect();
-      const style = window.getComputedStyle(element);
-      return rect.width > 0 && rect.height > 0 && style.display !== "none" && style.visibility !== "hidden";
+  const resolveInput = options.selector
+    ? async () => page.locator(options.selector!).first()
+    : async () => {
+      const result = await page.evaluate((targetLabel) => {
+        const normalize = (text: string | null | undefined) =>
+          text?.replace(/\s+/g, " ").trim() ?? "";
+        const isVisible = (element: HTMLElement | null) => {
+          if (!element) return false;
+          const rect = element.getBoundingClientRect();
+          const style = window.getComputedStyle(element);
+          return rect.width > 0
+            && rect.height > 0
+            && style.display !== "none"
+            && style.visibility !== "hidden";
+        };
+        const visibleInputs = Array.from(
+          document.querySelectorAll<HTMLInputElement>("input[type='file']"),
+        ).filter((input) => {
+          const root = input.closest<HTMLElement>(
+            ".field-item,.form-section,.ant-form-item,.el-form-item,.form-item,[class*='form']",
+          ) ?? input.parentElement;
+          return root ? isVisible(root) : true;
+        });
+        const videoInput = visibleInputs.find((input) => input.accept.includes("video"));
+        if (videoInput) {
+          videoInput.setAttribute("data-qq-drama-episode-upload-target", "true");
+          return true;
+        }
+
+        const labelElement = Array.from(document.querySelectorAll<HTMLElement>("label,*"))
+          .find((element) =>
+            isVisible(element) && normalize(element.textContent).startsWith(targetLabel)
+          );
+        const root = labelElement?.closest<HTMLElement>(
+          ".field-item,.form-section,.ant-form-item,.el-form-item,.semi-form-field,.form-item,[class*='form']",
+        ) ?? labelElement?.parentElement;
+        const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']");
+        if (!inputElement) return false;
+        inputElement.setAttribute("data-qq-drama-episode-upload-target", "true");
+        return true;
+      }, label);
+
+      if (!result) {
+        throw new Error(`QQ_DRAMA_EPISODE_FILE_INPUT_NOT_FOUND: label=${label}`);
+      }
+
+      return page.locator("input[data-qq-drama-episode-upload-target='true']").first();
     };
-    const visibleInputs = Array.from(document.querySelectorAll<HTMLInputElement>("input[type='file']"))
-      .filter((input) => {
-        const root = input.closest<HTMLElement>(".field-item,.form-section,.ant-form-item,.el-form-item,.form-item,[class*='form']")
-          ?? input.parentElement;
-        return root ? isVisible(root) : true;
-      });
-    const videoInput = visibleInputs.find((input) => input.accept.includes("video"));
-    if (videoInput) {
-      videoInput.setAttribute("data-qq-drama-episode-upload-target", "true");
-      return true;
+
+  const initialInput = await resolveInput();
+  const supportsMultiple = await initialInput.evaluate(
+    (element) => (element as HTMLInputElement).multiple,
+  );
+  const batches = fileInputUploadBatches(options.files, supportsMultiple);
+
+  try {
+    for (const batch of batches) {
+      const input = await resolveInput();
+      const previousRowCount = supportsMultiple
+        ? 0
+        : await page.locator(".episode-row").count();
+      await input.setInputFiles(batch, { timeout: 120_000 });
+
+      if (!supportsMultiple) {
+        const fileName = path.basename(batch[0]);
+        await waitForEpisodeFileQueued(page, fileName, previousRowCount);
+      }
     }
-
-    const labelElement = Array.from(document.querySelectorAll<HTMLElement>("label,*"))
-      .find((element) => isVisible(element) && normalize(element.textContent).startsWith(targetLabel));
-    const root = labelElement?.closest<HTMLElement>(
-      ".field-item,.form-section,.ant-form-item,.el-form-item,.semi-form-field,.form-item,[class*='form']",
-    ) ?? labelElement?.parentElement;
-    const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']");
-    if (!inputElement) return false;
-    inputElement.setAttribute("data-qq-drama-episode-upload-target", "true");
-    return true;
-  }, label);
-
-  if (!result) {
-    throw new Error(`QQ_DRAMA_EPISODE_FILE_INPUT_NOT_FOUND: label=${label}`);
+  } finally {
+    await page.locator("input[data-qq-drama-episode-upload-target='true']").evaluateAll((elements) => {
+      elements.forEach((element) => element.removeAttribute("data-qq-drama-episode-upload-target"));
+    }).catch(() => undefined);
   }
+}
 
-  await page.locator("input[data-qq-drama-episode-upload-target='true']").first().setInputFiles(options.files, {
-    timeout: 120_000,
+export function fileInputUploadBatches(files: string[], supportsMultiple: boolean) {
+  return supportsMultiple ? [files] : files.map((file) => [file]);
+}
+
+async function waitForEpisodeFileQueued(page: Page, fileName: string, previousRowCount: number) {
+  await page.waitForFunction(({ expectedFileName, rowCount }) => {
+    const normalize = (value: string | null | undefined) =>
+      value?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
+    const rows = Array.from(document.querySelectorAll<HTMLElement>(".episode-row"));
+    return rows.length > rowCount
+      || rows.some((row) => normalize(row.textContent).includes(normalize(expectedFileName)));
+  }, {
+    expectedFileName: fileName,
+    rowCount: previousRowCount,
+  }, {
+    timeout: 30_000,
   });
-  await page.locator("input[data-qq-drama-episode-upload-target='true']").first().evaluate((element) => {
-    element.removeAttribute("data-qq-drama-episode-upload-target");
-  }).catch(() => undefined);
 }
 
 export async function clickNextStep(page: Page, options: QqDramaRuntimeOptions, label = "下一步") {

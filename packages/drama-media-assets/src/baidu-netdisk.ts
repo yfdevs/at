@@ -189,6 +189,8 @@ export function resolveBaiduNetdiskAssetCompletionRequirements(options: {
   discoveredOwnershipFiles?: number;
   discoveredPosterImages?: number;
   discoveredAiProductionProofFiles?: number;
+  requiredMetadataTextFiles?: number;
+  discoveredMetadataFiles?: number;
   requireAllDiscoveredAssets?: boolean;
 }) {
   const count = (value: number | undefined) =>
@@ -216,6 +218,10 @@ export function resolveBaiduNetdiskAssetCompletionRequirements(options: {
     aiProductionProofFiles: requiredCount(
       options.requiredAiProductionProofFiles,
       options.discoveredAiProductionProofFiles,
+    ),
+    metadataFiles: requiredCount(
+      options.requiredMetadataTextFiles,
+      options.discoveredMetadataFiles,
     ),
   };
 }
@@ -741,6 +747,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
   onProgress?: EnsureBaiduNetdiskEpisodeVideosOptions["onProgress"];
   onLog?: EnsureBaiduNetdiskEpisodeVideosOptions["onLog"];
 }) {
+  const completedDownloadStallPollLimit = 15;
   const startedAt = Date.now();
   const assetRequirements = resolveBaiduNetdiskAssetCompletionRequirements({
     requiredOwnershipImages: options.ownershipRequirements.minimumImages,
@@ -751,6 +758,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     discoveredOwnershipFiles: options.expectedOwnershipFiles,
     discoveredPosterImages: options.expectedPosterImages,
     discoveredAiProductionProofFiles: options.expectedAiProductionProofFiles,
+    requiredMetadataTextFiles: options.requiredMetadataTextFiles,
+    discoveredMetadataFiles: options.expectedMetadataFiles,
     requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
   });
   const stableSignatures = new Map<string, { signature: string; count: number }>();
@@ -760,6 +769,8 @@ async function waitForCompleteLocalEpisodeVideos(options: {
     dispatchedSignature?: string;
   }>();
   let lastProgressLogAt = 0;
+  let stalledEpisodeSignature: string | undefined;
+  let stalledEpisodePolls = 0;
 
   while (Date.now() - startedAt < options.timeoutMs) {
     throwIfAborted(options.signal);
@@ -836,7 +847,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
       options.metadataDirectoryNames,
     );
     let metadataComplete = metadataFiles.filter((file) => file.isText).length >= options.requiredMetadataTextFiles
-      && metadataFiles.length >= (options.expectedMetadataFiles ?? options.requiredMetadataTextFiles);
+      && metadataFiles.length >= assetRequirements.metadataFiles;
     let signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${rawOwnershipSignature(ownershipSourceFiles)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}#${metadataSignature(metadataFiles)}`;
     let stableKey = [...localPaths, ...assetLocalPaths].join("|")
       || playletDir(options.targetRoot, options.resourceName);
@@ -940,7 +951,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
           options.metadataDirectoryNames,
         );
         metadataComplete = metadataFiles.filter((file) => file.isText).length >= options.requiredMetadataTextFiles
-          && metadataFiles.length >= (options.expectedMetadataFiles ?? options.requiredMetadataTextFiles);
+          && metadataFiles.length >= assetRequirements.metadataFiles;
         signature = `${fileSetSignature(files)}#${ownershipSignature(ownership)}#${rawOwnershipSignature(ownershipSourceFiles)}#${posterSignature(posters)}#${aiProductionProofSignature(aiProductionProofs)}#${metadataSignature(metadataFiles)}`;
         stableKey = [...localPaths, ...assetLocalPaths].join("|")
           || playletDir(options.targetRoot, options.resourceName);
@@ -977,7 +988,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
               ` 权属远端发现=${options.expectedOwnershipImages ?? 0}图/${options.expectedOwnershipFiles ?? 0}文件` +
               ` 海报封面=${posters.length}/${options.requiredPosterImages}` +
               ` AI制作证明=${aiProductionProofs.length}/${options.requiredAiProductionProofFiles}` +
-              ` 剧情资料=${metadataFiles.filter((file) => file.isText).length}/${options.requiredMetadataTextFiles}文本，${metadataFiles.length}/${options.expectedMetadataFiles ?? options.requiredMetadataTextFiles}全部文件` +
+              ` 剧情资料=${metadataFiles.filter((file) => file.isText).length}/${options.requiredMetadataTextFiles}文本，${metadataFiles.length}/${assetRequirements.metadataFiles}全部文件` +
               (taskStatus.rate ? ` ${taskStatus.rate}` : "") +
               (taskStatus.status ? ` status=${taskStatus.status}` : ""),
           );
@@ -990,6 +1001,32 @@ async function waitForCompleteLocalEpisodeVideos(options: {
         const posterDownloadComplete = posters.length >= assetRequirements.posterImages;
         const aiProductionProofDownloadComplete =
           aiProductionProofs.length >= assetRequirements.aiProductionProofFiles;
+        if (taskStatus.completed && options.requireEpisodeVideos && !complete) {
+          const currentEpisodeSignature = fileSetSignature(files);
+          if (stalledEpisodeSignature === currentEpisodeSignature) {
+            stalledEpisodePolls += 1;
+          } else {
+            stalledEpisodeSignature = currentEpisodeSignature;
+            stalledEpisodePolls = 1;
+          }
+
+          if (stalledEpisodePolls >= completedDownloadStallPollLimit) {
+            const recognizedIndexes = new Set(files.map((file) => file.index));
+            const missingIndexes = Array.from(
+              { length: options.episodeCount },
+              (_, index) => index + 1,
+            ).filter((index) => !recognizedIndexes.has(index));
+            throw new Error(
+              `[local-video-invalid] 百度网盘下载任务已完成，但本地剧集连续${completedDownloadStallPollLimit}次检查无变化：` +
+                `期望${options.episodeCount}集，实际识别${recognizedIndexes.size}集` +
+                `${missingIndexes.length > 0 ? `，缺少第${missingIndexes.join("、")}集` : ""}。` +
+                "请检查百度网盘下载记录及本地文件名后重试。",
+            );
+          }
+        } else {
+          stalledEpisodeSignature = undefined;
+          stalledEpisodePolls = 0;
+        }
         if (taskStatus.completed && ownershipDirectoryComplete && !ownershipComplete) {
           throw new Error(
             `百度网盘权属材料筛选后数量不足。至少需要${options.ownershipRequirements.minimumImages ?? 0}张非竖图，实际找到${ownership.length}张；高度大于宽度的图片不会作为权属文件。`,
@@ -1050,6 +1087,8 @@ export async function ensureBaiduNetdiskEpisodeVideos(
   const pollIntervalMs = options.pollIntervalMs ?? 10_000;
   const stableCompletePolls = options.stableCompletePolls ?? 2;
   const downloadEpisodeVideos = options.downloadEpisodeVideos !== false;
+  const requireAllDiscoveredAssets = options.downloadAssetMaterials !== false
+    && options.requireAllDiscoveredAssets === true;
   const configuredEpisodeCount = Number(options.episodeCount);
   const hasConfiguredEpisodeCount = Number.isInteger(configuredEpisodeCount)
     && configuredEpisodeCount > 0;
@@ -1160,7 +1199,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     ),
     downloadEpisodeVideos,
     downloadAssetMaterials: options.downloadAssetMaterials,
-    requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
+    requireAllDiscoveredAssets,
     downloadDir,
   }), options.signal);
   throwIfAborted(options.signal);
@@ -1204,7 +1243,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
       metadataDirectoryNames: result.remoteMetadata?.roots
         .map((root) => path.basename(root.path))
         .filter(Boolean),
-      requireAllDiscoveredAssets: options.requireAllDiscoveredAssets,
+      requireAllDiscoveredAssets,
       episodeCount: downloadEpisodeVideos ? resolvedEpisodeCount : 0,
       requireEpisodeVideos: downloadEpisodeVideos,
       ownershipRequirements,

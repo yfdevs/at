@@ -15,6 +15,7 @@ const taskKeys: Array<keyof KuaishouDramaTaskInput> = [
   "adVersion3Title",
   "adVersion4Title",
   "adVersion5Title",
+  "adVersion6Title",
   "fullDramaPriceYuan",
   "localCoverFile",
   "summary",

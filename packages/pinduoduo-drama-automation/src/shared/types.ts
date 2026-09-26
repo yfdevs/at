@@ -195,6 +195,7 @@ export interface PinduoduoDramaConfig {
   video?: {
     localEpisodeVideoRoot?: string;
     baiduNetdiskDownloadRetryAttempts?: number | string;
+    videoUploadTimeoutMinutes?: number | string;
   };
 }
 
@@ -221,6 +222,7 @@ export type PinduoduoDramaRuntimeOptions = {
   credentialStatePath?: string;
   logFilePath?: string;
   logRetentionDays?: number;
+  signal?: AbortSignal;
   ensureBaiduNetdiskResource?: (request: {
     shareText: string;
     resourceName: string;
@@ -228,7 +230,14 @@ export type PinduoduoDramaRuntimeOptions = {
     episodeCount: number;
     downloadEpisodeVideos?: boolean;
     downloadAssetMaterials?: boolean;
+    forceAssetDownload?: boolean;
     requireAllDiscoveredAssets?: boolean;
+    requiredPosterImages?: number;
+    posterFallback?: {
+      title?: string;
+      summary: string;
+    };
+    signal?: AbortSignal;
   }) => Promise<{ localPath?: string }>;
   onLog?: (message: string) => void;
 };

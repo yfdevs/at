@@ -413,6 +413,15 @@ export async function submitBaiduDramaForReview(
   while (Date.now() < resultDeadline) {
     if (page.isClosed()) throw new Error("BAIDU_DRAMA_SUBMIT_PAGE_CLOSED: 提交结果确认前页面已关闭");
 
+    if (baiduReviewHomePath.test(new URL(page.url()).pathname)) {
+      if (Date.now() - lastSubmitActionAt >= settleMs && !(await hasVisibleBaiduCaptcha(page))) {
+        log(options, "[baidu-drama] 已进入短剧管理页，且提交后安全等待期已结束。", { url: page.url() }, "automation");
+        return;
+      }
+      await page.waitForTimeout(pollIntervalMs);
+      continue;
+    }
+
     if (await hasVisibleBaiduCaptcha(page)) {
       if (!captchaWasVisible) {
         captchaWasVisible = true;
@@ -444,16 +453,12 @@ export async function submitBaiduDramaForReview(
         confirmationClicked = true;
         lastSubmitActionAt = Date.now();
         resultDeadline = lastSubmitActionAt + resultTimeoutMs;
+        await page.waitForTimeout(pollIntervalMs);
+        continue;
       }
     }
 
     await assertNoBaiduFormError(page, "提交短剧审核");
-    if (baiduReviewHomePath.test(new URL(page.url()).pathname)) {
-      if (Date.now() - lastSubmitActionAt >= settleMs && !(await hasVisibleBaiduCaptcha(page))) {
-        log(options, "[baidu-drama] 已进入短剧管理页，且提交后安全等待期已结束。", { url: page.url() }, "automation");
-        return;
-      }
-    }
     await page.waitForTimeout(pollIntervalMs);
   }
 

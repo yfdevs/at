@@ -19,6 +19,7 @@ import {
   buildKuaishouTextlessVariantCoverPrompt,
   KUAISHOU_DRAMA_COVER_SIZE,
   KUAISHOU_EPISODE_COVER_SIZE,
+  listKuaishouTextlessVariantKinds,
   prepareKuaishouDramaCoverFiles,
   resolveKuaishouDramaCoverFile,
   resolveKuaishouEpisodeCoverFile,
@@ -88,6 +89,35 @@ void test("textless variant prompts require distinct compositions and both orien
   assert.match(second, /彻底去掉.*所有剧名/);
   assert.notEqual(second, third);
   assert.doesNotMatch(second, /2208|1376|414:258/);
+});
+
+void test("selects only the extra cover variants required by the publish type", () => {
+  assert.deepEqual(listKuaishouTextlessVariantKinds("付费"), []);
+  assert.deepEqual(listKuaishouTextlessVariantKinds("广告"), []);
+  assert.deepEqual(listKuaishouTextlessVariantKinds("三个广告版本"), [
+    "ad-unlock-2",
+    "ad-unlock-3",
+  ]);
+  assert.deepEqual(listKuaishouTextlessVariantKinds("五个广告版本"), [
+    "ad-unlock-2",
+    "ad-unlock-3",
+    "ad-unlock-4",
+    "ad-unlock-5",
+  ]);
+  assert.deepEqual(listKuaishouTextlessVariantKinds("六个广告版本"), [
+    "ad-unlock-2",
+    "ad-unlock-3",
+    "ad-unlock-4",
+    "ad-unlock-5",
+    "ad-unlock-6",
+  ]);
+  assert.deepEqual(listKuaishouTextlessVariantKinds("全部"), [
+    "ad-unlock-2",
+    "ad-unlock-3",
+    "ad-unlock-4",
+    "ad-unlock-5",
+    "ad-unlock-6",
+  ]);
 });
 
 void test("generates only the missing landscape cover and shares prepared files across variants", async () => {
@@ -190,7 +220,7 @@ void test("does not call AI when both source orientations already exist", async 
   }
 });
 
-void test("generates separate textless landscape and portrait covers for ad versions two through five", async () => {
+void test("generates separate textless landscape and portrait covers for ad versions two through six", async () => {
   const temporaryRoot = await mkdtemp(path.join(os.tmpdir(), "kuaishou-ad-cover-test-"));
   try {
     const landscapeFile = path.join(temporaryRoot, "landscape.svg");
@@ -234,15 +264,16 @@ void test("generates separate textless landscape and portrait covers for ad vers
       adVersion3Title: "第三版剧名",
       adVersion4Title: "第四版剧名",
       adVersion5Title: "第五版剧名",
+      adVersion6Title: "第六版剧名",
     } as unknown as KuaishouDramaTaskConfig;
     const originals = await prepareKuaishouDramaCoverFiles(task, [
       poster(landscapeFile, 1_600, 1_000),
       poster(portraitFile, 900, 1_200),
     ], { aiClient, aiImageModel: "test-image-model", assetDownloadDir: temporaryRoot });
-    assert.equal(requests.length, 8);
+    assert.equal(requests.length, 10);
     assert.equal(resolveKuaishouDramaCoverFile(task, "ad-unlock"), originals.dramaCover);
     assert.equal(resolveKuaishouEpisodeCoverFile(task, "full-paid"), originals.episodeCover);
-    for (const kind of ["ad-unlock-2", "ad-unlock-3", "ad-unlock-4", "ad-unlock-5"]) {
+    for (const kind of ["ad-unlock-2", "ad-unlock-3", "ad-unlock-4", "ad-unlock-5", "ad-unlock-6"]) {
       assert.deepEqual(await readImageDimensions(resolveKuaishouDramaCoverFile(task, kind)), KUAISHOU_DRAMA_COVER_SIZE);
       assert.deepEqual(await readImageDimensions(resolveKuaishouEpisodeCoverFile(task, kind)), KUAISHOU_EPISODE_COVER_SIZE);
       assert.notEqual(resolveKuaishouDramaCoverFile(task, kind), originals.dramaCover);
@@ -253,10 +284,11 @@ void test("generates separate textless landscape and portrait covers for ad vers
       "ad-unlock-3",
       "ad-unlock-4",
       "ad-unlock-5",
-    ].map((kind) => resolveKuaishouDramaCoverFile(task, kind))).size, 4);
+      "ad-unlock-6",
+    ].map((kind) => resolveKuaishouDramaCoverFile(task, kind))).size, 5);
     assert.deepEqual(requests.map((request) => request.size).sort(), [
-      "1792x2400", "1792x2400", "1792x2400", "1792x2400",
-      "2208x1376", "2208x1376", "2208x1376", "2208x1376",
+      "1792x2400", "1792x2400", "1792x2400", "1792x2400", "1792x2400",
+      "2208x1376", "2208x1376", "2208x1376", "2208x1376", "2208x1376",
     ]);
     assert.ok(requests.every((request) => String(request.prompt).includes("不要绘制任何新文字")));
   } finally {
@@ -300,12 +332,13 @@ void test("rejects an extra ad cover when AI inspection finds visible text", asy
     } as unknown as DramaAiClient;
     const task = {
       title: "原剧名",
-      publishType: "五个广告版本",
+      publishType: "六个广告版本",
       summary: "测试剧情简介",
       adVersion2Title: "第二版剧名",
       adVersion3Title: "第三版剧名",
       adVersion4Title: "第四版剧名",
       adVersion5Title: "第五版剧名",
+      adVersion6Title: "第六版剧名",
     } as unknown as KuaishouDramaTaskConfig;
     await assert.rejects(
       prepareKuaishouDramaCoverFiles(task, [
