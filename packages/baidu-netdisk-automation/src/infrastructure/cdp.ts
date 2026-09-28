@@ -186,6 +186,36 @@ export class CdpPage {
     await this.send("Page.navigate", { url }, timeoutMs);
   }
 
+  async navigateWithoutWaiting(url: string) {
+    if (this.closed) throw new Error("CDP 页面已关闭。");
+
+    const id = ++this.nextId;
+    await new Promise<void>((resolve, reject) => {
+      this.socket.send(
+        JSON.stringify({ id, method: "Page.navigate", params: { url } }),
+        (error) => {
+          if (error) reject(error);
+          else resolve();
+        },
+      );
+    });
+  }
+
+  async reloadWithoutWaiting(ignoreCache = true) {
+    if (this.closed) throw new Error("CDP 页面已关闭。");
+
+    const id = ++this.nextId;
+    await new Promise<void>((resolve, reject) => {
+      this.socket.send(
+        JSON.stringify({ id, method: "Page.reload", params: { ignoreCache } }),
+        (error) => {
+          if (error) reject(error);
+          else resolve();
+        },
+      );
+    });
+  }
+
   async clickPoint(x: number, y: number, allowPageClose = false) {
     try {
       await this.send("Input.dispatchMouseEvent", {

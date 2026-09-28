@@ -45,6 +45,29 @@ function readUploadRecord(row: PinduoduoUploadRecordRow): PinduoduoUploadRecord 
   };
 }
 
+export type PinduoduoCreatedTopicRepair = {
+  resetToPending: boolean;
+  totalBatchCount: number;
+  uploadedBatchCount: number;
+};
+
+export function createdTopicRepairState(
+  record: PinduoduoUploadRecord,
+): PinduoduoCreatedTopicRepair | undefined {
+  const recordedTotal = record.totalBatchCount;
+  const recordedCompleted = record.uploadedBatchCount ?? 0;
+
+  if (recordedTotal !== undefined && recordedCompleted < recordedTotal) {
+    return {
+      resetToPending: record.status === "UPLOADED",
+      totalBatchCount: recordedTotal,
+      uploadedBatchCount: recordedCompleted,
+    };
+  }
+
+  return undefined;
+}
+
 export class PinduoduoUploadRecordsRepository {
   private readonly database: Database.Database;
 
@@ -160,6 +183,47 @@ export class PinduoduoUploadRecordsRepository {
       `,
       )
       .run(...uniqueIds).changes;
+  }
+
+  retainIncompleteCreatedTopics(platformApplyIds: number[]): number[] {
+    const uniqueIds = [...new Set(platformApplyIds)];
+    if (uniqueIds.length === 0) return [];
+
+    const select = this.database.prepare(`
+      SELECT ${pinduoduoUploadRecordSelect}
+      FROM pinduoduo_approved_upload_records
+      WHERE platform_apply_id=?
+    `);
+    const update = this.database.prepare(`
+      UPDATE pinduoduo_approved_upload_records
+      SET
+        status=CASE WHEN @resetToPending=1 THEN 'PENDING' ELSE status END,
+        stage=CASE WHEN @resetToPending=1 THEN NULL ELSE stage END,
+        error_message=CASE WHEN @resetToPending=1 THEN NULL ELSE error_message END,
+        uploaded_batch_count=@uploadedBatchCount,
+        total_batch_count=@totalBatchCount,
+        updated_at=@updatedAt
+      WHERE platform_apply_id=@platformApplyId
+    `);
+    const retained: number[] = [];
+
+    for (const platformApplyId of uniqueIds) {
+      const row = select.get(platformApplyId) as PinduoduoUploadRecordRow | undefined;
+      if (!row) continue;
+      const record = readUploadRecord(row);
+      const repair = createdTopicRepairState(record);
+      if (!repair) continue;
+      update.run({
+        platformApplyId,
+        resetToPending: repair.resetToPending ? 1 : 0,
+        totalBatchCount: repair.totalBatchCount,
+        uploadedBatchCount: repair.uploadedBatchCount,
+        updatedAt: nowIso(),
+      });
+      retained.push(platformApplyId);
+    }
+
+    return retained;
   }
 
   markDownloading(platformApplyId: number): void {

@@ -8,7 +8,7 @@ import {
 } from "@drama/automation-logging";
 import type { TaobaoDramaRuntimeOptions } from "./types.js";
 
-type LogContext = { accountId?: string; accountName?: string; accountTaskId?: number };
+type LogContext = { taskId?: string; title?: string };
 const contextStorage = new AsyncLocalStorage<LogContext>();
 
 function loggerFor(options: TaobaoDramaRuntimeOptions, scope: string) {
@@ -16,11 +16,9 @@ function loggerFor(options: TaobaoDramaRuntimeOptions, scope: string) {
   return createAutomationLogger({
     platform: "taobao-drama",
     scope,
-    context: {
-      accountId: context.accountId ?? options.accountId,
-      accountName: context.accountName ?? options.accountName,
-      accountTaskId: context.accountTaskId,
-    },
+    context: context.taskId || context.title
+      ? { taskId: context.taskId, title: context.title }
+      : undefined,
     logFilePath: options.logFilePath,
     retentionDays: options.logRetentionDays,
     onEntry: options.onLog

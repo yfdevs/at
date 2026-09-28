@@ -1,8 +1,97 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { summarizeTaobaoUploadText } from "../../src/automation/form-controls.js";
-import { isTaobaoVideoInputCandidate } from "../../src/automation/episodes.js";
+import {
+  advanceTaobaoDropdownSearchState,
+  isTaobaoVideoInputCandidate,
+  normalizeTaobaoDropdownText,
+  scoreTaobaoContentTagMatch,
+  summarizeTaobaoBatchItems,
+  summarizeTaobaoUploadText,
+  TAOBAO_DROPDOWN_END_SETTLE_MS,
+  TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS,
+  TAOBAO_MAX_FILES_PER_SELECTION,
+} from "../../src/automation/episodes.js";
+
+test("limits each Taobao upload selection to a stable small batch", () => {
+  assert.equal(TAOBAO_MAX_FILES_PER_SELECTION, 10);
+});
+
+test("recognizes Taobao batch items whose status is already uploaded", () => {
+  assert.deepEqual(
+    summarizeTaobaoBatchItems([
+      { title: "烟火里的圆满 - 第1集.mp4", status: "已上传" },
+      { title: "烟火里的圆满 - 第2集.mp4", status: "已上传" },
+    ], [
+      "D:\\episodes\\烟火里的圆满 - 第1集.mp4",
+      "D:\\episodes\\烟火里的圆满 - 第2集.mp4",
+    ]),
+    { matchedFileCount: 2, completedFileCount: 2, failed: false, complete: true },
+  );
+});
+
+test("matches Taobao content tags case-insensitively with an approximate fallback", () => {
+  assert.equal(scoreTaobaoContentTagMatch("# ai 短剧", "AI短剧"), 1);
+  assert.ok(scoreTaobaoContentTagMatch("# 都市情感AI仿真人短剧", "都市") >= 0.45);
+  assert.ok(scoreTaobaoContentTagMatch("# AI仿真人短剧", "AI短剧") >= 0.45);
+  assert.ok(scoreTaobaoContentTagMatch("# 农村美食", "AI短剧") < 0.45);
+});
+
+test("normalizes collection option whitespace before matching", () => {
+  assert.equal(
+    normalizeTaobaoDropdownText("   十八年归零，离婚后我靠辣酱翻身 "),
+    "十八年归零，离婚后我靠辣酱翻身",
+  );
+  assert.equal(normalizeTaobaoDropdownText("第 12 集"), "第12集");
+});
+
+test("waits for a stable true end while a virtual collection list loads more options", () => {
+  let state = advanceTaobaoDropdownSearchState({}, {
+    atEnd: true,
+    moved: false,
+    loading: false,
+    signature: "1000:300:合集1",
+  }, 1_000, 2_000);
+  assert.equal(state.shouldStop, false);
+
+  state = advanceTaobaoDropdownSearchState(state.state, {
+    atEnd: true,
+    moved: false,
+    loading: true,
+    signature: "1000:300:合集1",
+  }, 2_000, 2_000);
+  assert.equal(state.shouldStop, false);
+
+  state = advanceTaobaoDropdownSearchState(state.state, {
+    atEnd: false,
+    moved: true,
+    loading: false,
+    signature: "1800:300:合集8\u0001合集9",
+  }, 3_000, 2_000);
+  assert.equal(state.shouldStop, false);
+  assert.equal(state.state.stableAtEndSince, undefined);
+
+  state = advanceTaobaoDropdownSearchState(state.state, {
+    atEnd: true,
+    moved: false,
+    loading: false,
+    signature: "1800:300:合集8\u0001合集9",
+  }, 4_000, 2_000);
+  assert.equal(state.shouldStop, false);
+
+  state = advanceTaobaoDropdownSearchState(state.state, {
+    atEnd: true,
+    moved: false,
+    loading: false,
+    signature: "1800:300:合集8\u0001合集9",
+  }, 6_000, 2_000);
+  assert.equal(state.shouldStop, true);
+});
+
+test("gives collection virtual scrolling enough time without waiting forever", () => {
+  assert.equal(TAOBAO_DROPDOWN_END_SETTLE_MS, 8_000);
+  assert.equal(TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS, 120_000);
+});
 
 test("summarizes Taobao upload progress from visible page text", () => {
   assert.deepEqual(

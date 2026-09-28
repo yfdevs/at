@@ -178,11 +178,6 @@ function validatePlayletConfig(playletConfig: Config): Config {
   if (!playletConfig.playlet?.name) throw new Error("data.playlet.name is required");
   if (!playletConfig.playlet.summary) throw new Error("data.playlet.summary is required");
   if (!playletConfig.playlet.episodeCount) throw new Error("data.playlet.episodeCount is required");
-  const productionProofFileCount = playletConfig.playlet.copyright?.productionProofFiles?.filter(Boolean).length ?? 0;
-  if (productionProofFileCount < 1) {
-    throw new Error("data.playlet.copyright.productionProofFiles must contain at least 1 contract file.");
-  }
-
   return playletConfig;
 }
 
@@ -203,6 +198,11 @@ export function normalizeClaimedTaskConfig(task: ClaimedAccountTask): Config {
     ...taskPlaylet,
     name: task.originalTitle,
     aiContent,
+    copyright: {
+      ...taskPlaylet.copyright,
+      // 微信剧目制作证明只上传本地识别出的 4+4 权属原图，不使用接口合同材料。
+      productionProofFiles: [],
+    },
     // 接口返回的 AI 制作证明不参与微信视频号任务；运行时从原始权属图片中随机选择一张。
     aiProductionProofFiles: [],
   };

@@ -1,18 +1,23 @@
-﻿import { app, ipcMain } from "electron";
+import { app, BrowserWindow, dialog, ipcMain, Notification } from "electron";
+import { attachTitlebarToWindow } from "custom-electron-titlebar/main";
 import Store from "electron-store";
-import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
+import { fileURLToPath } from "node:url";
 import path from "node:path";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
-  getConfiguredAiCoverGenerationRetryAttempts,
-  getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
-import { createElectronPlatformLogger } from "../platform-logger";
 import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
+import { openAutomationDatabase } from "../storage/database";
+import {
+  TaobaoImportedTasksRepository,
+  type TaobaoImportedTask,
+  type TaobaoImportedTaskSummary,
+} from "../storage/taobao-drama/imported-tasks-repository";
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
+import { aggregateTaskAnalytics } from "./task-analytics";
 import {
   directoryDefaultPath,
   normalizePlatformRunDataDir,
@@ -23,24 +28,18 @@ import {
   selectDirectory,
 } from "./shared";
 
-type Account = {
-  id: number;
-  accountId: string;
-  accountName: string;
-  loginAccount?: string | null;
-};
+const __dirname = path.dirname(fileURLToPath(import.meta.url));
 
-type AccountStatus = {
+type RuntimeStatus = {
   platform: "taobao-drama";
   running: boolean;
   loginState: "login-required" | "verification-required" | "logged-in" | "unknown";
   activeUrl?: string;
-  collectionCreateUrl: string;
   batchPublishUrl: string;
   loginUrl: string;
   userDataDir: string;
   lastTask?: {
-    accountTaskId: number;
+    taskId: string;
     originalTitle?: string;
     status: "running" | "succeeded" | "failed";
     errorMessage?: string;
@@ -48,22 +47,12 @@ type AccountStatus = {
   };
 };
 
-type AccountRuntime = { getStatus: () => AccountStatus; stop: () => Promise<void> };
-type PlatformStatus = {
-  platform: "taobao-drama";
-  running: boolean;
-  collectionCreateUrl: string;
-  batchPublishUrl: string;
-  loginUrl: string;
-  accounts: Array<AccountStatus & Account & { launched: boolean }>;
-};
-type PlatformRuntime = { getStatus: () => PlatformStatus; stop: () => Promise<void> };
+type Runtime = { getStatus: () => RuntimeStatus; stop: () => Promise<void> };
 
 export type TaobaoDramaConfig = {
-  apiBaseUrl: string;
+  accountProfileName: string;
   headless: string;
   operationDelaySeconds: string;
-  taskPollIntervalSeconds: string;
   baiduNetdiskDownloadRetryAttempts: string;
   episodeUploadWaitTimeoutMinutes: string;
   closeFailedTaskPages: string;
@@ -81,24 +70,23 @@ type StoragePaths = {
   logFilePath: string;
 };
 
-export type TaobaoDramaServiceStatus = PlatformStatus & { pid: number | null };
+export type TaobaoDramaServiceStatus = RuntimeStatus & {
+  pid: number | null;
+  queue: TaobaoImportedTaskSummary;
+};
 
-const collectionCreateUrl =
-  "https://creator.guanghe.taobao.com/page/unify/collect-create" +
-  "?type=1&collectConfig=%5B1%2C3%5D&mode=0&source=guanghe" +
-  "&from=%2Fpage%2Funify%2Fcollection";
 const batchPublishUrl =
   "https://creator.guanghe.taobao.com/page/unify/creation-tool/batch-publish" +
   "?ugc_scene=short_drama_multipublish";
 const loginUrl =
   "https://login.taobao.com/havanaone/login/login.htm?bizName=taobao&sub=true" +
-  `&redirectURL=${encodeURIComponent(collectionCreateUrl)}`;
+  `&redirectURL=${encodeURIComponent(batchPublishUrl)}`;
+const taskDataWindowMode = "taobao-drama-task-data";
 
 const defaults: TaobaoDramaConfig = {
-  apiBaseUrl: "http://180.184.76.232:19090",
+  accountProfileName: "default",
   headless: "false",
   operationDelaySeconds: "0",
-  taskPollIntervalSeconds: "10",
   baiduNetdiskDownloadRetryAttempts: "3",
   episodeUploadWaitTimeoutMinutes: "120",
   closeFailedTaskPages: "false",
@@ -106,8 +94,53 @@ const defaults: TaobaoDramaConfig = {
   logRetentionDays: "3",
 };
 
-const controller = new RuntimeController<PlatformRuntime>();
+const controller = new RuntimeController<Runtime>();
 let store: Store<{ config: TaobaoDramaConfig }> | null = null;
+let tasksRepositoryInstance: TaobaoImportedTasksRepository | null = null;
+let taskDataWindow: BrowserWindow | null = null;
+
+function openTaskDataWindow() {
+  if (taskDataWindow && !taskDataWindow.isDestroyed()) {
+    taskDataWindow.show();
+    taskDataWindow.focus();
+    return;
+  }
+
+  const nextWindow = new BrowserWindow({
+    width: 1120,
+    height: 720,
+    minWidth: 880,
+    minHeight: 560,
+    show: false,
+    title: "淘宝短剧 · 本地任务数据",
+    titleBarStyle: "hidden",
+    autoHideMenuBar: true,
+    backgroundColor: "#fafafa",
+    webPreferences: {
+      preload: path.join(__dirname, "preload.mjs"),
+      sandbox: false,
+    },
+  });
+  taskDataWindow = nextWindow;
+  attachTitlebarToWindow(nextWindow);
+  nextWindow.setMenu(null);
+  nextWindow.once("ready-to-show", () => nextWindow.show());
+  nextWindow.on("closed", () => {
+    if (taskDataWindow === nextWindow) taskDataWindow = null;
+  });
+
+  const devServerUrl = process.env.VITE_DEV_SERVER_URL;
+  if (devServerUrl) {
+    const url = new URL(devServerUrl);
+    url.searchParams.set("window", taskDataWindowMode);
+    void nextWindow.loadURL(url.toString());
+  } else {
+    void nextWindow.loadFile(
+      path.join(process.env.APP_ROOT ?? path.join(__dirname, "..", ".."), "dist", "index.html"),
+      { query: { window: taskDataWindowMode } },
+    );
+  }
+}
 
 function configStore() {
   store ??= new Store<{ config: TaobaoDramaConfig }>({
@@ -117,6 +150,17 @@ function configStore() {
   return store;
 }
 
+function tasksRepository() {
+  if (!tasksRepositoryInstance) {
+    const opened = openAutomationDatabase();
+    tasksRepositoryInstance = new TaobaoImportedTasksRepository(
+      opened.database,
+      opened.databasePath,
+    );
+  }
+  return tasksRepositoryInstance;
+}
+
 function numberText(value: string | undefined, fallback: string, minimum = 0) {
   const parsed = Number(value);
   return value?.trim() && Number.isFinite(parsed) && parsed >= minimum ? value.trim() : fallback;
@@ -124,10 +168,9 @@ function numberText(value: string | undefined, fallback: string, minimum = 0) {
 
 function normalizeConfig(config: Partial<TaobaoDramaConfig>): TaobaoDramaConfig {
   return {
-    apiBaseUrl: config.apiBaseUrl?.trim() || defaults.apiBaseUrl,
+    accountProfileName: config.accountProfileName?.trim() || defaults.accountProfileName,
     headless: config.headless ?? defaults.headless,
     operationDelaySeconds: numberText(config.operationDelaySeconds, defaults.operationDelaySeconds),
-    taskPollIntervalSeconds: numberText(config.taskPollIntervalSeconds, defaults.taskPollIntervalSeconds, 1),
     baiduNetdiskDownloadRetryAttempts: numberText(
       config.baiduNetdiskDownloadRetryAttempts,
       defaults.baiduNetdiskDownloadRetryAttempts,
@@ -157,10 +200,9 @@ function runDataDir(config: Pick<TaobaoDramaConfig, "runDataDir"> = readConfig()
 }
 
 function storagePaths(
-  config: Pick<TaobaoDramaConfig, "runDataDir"> = readConfig(),
-  accountId = "default",
+  config: Pick<TaobaoDramaConfig, "runDataDir" | "accountProfileName"> = readConfig(),
 ): StoragePaths {
-  const encoded = encodeURIComponent(accountId.trim() || "default");
+  const encoded = encodeURIComponent(config.accountProfileName.trim() || "default");
   const accountDir = path.join(runDataDir(config), "auth", "accounts", encoded);
   const logDir = path.join(runDataDir(config), "logs");
   return {
@@ -191,32 +233,31 @@ function openPathOrParent(value: string) {
   return openExistingPath(existsSync(value) ? value : path.dirname(value));
 }
 
-function platformLogger(scope = "runtime") {
-  const config = readConfig();
-  return createElectronPlatformLogger({
-    platform: "taobao-drama",
-    scope,
-    logDir: path.join(runDataDir(config), "logs"),
-    retentionDays: Number(config.logRetentionDays) || 3,
-  });
+async function claimNextTask() {
+  return tasksRepository().claimNext();
 }
 
 async function importRuntimePackage() {
   return import("@drama/taobao-drama-automation") as Promise<{
-    fetchTaobaoDramaAccounts: (baseUrl: string) => Promise<Account[]>;
-    startTaobaoDramaRuntime: (options: Record<string, unknown>) => Promise<AccountRuntime>;
+    readTaobaoBatchUploadWorkbook: (filePath: string) => Promise<{
+      tasks: Array<Pick<TaobaoImportedTask, "originalTitle" | "baiduPanResourceLink" | "episodeCount" | "sourceFileName" | "sourceSheet" | "sourceRow">>;
+      issues: Array<{ sheet: string; row: number; message: string }>;
+    }>;
+    startTaobaoDramaRuntime: (options: Record<string, unknown>) => Promise<Runtime>;
   }>;
 }
 
 function stoppedStatus(): TaobaoDramaServiceStatus {
+  const paths = storagePaths();
   return {
     platform: "taobao-drama",
     running: false,
-    collectionCreateUrl,
+    loginState: "unknown",
     batchPublishUrl,
     loginUrl,
-    accounts: [],
+    userDataDir: paths.userDataDir,
     pid: null,
+    queue: tasksRepository().summary(),
   };
 }
 
@@ -228,86 +269,89 @@ async function status(): Promise<TaobaoDramaServiceStatus> {
     await controller.stop();
     return stoppedStatus();
   }
-  return { ...current, pid: process.pid };
+  return { ...current, pid: process.pid, queue: tasksRepository().summary() };
 }
 
-async function startRuntime(): Promise<PlatformRuntime> {
+async function startRuntime(): Promise<Runtime> {
   process.env.PLAYWRIGHT_BROWSERS_PATH = playwrightBrowsersPath();
   const config = readConfig();
-  const { fetchTaobaoDramaAccounts, startTaobaoDramaRuntime } = await importRuntimePackage();
-  const accounts = await fetchTaobaoDramaAccounts(config.apiBaseUrl);
-  if (accounts.length === 0) throw new Error("TAOBAO_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
-  platformLogger("account").info("Loaded enabled accounts", {
-    count: accounts.length,
-    accounts: accounts.map((account) => ({ id: account.accountId, name: account.accountName })),
+  const paths = storagePaths(config);
+  ensureDirectories(paths);
+  tasksRepository().recoverInterrupted();
+  const { startTaobaoDramaRuntime } = await importRuntimePackage();
+  return startTaobaoDramaRuntime({
+    accountProfileName: config.accountProfileName,
+    accountDir: paths.accountDir,
+    userDataDir: paths.userDataDir,
+    credentialStatePath: paths.credentialStatePath,
+    assetDownloadDir: paths.assetDownloadDir,
+    logFilePath: paths.logFilePath,
+    logRetentionDays: Number(config.logRetentionDays) || 3,
+    localMaterialRoot: config.localMaterialRoot,
+    baiduNetdiskDownloadRetryAttempts: Number(config.baiduNetdiskDownloadRetryAttempts) || 0,
+    episodeUploadWaitTimeoutMinutes: Number(config.episodeUploadWaitTimeoutMinutes) || 120,
+    taskPollIntervalMs: 2_000,
+    closeFailedTaskPages: config.closeFailedTaskPages === "true",
+    onHumanVerificationRequired: () => {
+      if (!Notification.isSupported()) return;
+      new Notification({
+        title: "淘宝需要人工验证",
+        body: "自动化任务已暂停，请在淘宝浏览器中完成滑块验证；完成后会从当前步骤继续。",
+      }).show();
+    },
+    claimNextTask,
+    updateTaskProgress: (taskId: string, progress: "downloading" | "uploading") => {
+      tasksRepository().markProgress(taskId, progress);
+    },
+    aiClientFactory: createConfiguredAiClient,
+    saveGeneratedMetadata: (taskId: string, metadata: {
+      dramaTag: string;
+      episodeSummaries: string[];
+      synopsisText?: string;
+      synopsisSource?: string;
+    }) => {
+      tasksRepository().saveGeneratedMetadata(taskId, metadata);
+    },
+    completeTask: ({ taskId, success, errorMessage }: {
+      taskId: string;
+      success: boolean;
+      errorMessage?: string;
+    }) => {
+      tasksRepository().complete(taskId, success, errorMessage);
+    },
+    ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) =>
+      ensureBaiduNetdiskShareDownloaded({ ...request, requesterPlatform: "taobao-drama" }),
+    config: {
+      browser: {
+        headless: config.headless === "true",
+        slowMo: (Number(config.operationDelaySeconds) || 0) * 1_000,
+      },
+    },
   });
-  const aiClient = createConfiguredAiClient();
-  const runtimes: Array<{ account: Account; runtime: AccountRuntime }> = [];
-  let running = true;
-  try {
-    for (const account of accounts) {
-      const paths = storagePaths(config, account.accountId);
-      ensureDirectories(paths);
-      const runtime = await startTaobaoDramaRuntime({
-        accountProfileName: account.accountId,
-        accountId: account.accountId,
-        accountName: account.accountName,
-        accountDir: paths.accountDir,
-        userDataDir: paths.userDataDir,
-        credentialStatePath: paths.credentialStatePath,
-        assetDownloadDir: paths.assetDownloadDir,
-        logFilePath: paths.logFilePath,
-        logRetentionDays: Number(config.logRetentionDays) || 3,
-        localMaterialRoot: config.localMaterialRoot,
-        baiduNetdiskDownloadRetryAttempts: Number(config.baiduNetdiskDownloadRetryAttempts) || 0,
-        episodeUploadWaitTimeoutMinutes: Number(config.episodeUploadWaitTimeoutMinutes) || 120,
-        taskPollIntervalMs: (Number(config.taskPollIntervalSeconds) || 10) * 1_000,
-        closeFailedTaskPages: config.closeFailedTaskPages === "true",
-        aiClient,
-        aiImageModel: getConfiguredAiImageModel(),
-        aiCoverGenerationRetryAttempts: getConfiguredAiCoverGenerationRetryAttempts(),
-        ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) =>
-          ensureBaiduNetdiskShareDownloaded({ ...request, requesterPlatform: "taobao-drama" }),
-        apiConfig: { baseUrl: config.apiBaseUrl },
-        config: {
-          browser: {
-            headless: config.headless === "true",
-            slowMo: (Number(config.operationDelaySeconds) || 0) * 1_000,
-          },
-        },
-      });
-      runtimes.push({ account, runtime });
-    }
-  } catch (error) {
-    running = false;
-    await Promise.allSettled(runtimes.map(({ runtime }) => runtime.stop()));
-    throw error;
-  }
+}
+
+async function importWorkbook() {
+  const selected = await dialog.showOpenDialog({
+    title: "导入淘宝批量上传任务",
+    properties: ["openFile"],
+    filters: [{ name: "Excel 工作簿", extensions: ["xlsx", "xls"] }],
+  });
+  if (selected.canceled || !selected.filePaths[0]) return { canceled: true as const };
+  const { readTaobaoBatchUploadWorkbook } = await importRuntimePackage();
+  const parsed = await readTaobaoBatchUploadWorkbook(selected.filePaths[0]);
+  const imported = tasksRepository().importTasks(parsed.tasks);
   return {
-    getStatus() {
-      const runtimeAccounts = runtimes.map(({ account, runtime }) => {
-        const current = runtime.getStatus();
-        return { ...current, ...account, launched: current.running };
-      });
-      if (runtimeAccounts.every((account) => !account.launched)) running = false;
-      return {
-        platform: "taobao-drama",
-        running,
-        collectionCreateUrl,
-        batchPublishUrl,
-        loginUrl,
-        accounts: runtimeAccounts,
-      };
-    },
-    async stop() {
-      running = false;
-      await Promise.allSettled(runtimes.map(({ runtime }) => runtime.stop()));
-    },
+    canceled: false as const,
+    imported: imported.imported,
+    skipped: imported.skipped,
+    issues: parsed.issues,
+    fileName: path.basename(selected.filePaths[0]),
+    queue: tasksRepository().summary(),
   };
 }
 
 export function getTaobaoDramaBrowserInstanceCount() {
-  return controller.current?.getStatus().accounts.filter((account) => account.launched).length ?? 0;
+  return controller.current?.getStatus().running ? 1 : 0;
 }
 
 export function getTaobaoDramaRunningPlatformCount() {
@@ -320,13 +364,13 @@ export function getTaobaoDramaPlatformRuntimeSummary() {
   return {
     platform: "taobao-drama" as const,
     running: Boolean(current?.running),
-    browserInstanceCount: current?.accounts.filter((account) => account.launched).length ?? 0,
-    browserInstances: current?.accounts.filter((account) => account.launched).map((account) => ({
-      id: account.accountId,
-      label: account.accountName,
-      loginState: account.loginState,
-      activeUrl: account.activeUrl,
-    })) ?? [],
+    browserInstanceCount: current?.running ? 1 : 0,
+    browserInstances: current?.running ? [{
+      id: "default",
+      label: readConfig().accountProfileName,
+      loginState: current.loginState,
+      activeUrl: current.activeUrl,
+    }] : [],
     logDir: paths.logDir,
   };
 }
@@ -338,16 +382,21 @@ export function openTaobaoDramaLogDir() {
 }
 
 export function registerTaobaoDramaPlatformHandlers() {
-  registerTaskAnalyticsHandler({
-    platform: "taobao-drama",
-    apiBaseUrl: () => readConfig().apiBaseUrl,
-    apiPrefix: "/dramaAiRpa/taobao",
-  });
   registerRuntimeAssetCleanupRoot({
     platform: "taobao-drama",
     rootPath: path.join(storagePaths().runDataDir, "assets"),
     maxDepth: 2,
     retentionMs: 3 * 60 * 60 * 1_000,
+  });
+  const analyticsChannel = "taobao-drama:analytics:get";
+  ipcMain.removeHandler(analyticsChannel);
+  ipcMain.handle(analyticsChannel, (_event, request?: { days?: number }) => {
+    const dayCount = Math.min(90, Math.max(7, Math.floor(request?.days ?? 30)));
+    const tasks = tasksRepository().list().map((task) => ({
+      status: task.status,
+      updateTime: task.updatedAt,
+    }));
+    return { days: aggregateTaskAnalytics(tasks, dayCount) };
   });
   ipcMain.handle("taobao-drama:config:get", () => ({
     config: readConfig(),
@@ -384,6 +433,18 @@ export function registerTaobaoDramaPlatformHandlers() {
       return openExistingPath(paths[key]);
     },
   );
+  ipcMain.handle("taobao-drama:tasks:import", () => importWorkbook());
+  ipcMain.handle("taobao-drama:tasks:list", () => ({
+    tasks: tasksRepository().list(),
+    summary: tasksRepository().summary(),
+  }));
+  ipcMain.handle("taobao-drama:tasks:window:open", () => {
+    openTaskDataWindow();
+  });
+  ipcMain.handle("taobao-drama:tasks:retry", (_event, taskId: string) => {
+    const retried = tasksRepository().retry(taskId);
+    return { retried, summary: tasksRepository().summary() };
+  });
   ipcMain.handle("taobao-drama:service:status", () => status());
   ipcMain.handle("taobao-drama:service:start", async () => {
     assertGlobalDirectoriesConfigured();

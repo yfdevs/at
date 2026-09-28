@@ -3,11 +3,13 @@ import test from "node:test";
 import { runInNewContext } from "node:vm";
 
 import {
+  areBaiduNetdiskFilesStrictlyIdentical,
   baiduShareFailureText,
   classifyBaiduNetdiskOwnershipProofName,
   collapseIdenticalRemoteEpisodeAliases,
   compareRemoteVideoDirectoryCandidates,
   inspectContiguousEpisodeIndexes,
+  isBaiduAssetRootCovered,
   isAutomationTemporaryTransferPath,
   isBaiduNetdiskIncompleteProgressDirectoryName,
   isBaiduNetdiskOwnershipProofDirectoryName,
@@ -15,9 +17,105 @@ import {
   isGenericBaiduNetdiskMaterialDirectoryName,
   isSupportedEpisodeVideoFileName,
   matchBaiduLeadingEpisodeIndex,
+  planBaiduNetdiskSyncItem,
+  resolveBaiduAssetDownloadRoot,
+  shouldDownloadBaiduOwnershipDirectories,
   validateRemoteEpisodePathSelection,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
+
+test("isolates generic asset directories under each drama download root", () => {
+  const first = resolveBaiduAssetDownloadRoot("D:\\短剧素材", "剧目甲");
+  const second = resolveBaiduAssetDownloadRoot("D:\\短剧素材", "剧目乙");
+  assert.equal(first, "D:\\短剧素材\\剧目甲");
+  assert.equal(second, "D:\\短剧素材\\剧目乙");
+  assert.notEqual(first, second);
+});
+
+test("treats nested asset roots as covered without matching sibling names", () => {
+  const submitted = new Set(["/剧目甲/权属文件"]);
+  assert.equal(isBaiduAssetRootCovered(submitted, "/剧目甲/权属文件"), true);
+  assert.equal(isBaiduAssetRootCovered(submitted, "/剧目甲/权属文件/截图"), true);
+  assert.equal(isBaiduAssetRootCovered(submitted, "/剧目甲/权属文件2"), false);
+  assert.equal(isBaiduAssetRootCovered(submitted, "/剧目乙/权属文件"), false);
+});
+
+test("downloads ownership directories only when the platform requires them", () => {
+  assert.equal(shouldDownloadBaiduOwnershipDirectories({
+    downloadAssetMaterials: true,
+    requiredOwnershipImages: 0,
+    requiredOwnershipFiles: 0,
+    requireAllDiscoveredAssets: false,
+  }), false);
+  assert.equal(shouldDownloadBaiduOwnershipDirectories({
+    downloadAssetMaterials: true,
+    requiredOwnershipImages: 8,
+    requiredOwnershipFiles: 0,
+    requireAllDiscoveredAssets: false,
+  }), true);
+  assert.equal(shouldDownloadBaiduOwnershipDirectories({
+    downloadAssetMaterials: true,
+    requiredOwnershipImages: 0,
+    requiredOwnershipFiles: 1,
+    requireAllDiscoveredAssets: false,
+  }), true);
+  assert.equal(shouldDownloadBaiduOwnershipDirectories({
+    downloadAssetMaterials: true,
+    requiredOwnershipImages: 0,
+    requiredOwnershipFiles: 0,
+    requireAllDiscoveredAssets: true,
+  }), true);
+  assert.equal(shouldDownloadBaiduOwnershipDirectories({
+    downloadAssetMaterials: false,
+    requiredOwnershipImages: 8,
+    requiredOwnershipFiles: 8,
+    requireAllDiscoveredAssets: true,
+  }), false);
+});
+
+test("falls back to recursive sync when a missing directory was already saved elsewhere", () => {
+  assert.equal(
+    planBaiduNetdiskSyncItem({ isdir: 1 }),
+    "transfer-directory-with-recursive-fallback",
+  );
+  assert.equal(
+    planBaiduNetdiskSyncItem({ isdir: 1 }, { isdir: 1 }),
+    "recurse-existing-directory",
+  );
+  assert.equal(planBaiduNetdiskSyncItem({ isdir: 0 }), "transfer-file");
+  assert.equal(planBaiduNetdiskSyncItem({ isdir: 1 }, { isdir: 0 }), "conflict");
+});
+
+test("only reuses files from another Netdisk directory with strong identity evidence", () => {
+  assert.equal(
+    areBaiduNetdiskFilesStrictlyIdentical(
+      { isdir: 0, fs_id: 123, size: 10 },
+      { isdir: 0, fs_id: 123, size: 10 },
+    ),
+    true,
+  );
+  assert.equal(
+    areBaiduNetdiskFilesStrictlyIdentical(
+      { isdir: 0, md5: "ABC", size: 10 },
+      { isdir: 0, server_md5: "abc", size: 10 },
+    ),
+    true,
+  );
+  assert.equal(
+    areBaiduNetdiskFilesStrictlyIdentical(
+      { isdir: 0, size: 10 },
+      { isdir: 0, size: 10 },
+    ),
+    false,
+  );
+  assert.equal(
+    areBaiduNetdiskFilesStrictlyIdentical(
+      { isdir: 1, fs_id: 123 },
+      { isdir: 1, fs_id: 123 },
+    ),
+    false,
+  );
+});
 
 test("recognizes deleted and expired Baidu share pages before waiting for a file list", () => {
   assert.equal(
@@ -71,6 +169,17 @@ test("browser-injected Baidu helpers run after serialization without module scop
   assert.equal(isolate(isSupportedEpisodeVideoFileName)("第1集.mp4"), true);
   assert.equal(isolate(isBaiduNetdiskIncompleteProgressDirectoryName)("剧名-60%"), true);
   assert.equal(isolate(isGenericBaiduNetdiskMaterialDirectoryName)("1.成片"), true);
+  assert.equal(
+    isolate(planBaiduNetdiskSyncItem)({ isdir: 1 }),
+    "transfer-directory-with-recursive-fallback",
+  );
+  assert.equal(
+    isolate(areBaiduNetdiskFilesStrictlyIdentical)(
+      { isdir: 0, md5: "same", size: 10 },
+      { isdir: 0, md5: "same", size: 10 },
+    ),
+    true,
+  );
   assert.equal(isolate(classifyBaiduNetdiskOwnershipProofName)("剪映.png"), "jianying");
   assert.equal(isolate(isBaiduNetdiskOwnershipProofDirectoryName)("工程文件"), true);
   const isolatedDetector = isolate(isBaiduNetdiskScreenshotCandidateDirectory);

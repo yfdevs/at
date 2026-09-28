@@ -11,7 +11,7 @@ export const TAOBAO_DRAMA_BATCH_PUBLISH_URL =
 
 export const TAOBAO_DRAMA_LOGIN_URL =
   "https://login.taobao.com/havanaone/login/login.htm?bizName=taobao&sub=true" +
-  `&redirectURL=${encodeURIComponent(TAOBAO_DRAMA_COLLECTION_CREATE_URL)}`;
+  `&redirectURL=${encodeURIComponent(TAOBAO_DRAMA_BATCH_PUBLISH_URL)}`;
 
 export const TAOBAO_DRAMA_FIXED_FIELDS = {
   collectionType: "短剧合集",

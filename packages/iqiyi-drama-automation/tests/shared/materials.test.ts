@@ -10,6 +10,7 @@ import {
   buildIqiyiLandscapeCoverPrompt,
   evaluateIqiyiLandscapeCoverValidation,
   fillIqiyiCopyrightProofSources,
+  fillIqiyiProductionProofSources,
   prepareIqiyiMaterials,
 } from "../../src/shared/materials.js";
 
@@ -24,6 +25,14 @@ test("uses the cover for all four copyright proof slots when ownership screensho
   assert.deepEqual(
     fillIqiyiCopyrightProofSources([], "cover.jpg"),
     ["cover.jpg", "cover.jpg", "cover.jpg", "cover.jpg"],
+  );
+});
+
+test("uses the cover for the production proof slot when no declaration file is provided", () => {
+  assert.deepEqual(fillIqiyiProductionProofSources([], "cover.jpg"), ["cover.jpg"]);
+  assert.deepEqual(
+    fillIqiyiProductionProofSources(["declaration.pdf"], "cover.jpg"),
+    ["declaration.pdf"],
   );
 });
 

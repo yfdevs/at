@@ -235,6 +235,10 @@ async function uploadEpisodeVideosIfPresent(
 
   await uploadLocalFilesByTarget(page, {
     files: prepared.files,
+    queueTimeoutMs: Math.min(
+      5 * 60_000,
+      Math.max(2 * 60_000, (options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000),
+    ),
   });
   await waitForEpisodeUploadComplete(page, episodeCount, options);
   return prepared;

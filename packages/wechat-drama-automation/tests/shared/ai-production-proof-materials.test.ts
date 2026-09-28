@@ -69,12 +69,13 @@ test("normalization discards aiProductionProofFiles without inspecting its shape
   const normalized = normalizeClaimedTaskConfig(task);
   assert.equal(normalized.playlet.aiContent, true);
   assert.deepEqual(normalized.playlet.aiProductionProofFiles, []);
+  assert.deepEqual(normalized.playlet.copyright.productionProofFiles, []);
 });
 
-test("requires a contract for the 明星说 subject too", () => {
+test("accepts a claimed task without contract materials", () => {
   const task = {
     accountTaskId: 3,
-    originalTitle: "合同必填测试剧",
+    originalTitle: "无合同测试剧",
     videoAccountId: "channel-1",
     videoAccountName: "明星说视频号",
     playlet: {
@@ -84,10 +85,8 @@ test("requires a contract for the 明星说 subject too", () => {
     },
   } satisfies ClaimedAccountTask;
 
-  assert.throws(
-    () => normalizeClaimedTaskConfig(task),
-    /productionProofFiles must contain at least 1 contract file/u,
-  );
+  const normalized = normalizeClaimedTaskConfig(task);
+  assert.deepEqual(normalized.playlet.copyright.productionProofFiles, []);
 });
 
 test("normalization preserves only a boolean AI declaration switch", () => {

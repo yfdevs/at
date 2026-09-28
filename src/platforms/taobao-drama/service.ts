@@ -1,14 +1,15 @@
-﻿export type TaobaoDramaLoginState =
+export type TaobaoDramaLoginState =
   | "login-required"
   | "verification-required"
   | "logged-in"
   | "unknown"
 
+export type TaobaoTaskStatus = "pending" | "downloading" | "uploading" | "succeeded" | "failed"
+
 export type TaobaoDramaConfig = {
-  apiBaseUrl: string
+  accountProfileName: string
   headless: string
   operationDelaySeconds: string
-  taskPollIntervalSeconds: string
   baiduNetdiskDownloadRetryAttempts: string
   episodeUploadWaitTimeoutMinutes: string
   closeFailedTaskPages: string
@@ -22,40 +23,70 @@ export type TaobaoDramaConfigResult = {
   restartRequired: boolean
 }
 
+export type TaobaoQueueSummary = Record<TaobaoTaskStatus, number> & { total: number }
+
+export type TaobaoImportedTask = {
+  id: string
+  originalTitle: string
+  baiduPanResourceLink: string
+  episodeCount: number
+  sourceFileName: string
+  sourceSheet: string
+  sourceRow: number
+  status: TaobaoTaskStatus
+  attempts: number
+  errorMessage?: string
+  dramaTag?: string
+  episodeSummaries?: string[]
+  synopsisSource?: string
+  metadataGeneratedAt?: string
+  createdAt: string
+  updatedAt: string
+}
+
 export type TaobaoDramaServiceStatus = {
   platform: "taobao-drama"
   running: boolean
-  collectionCreateUrl: string
+  loginState: TaobaoDramaLoginState
+  activeUrl?: string
   batchPublishUrl: string
   loginUrl: string
-  accounts: Array<{
-    accountId: string
-    accountName: string
-    loginAccount?: string | null
-    launched: boolean
-    loginState: TaobaoDramaLoginState
-    activeUrl?: string
-    userDataDir: string
-    lastTask?: {
-      accountTaskId: number
-      originalTitle?: string
-      status: "running" | "succeeded" | "failed"
-      errorMessage?: string
-      updatedAt: string
-    }
-  }>
+  userDataDir: string
+  lastTask?: {
+    taskId: string
+    originalTitle?: string
+    status: "running" | "succeeded" | "failed"
+    errorMessage?: string
+    updatedAt: string
+  }
+  queue: TaobaoQueueSummary
   pid: number | null
 }
 
+export type TaobaoTaskListResult = {
+  tasks: TaobaoImportedTask[]
+  summary: TaobaoQueueSummary
+}
+
+export type TaobaoWorkbookIssue = { sheet: string; row: number; message: string }
+
+export type TaobaoWorkbookImportResult =
+  | { canceled: true }
+  | {
+      canceled: false
+      imported: number
+      skipped: number
+      issues: TaobaoWorkbookIssue[]
+      fileName: string
+      queue: TaobaoQueueSummary
+    }
+
 function readableError(message: string) {
-  if (message.includes("TAOBAO_DRAMA_ENABLED_ACCOUNT_NOT_FOUND")) {
-    return "没有获取到已启用的淘宝账号，请先在后台添加并启用淘宝账号。"
+  if (message.includes("TAOBAO_DRAMA_LOCAL_TASK_SOURCE_REQUIRED")) {
+    return "淘宝本地任务队列没有正确初始化。"
   }
-  if (message.includes("TAOBAO_DRAMA_ACCOUNT_CONFIG_REQUEST_FAILED")) {
-    return `淘宝账号列表获取失败：${message}`
-  }
-  if (message.includes("TAOBAO_DRAMA_API_BASE_URL_REQUIRED")) {
-    return "请先配置淘宝 RPA 后台接口地址。"
+  if (message.includes("TAOBAO_DRAMA_IMPORTED_TASK_NOT_FOUND")) {
+    return "这条淘宝任务已不存在，请刷新列表。"
   }
   return message
 }
@@ -76,4 +107,9 @@ export const taobaoDramaService = {
   status: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:status"),
   start: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:start"),
   stop: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:stop"),
+  importWorkbook: () => invoke<TaobaoWorkbookImportResult>("taobao-drama:tasks:import"),
+  listTasks: () => invoke<TaobaoTaskListResult>("taobao-drama:tasks:list"),
+  openTaskDataWindow: () => invoke<void>("taobao-drama:tasks:window:open"),
+  retryTask: (taskId: string) =>
+    invoke<{ retried: boolean; summary: TaobaoQueueSummary }>("taobao-drama:tasks:retry", taskId),
 }

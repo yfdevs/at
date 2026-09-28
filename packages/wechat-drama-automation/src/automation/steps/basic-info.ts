@@ -575,7 +575,6 @@ export async function fillBasicInfoStep(page: Page, playletConfig: Config): Prom
     ["剧目制作证明材料"], // 表单标签名称，支持一个名称或多个兼容名称
     playlet.copyright.productionProofFiles ?? [],
     "剧目制作证明材料", // 用于日志和错误提示，不参与页面元素匹配
-    contractRemoteAssetDirectoryName,
   );
   await uploadByLabeledGroupFileInput(
     page,

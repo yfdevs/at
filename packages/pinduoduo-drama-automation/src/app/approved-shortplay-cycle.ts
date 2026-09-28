@@ -92,6 +92,19 @@ export function splitPinduoduoVideoFiles(files: string[]): string[][] {
   return batches;
 }
 
+export function assertPinduoduoEpisodeFileCount(
+  files: string[],
+  expectedEpisodeCount: number | undefined,
+): void {
+  if (!expectedEpisodeCount || expectedEpisodeCount < 1) return;
+  if (files.length !== expectedEpisodeCount) {
+    throw new Error(
+      `PINDUODUO_EPISODE_FILE_COUNT_MISMATCH: 应有 ${expectedEpisodeCount} 集，` +
+        `本地实际发现 ${files.length} 个视频；为避免缺集或错集，已停止发布`,
+    );
+  }
+}
+
 function videoCardLocator(page: Page, fileName: string): Locator {
   return page
     .locator("p", { hasText: `文件名：${fileName}` })
@@ -474,11 +487,20 @@ async function syncApprovedUploadRecords(
   while (true) {
     const result = await fetchApprovedShortplays(page, options, pageNumber);
     pageNumber += 1;
-    cleaned += repository.deleteByPlatformApplyIds(result.createdTopicIds);
+    const retainedCreatedTopicIds = new Set(
+      repository.retainIncompleteCreatedTopics(result.createdTopicIds),
+    );
+    cleaned += repository.deleteByPlatformApplyIds(
+      result.createdTopicIds.filter((id) => !retainedCreatedTopicIds.has(id)),
+    );
     repository.upsertFromApprovedList(result.records);
     for (const record of result.records) {
       if (record.id === undefined) continue;
       eligibleIds.add(record.id);
+      synced += 1;
+    }
+    for (const id of retainedCreatedTopicIds) {
+      eligibleIds.add(id);
       synced += 1;
     }
     const scannedAll = result.totalCount !== undefined
@@ -560,6 +582,7 @@ async function processUploadRecord(
       });
       return false;
     }
+    assertPinduoduoEpisodeFileCount(files, record.episodeCount);
 
     repository.markUploading(record.platformApplyId);
     const fileBatches = splitPinduoduoVideoFiles(files);
@@ -576,22 +599,15 @@ async function processUploadRecord(
       completedBatchCount,
     });
 
-    const configuredBatches: Array<{
-      batchFiles: string[];
-      batchIndex: number;
-      uploadPage: Page;
-    }> = [];
     let dramaCreatedInThisRun = false;
-    try {
-      // Start every batch page first. Once the first batch is bound (or creates
-      // the drama), its video upload continues while the next tab is prepared.
-      for (let batchIndex = completedBatchCount; batchIndex < fileBatches.length; batchIndex += 1) {
+    for (let batchIndex = completedBatchCount; batchIndex < fileBatches.length; batchIndex += 1) {
+      let uploadPage: Page | undefined;
+      try {
         throwIfRuntimeStopped(options);
         const batchFiles = fileBatches[batchIndex];
         if (!batchFiles) continue;
         stage = "OPEN_PAGE";
-        const uploadPage = await openRecordPage(context, record, options);
-        configuredBatches.push({ batchFiles, batchIndex, uploadPage });
+        uploadPage = await openRecordPage(context, record, options);
         stage = "UPLOAD";
         await uploadPage.locator(VIDEO_UPLOAD_INPUT_SELECTOR).setInputFiles(batchFiles);
         await uploadPage
@@ -605,6 +621,53 @@ async function processUploadRecord(
         }
         for (const file of batchFiles) {
           await selectVideoDeclaration(uploadPage, videoCardLocator(uploadPage, basename(file)));
+        }
+
+        log(options, "info", "runtime", "approved shortplay batch tab started", {
+          platformApplyId: record.platformApplyId,
+          title: record.title,
+          batchIndex: batchIndex + 1,
+          batchCount: fileBatches.length,
+          fileCount: batchFiles.length,
+        });
+
+        throwIfRuntimeStopped(options);
+        stage = "VERIFY";
+        const uploadVerifyTimeoutMs = pinduoduoUploadVerifyTimeoutMs(options);
+        const platformFailure = await waitForPinduoduoVideoUploads(
+          uploadPage,
+          batchFiles,
+          uploadVerifyTimeoutMs,
+          (uploadedCount, totalCount, elapsedSeconds) => {
+            log(options, "info", "runtime", "Pinduoduo video upload progress", {
+              platformApplyId: record.platformApplyId,
+              title: record.title,
+              batchIndex: batchIndex + 1,
+              batchCount: fileBatches.length,
+              uploadedCount,
+              totalCount,
+              elapsedSeconds,
+            });
+          },
+          options.signal,
+        ).catch((error: unknown) => {
+          const message = error instanceof Error ? error.message : String(error);
+          throw new Error(`第 ${batchIndex + 1}/${fileBatches.length} 批${message}`);
+        });
+
+        if (platformFailure.rejected) {
+          const errorMessage = `第 ${batchIndex + 1}/${fileBatches.length} 批视频上传失败${
+            platformFailure.reasons.length > 0 ? `：${platformFailure.reasons.join("；")}` : ""
+          }`;
+          repository.markRejected(record.platformApplyId, errorMessage);
+          log(options, "error", "runtime", "approved shortplay batch rejected by platform", {
+            platformApplyId: record.platformApplyId,
+            title: record.title,
+            batchIndex: batchIndex + 1,
+            batchCount: fileBatches.length,
+            errorMessage,
+          });
+          return false;
         }
 
         stage = "BIND";
@@ -666,58 +729,6 @@ async function processUploadRecord(
           });
         }
 
-        log(options, "info", "runtime", "approved shortplay batch tab started", {
-          platformApplyId: record.platformApplyId,
-          title: record.title,
-          batchIndex: batchIndex + 1,
-          batchCount: fileBatches.length,
-          fileCount: batchFiles.length,
-          activeBatchTabs: configuredBatches.length,
-        });
-      }
-
-      // All tabs are now uploading concurrently. Verify and publish them in
-      // batch order while the later tabs continue uploading in the background.
-      for (const { batchFiles, batchIndex, uploadPage } of configuredBatches) {
-        throwIfRuntimeStopped(options);
-        stage = "VERIFY";
-        const uploadVerifyTimeoutMs = pinduoduoUploadVerifyTimeoutMs(options);
-        const platformFailure = await waitForPinduoduoVideoUploads(
-          uploadPage,
-          batchFiles,
-          uploadVerifyTimeoutMs,
-          (uploadedCount, totalCount, elapsedSeconds) => {
-            log(options, "info", "runtime", "Pinduoduo video upload progress", {
-              platformApplyId: record.platformApplyId,
-              title: record.title,
-              batchIndex: batchIndex + 1,
-              batchCount: fileBatches.length,
-              uploadedCount,
-              totalCount,
-              elapsedSeconds,
-            });
-          },
-          options.signal,
-        ).catch((error: unknown) => {
-          const message = error instanceof Error ? error.message : String(error);
-          throw new Error(`第 ${batchIndex + 1}/${fileBatches.length} 批${message}`);
-        });
-
-        if (platformFailure.rejected) {
-          const errorMessage = `第 ${batchIndex + 1}/${fileBatches.length} 批视频上传失败${
-            platformFailure.reasons.length > 0 ? `：${platformFailure.reasons.join("；")}` : ""
-          }`;
-          repository.markRejected(record.platformApplyId, errorMessage);
-          log(options, "error", "runtime", "approved shortplay batch rejected by platform", {
-            platformApplyId: record.platformApplyId,
-            title: record.title,
-            batchIndex: batchIndex + 1,
-            batchCount: fileBatches.length,
-            errorMessage,
-          });
-          return false;
-        }
-
         stage = "PUBLISH";
         throwIfRuntimeStopped(options);
         await publishAllUploadedVideos(uploadPage);
@@ -731,10 +742,9 @@ async function processUploadRecord(
           batchCount: fileBatches.length,
           fileCount: batchFiles.length,
         });
+      } finally {
+        await uploadPage?.close().catch(() => undefined);
       }
-    } finally {
-      await Promise.all(configuredBatches.map(({ uploadPage }) =>
-        uploadPage.close().catch(() => undefined)));
     }
 
     repository.markUploaded(record.platformApplyId);

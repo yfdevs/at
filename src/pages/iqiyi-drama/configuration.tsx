@@ -25,7 +25,7 @@ const emptyConfig: IqiyiDramaConfig = {
 const sections: ConfigSectionDefinition<IqiyiDramaConfig>[] = [
   {
     title: "任务与素材",
-    description: "短剧和漫剧共用账号任务队列；只下载封面与权属文件，不下载正片视频。",
+    description: "短剧和漫剧共用账号任务队列；下载正片与封面，权属文件缺失时使用封面兜底，不阻断提审。",
     fields: [
       {
         key: "apiBaseUrl",
@@ -52,7 +52,7 @@ const sections: ConfigSectionDefinition<IqiyiDramaConfig>[] = [
       {
         key: "baiduNetdiskDownloadRetryAttempts",
         label: "网盘下载重试",
-        description: "仅重试封面和权属素材；素材与视频混放时会停止，避免下载正片。",
+        description: "重试正片与封面素材；权属材料不作为下载完成条件。",
         type: "number",
         suffix: "次",
         min: 0,

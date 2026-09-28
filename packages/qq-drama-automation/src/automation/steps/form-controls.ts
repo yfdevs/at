@@ -483,49 +483,41 @@ export async function uploadLocalFilesByTarget(page: Page, options: {
   label?: string;
   selector?: string;
   files: string[];
+  queueTimeoutMs?: number;
 }) {
   const label = options.label ?? "选择视频文件";
   const resolveInput = options.selector
     ? async () => page.locator(options.selector!).first()
     : async () => {
-      const result = await page.evaluate((targetLabel) => {
+      const result = await page.evaluate(() => {
         const normalize = (text: string | null | undefined) =>
           text?.replace(/\s+/g, " ").trim() ?? "";
-        const isVisible = (element: HTMLElement | null) => {
-          if (!element) return false;
-          const rect = element.getBoundingClientRect();
-          const style = window.getComputedStyle(element);
-          return rect.width > 0
-            && rect.height > 0
-            && style.display !== "none"
-            && style.visibility !== "hidden";
-        };
-        const visibleInputs = Array.from(
+        document
+          .querySelectorAll("input[data-qq-drama-episode-upload-target='true']")
+          .forEach((input) => input.removeAttribute("data-qq-drama-episode-upload-target"));
+        const videoInputs = Array.from(
           document.querySelectorAll<HTMLInputElement>("input[type='file']"),
         ).filter((input) => {
-          const root = input.closest<HTMLElement>(
-            ".field-item,.form-section,.ant-form-item,.el-form-item,.form-item,[class*='form']",
-          ) ?? input.parentElement;
-          return root ? isVisible(root) : true;
+          const section = input.closest<HTMLElement>("section");
+          const sectionText = normalize(section?.textContent);
+          const isHighlightInput = Boolean(
+            input.closest(".highlight-card,[class*='highlight']")
+            || sectionText.includes("高光视频"),
+          );
+          const acceptsVideo = input.accept.toLowerCase().includes("video");
+          return !isHighlightInput && (acceptsVideo || input.multiple);
+        }).sort((left, right) => {
+          const leftInUploadStep = Boolean(left.closest(".step2-wrap,.upload-card"));
+          const rightInUploadStep = Boolean(right.closest(".step2-wrap,.upload-card"));
+          return Number(right.multiple) * 100 + Number(rightInUploadStep) * 10
+            - Number(left.multiple) * 100 - Number(leftInUploadStep) * 10;
         });
-        const videoInput = visibleInputs.find((input) => input.accept.includes("video"));
+        const videoInput = videoInputs[0];
         if (videoInput) {
           videoInput.setAttribute("data-qq-drama-episode-upload-target", "true");
           return true;
         }
-
-        const labelElement = Array.from(document.querySelectorAll<HTMLElement>("label,*"))
-          .find((element) =>
-            isVisible(element) && normalize(element.textContent).startsWith(targetLabel)
-          );
-        const root = labelElement?.closest<HTMLElement>(
-          ".field-item,.form-section,.ant-form-item,.el-form-item,.semi-form-field,.form-item,[class*='form']",
-        ) ?? labelElement?.parentElement;
-        const inputElement = root?.querySelector<HTMLInputElement>("input[type='file']");
-        if (!inputElement) return false;
-        inputElement.setAttribute("data-qq-drama-episode-upload-target", "true");
-        return true;
-      }, label);
+      });
 
       if (!result) {
         throw new Error(`QQ_DRAMA_EPISODE_FILE_INPUT_NOT_FOUND: label=${label}`);
@@ -545,12 +537,17 @@ export async function uploadLocalFilesByTarget(page: Page, options: {
       const input = await resolveInput();
       const previousRowCount = supportsMultiple
         ? 0
-        : await page.locator(".episode-row").count();
+        : await episodeUploadItemCount(page);
       await input.setInputFiles(batch, { timeout: 120_000 });
 
       if (!supportsMultiple) {
         const fileName = path.basename(batch[0]);
-        await waitForEpisodeFileQueued(page, fileName, previousRowCount);
+        await waitForEpisodeFileQueued(
+          page,
+          fileName,
+          previousRowCount,
+          options.queueTimeoutMs ?? 120_000,
+        );
       }
     }
   } finally {
@@ -564,19 +561,61 @@ export function fileInputUploadBatches(files: string[], supportsMultiple: boolea
   return supportsMultiple ? [files] : files.map((file) => [file]);
 }
 
-async function waitForEpisodeFileQueued(page: Page, fileName: string, previousRowCount: number) {
-  await page.waitForFunction(({ expectedFileName, rowCount }) => {
+export function isQqEpisodeVideoInputCandidate(candidate: {
+  accept: string;
+  multiple: boolean;
+  sectionText: string;
+  insideHighlightCard: boolean;
+}) {
+  if (candidate.insideHighlightCard || candidate.sectionText.includes("高光视频")) return false;
+  return candidate.accept.toLowerCase().includes("video") || candidate.multiple;
+}
+
+const episodeUploadItemSelector = [
+  ".episode-row",
+  "[class*='episode-row']",
+  "[class*='upload-item']",
+  "[class*='file-item']",
+].join(",");
+
+async function episodeUploadItemCount(page: Page) {
+  return page.locator(episodeUploadItemSelector).count();
+}
+
+async function waitForEpisodeFileQueued(
+  page: Page,
+  fileName: string,
+  previousRowCount: number,
+  timeoutMs: number,
+) {
+  const queued = await page.waitForFunction(({ expectedFileName, itemSelector, rowCount }) => {
     const normalize = (value: string | null | undefined) =>
       value?.replace(/\s+/g, " ").trim().toLowerCase() ?? "";
-    const rows = Array.from(document.querySelectorAll<HTMLElement>(".episode-row"));
-    return rows.length > rowCount
-      || rows.some((row) => normalize(row.textContent).includes(normalize(expectedFileName)));
+    const expected = normalize(expectedFileName);
+    const items = Array.from(document.querySelectorAll<HTMLElement>(itemSelector));
+    const visiblePageText = normalize(document.body?.innerText);
+    return items.length > rowCount
+      || items.some((item) => normalize(item.textContent).includes(expected))
+      || visiblePageText.includes(expected);
   }, {
     expectedFileName: fileName,
+    itemSelector: episodeUploadItemSelector,
     rowCount: previousRowCount,
   }, {
-    timeout: 30_000,
-  });
+    timeout: Math.max(30_000, timeoutMs),
+  }).then(() => true, () => false);
+
+  if (queued) return;
+
+  const pageText = (await page.locator("body").innerText().catch(() => ""))
+    .replace(/\s+/g, " ")
+    .trim()
+    .slice(0, 500);
+  throw new Error(
+    `QQ_DRAMA_EPISODE_QUEUE_TIMEOUT: file=${fileName}; `
+      + `等待${Math.round(Math.max(30_000, timeoutMs) / 1000)}秒后页面仍未确认视频已进入上传队列；`
+      + `url=${page.url()}; pageText=${pageText || "空"}`,
+  );
 }
 
 export async function clickNextStep(page: Page, options: QqDramaRuntimeOptions, label = "下一步") {

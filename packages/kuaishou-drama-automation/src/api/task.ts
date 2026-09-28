@@ -87,6 +87,44 @@ function number(value: unknown) {
   return Number.isFinite(parsed) ? parsed : undefined;
 }
 
+const adVersionTitleFields = [
+  "adVersion2Title",
+  "adVersion3Title",
+  "adVersion4Title",
+  "adVersion5Title",
+  "adVersion6Title",
+] as const;
+const adVersionSuffixes = ["二", "三", "四", "五", "六"] as const;
+
+function requiredAdVersionTitleCount(publishType: string | undefined) {
+  if (publishType === "付费" || publishType === "广告") return 0;
+  if (publishType === "三个广告版本") return 2;
+  if (publishType === "五个广告版本") return 4;
+  return 5;
+}
+
+function generatedAdVersionTitle(title: string, index: number) {
+  const suffix = `·${adVersionSuffixes[index]}`;
+  const base = title.replace(/^《+|》+$/g, "").trim();
+  return `${base.slice(0, Math.max(1, 28 - suffix.length))}${suffix}`;
+}
+
+function normalizeAdVersionTitles(
+  playlet: Record<string, unknown>,
+  payload: Record<string, unknown>,
+  title: string,
+) {
+  const normalized = { ...playlet };
+  const count = requiredAdVersionTitleCount(text(playlet.publishType) ?? text(payload.publishType));
+  for (let index = 0; index < count; index += 1) {
+    const field = adVersionTitleFields[index]!;
+    normalized[field] = text(playlet[field])
+      ?? text(payload[field])
+      ?? generatedAdVersionTitle(title, index);
+  }
+  return normalized;
+}
+
 function normalizeClaimedTask(
   claimed: ClaimData,
   listedTask: ReadyTask | undefined,
@@ -105,9 +143,13 @@ function normalizeClaimedTask(
   const kuaishou = asRecord(payload.kuaishou);
   const playlet = asRecord(payload.kuaishouPlaylet ?? kuaishou.playlet);
   const productionCost = asRecord(payload.productionCost);
+  const title = text(playlet.title) ?? text(payload.name);
+  const normalizedPlaylet = title
+    ? normalizeAdVersionTitles(playlet, payload, title)
+    : playlet;
   const taskResult = kuaishouDramaTaskSchema.safeParse({
-    ...playlet,
-    title: text(playlet.title) ?? text(payload.name),
+    ...normalizedPlaylet,
+    title,
     summary: text(playlet.summary) ?? text(payload.summary),
     episodeCount: number(playlet.episodeCount) ?? number(payload.episodeCount),
     baiduPanResourceLink: text(playlet.baiduPanResourceLink) ?? text(payload.baiduPanResourceLink),

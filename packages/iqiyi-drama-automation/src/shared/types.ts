@@ -15,7 +15,7 @@ const requiredText = z.string().trim().min(1);
 const optionalText = z.string().trim().optional();
 const fileReference = requiredText.describe("本地文件路径或 HTTP(S) 下载地址。");
 const iqiyiCopyrightSchema = z.object({
-  productionProofFiles: z.array(fileReference).min(1).max(20),
+  productionProofFiles: z.array(fileReference).max(20).default([]),
 }).strict();
 
 export const iqiyiDramaTypeValues = ["short-drama", "comic-drama"] as const;

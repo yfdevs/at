@@ -98,6 +98,16 @@ async function reportWithRetry(
   throw lastError instanceof Error ? lastError : new Error(String(lastError));
 }
 
+export function iqiyiBaiduMaterialRequirements() {
+  return {
+    forceAssetDownload: true,
+    requiredOwnership: { minimumImages: 0 },
+    requiredOwnershipFiles: 0,
+    requiredPosterImages: 1,
+    requireAllDiscoveredAssets: false,
+  } as const;
+}
+
 async function ensureRemoteMaterials(
   task: ClaimedIqiyiDramaTask,
   options: IqiyiDramaRuntimeOptions,
@@ -128,11 +138,7 @@ async function ensureRemoteMaterials(
         localEpisodeVideoRoot: localMaterialRoot,
         episodeCount: task.playlet.episodeCount,
         downloadEpisodeVideos,
-        forceAssetDownload: true,
-        requiredOwnership: { minimumImages: 4 },
-        requiredOwnershipFiles: 4,
-        requiredPosterImages: 1,
-        requireAllDiscoveredAssets: true,
+        ...iqiyiBaiduMaterialRequirements(),
         posterFallback: {
           title: task.playlet.title,
           summary: task.playlet.summary,

@@ -891,7 +891,7 @@ export async function standardizePosterImagesToRoot(options: {
   // synopsis. Snapshot them before replacing the directory with standardized covers.
   const [originalImages, textFiles] = await Promise.all([
     snapshotFiles(ownershipImageExtensions, dramaPosterOriginalImageDirectoryName),
-    snapshotFiles(new Set([".txt", ".md"]), dramaPosterTextDirectoryName),
+    snapshotFiles(new Set([".txt", ".md", ".doc", ".docx", ".rtf"]), dramaPosterTextDirectoryName),
   ]);
   const sources = await Promise.all(options.files.map(async (source) => ({
     source,

@@ -72,13 +72,12 @@ export function TaskStatisticsChart({ platform }: { platform: TaskAnalyticsPlatf
     if (!element || loading || result.unavailableReason || !hasData) return;
 
     const dark = document.documentElement.classList.contains("dark");
-    const chart = echarts.init(element, undefined, { renderer: "canvas" });
     const ink = dark ? "#fafafa" : "#18181b";
     const muted = dark ? "#a1a1aa" : "#71717a";
     const hairline = dark ? "#3f3f46" : "#e4e4e7";
     const splitLine = dark ? "#27272a" : "#f4f4f5";
     const warning = dark ? "#fbbf24" : "#f5a623";
-    chart.setOption({
+    const option: echarts.EChartsCoreOption = {
       animationDuration: 600,
       animationEasing: "cubicOut",
       color: [ink, warning],
@@ -154,13 +153,22 @@ export function TaskStatisticsChart({ platform }: { platform: TaskAnalyticsPlatf
           emphasis: { itemStyle: { opacity: 0.75 } },
         },
       ],
-    });
+    };
 
-    const resizeObserver = new ResizeObserver(() => chart.resize());
+    let chart: echarts.ECharts | null = null;
+    const renderChart = () => {
+      if (element.clientWidth <= 0 || element.clientHeight <= 0) return;
+      chart ??= echarts.init(element, undefined, { renderer: "canvas" });
+      chart.setOption(option);
+      chart.resize();
+    };
+    const resizeObserver = new ResizeObserver(() => renderChart());
     resizeObserver.observe(element);
+    const animationFrame = window.requestAnimationFrame(renderChart);
     return () => {
+      window.cancelAnimationFrame(animationFrame);
       resizeObserver.disconnect();
-      chart.dispose();
+      chart?.dispose();
     };
   }, [hasData, loading, result]);
 

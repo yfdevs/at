@@ -95,6 +95,14 @@ test("accepts only the knowledge-property proof group for both iQIYI project typ
 
   assert.doesNotThrow(() => iqiyiDramaTaskPayloadSchema.parse(shortDrama));
   assert.doesNotThrow(() => iqiyiDramaTaskPayloadSchema.parse(comicDrama));
+  assert.deepEqual(iqiyiDramaTaskPayloadSchema.parse({
+    ...shortDrama,
+    copyright: { productionProofFiles: [] },
+  }).copyright.productionProofFiles, []);
+  assert.deepEqual(iqiyiDramaTaskPayloadSchema.parse({
+    ...shortDrama,
+    copyright: {},
+  }).copyright.productionProofFiles, []);
   assert.throws(() => iqiyiDramaTaskPayloadSchema.parse({
     ...shortDrama,
     copyright: {

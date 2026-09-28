@@ -31,26 +31,22 @@ test("defaults to four images of each ownership proof kind", () => {
   assert.deepEqual(getWechatOwnershipRequirements(), { minimumImages: 8 });
 });
 
-test("uploads the first two valid contracts followed by four AI-classified images of each kind", async () => {
+test("uploads four AI-classified images of each kind without contracts", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "wechat-production-proof-"));
   const resourceName = "权属规则测试剧";
   const ownershipDir = path.join(root, resourceName, "权属文件");
   await mkdir(ownershipDir, { recursive: true });
-  const invalidContract = path.join(root, "invalid.pdf");
-  const contracts = [1, 2, 3].map((index) => path.join(root, `contract-${index}.png`));
   const ownership = Array.from({ length: 8 }, (_, index) =>
     path.join(ownershipDir, `工程${index + 1}.png`));
 
   try {
-    await writeFile(invalidContract, "not an image");
-    await Promise.all(contracts.map(async (file, index) => writeFile(file, await image(index + 1))));
     await Promise.all(ownership.map(async (file, index) => writeFile(file, await image(index + 20))));
     configureWechatVideoRuntimeSettings({ localEpisodeVideoRoot: root });
     const config = {
       originalTitle: resourceName,
       playlet: {
         name: resourceName,
-        copyright: { productionProofFiles: [invalidContract, ...contracts] },
+        copyright: { productionProofFiles: ["https://example.com/ignored-contract.png"] },
       },
     } as Config;
     const available = await loadWechatOwnershipMaterials(config);
@@ -69,7 +65,7 @@ test("uploads the first two valid contracts followed by four AI-classified image
     const files = await prepareWechatProductionProofMaterials(config, aiClient);
 
     assert.equal(aiCalls, 8);
-    assert.deepEqual(files, [contracts[0], contracts[1], ...ownership]);
+    assert.deepEqual(files, ownership);
     assert.deepEqual(config.playlet.copyright.productionProofFiles, files);
     assert.ok(files.every((file) => !file.includes("权属工程文件合成")));
   } finally {
@@ -83,12 +79,10 @@ test("uses separate configured counts for download validation and AI upload sele
   const resourceName = "自定义权属数量测试剧";
   const ownershipDir = path.join(root, resourceName, "权属文件");
   await mkdir(ownershipDir, { recursive: true });
-  const contract = path.join(root, "contract.png");
   const ownership = Array.from({ length: 5 }, (_, index) =>
     path.join(ownershipDir, `工程${index + 1}.png`));
 
   try {
-    await writeFile(contract, await image(1));
     await Promise.all(ownership.map(async (file, index) => writeFile(file, await image(index + 30))));
     configureWechatVideoRuntimeSettings({
       localEpisodeVideoRoot: root,
@@ -100,7 +94,7 @@ test("uses separate configured counts for download validation and AI upload sele
 
     const config = {
       originalTitle: resourceName,
-      playlet: { name: resourceName, copyright: { productionProofFiles: [contract] } },
+      playlet: { name: resourceName, copyright: {} },
     } as Config;
     assert.equal((await loadWechatOwnershipMaterials(config)).length, 5);
     let aiCalls = 0;
@@ -114,7 +108,7 @@ test("uses separate configured counts for download validation and AI upload sele
       generateText: async () => { throw new Error("not used"); },
     };
 
-    assert.deepEqual(await prepareWechatProductionProofMaterials(config, aiClient), [contract, ...ownership]);
+    assert.deepEqual(await prepareWechatProductionProofMaterials(config, aiClient), ownership);
     assert.equal(aiCalls, 5);
   } finally {
     configureWechatVideoRuntimeSettings();

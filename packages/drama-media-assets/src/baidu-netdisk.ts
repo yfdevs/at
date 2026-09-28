@@ -539,7 +539,7 @@ async function listCurrentMetadataFiles(
         await walk(file, depth + 1);
         continue;
       }
-      if (!entry.isFile() || !/\.(?:txt|md|png|jpe?g|bmp|webp)$/i.test(entry.name)) continue;
+      if (!entry.isFile() || !/\.(?:txt|md|docx?|rtf|png|jpe?g|bmp|webp)$/i.test(entry.name)) continue;
       const info = await stat(file).catch(() => undefined);
       if (!info?.isFile() || info.size <= 0) continue;
       files.set(path.resolve(file).toLowerCase(), {
@@ -547,7 +547,7 @@ async function listCurrentMetadataFiles(
         name: entry.name,
         size: info.size,
         modifiedAtMs: info.mtimeMs,
-        isText: /\.(?:txt|md)$/i.test(entry.name),
+        isText: /\.(?:txt|md|docx?|rtf)$/i.test(entry.name),
       });
     }
   };

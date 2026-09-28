@@ -4,6 +4,7 @@ import { fileURLToPath } from "node:url";
 import { chromium } from "playwright";
 
 import {
+  assertPinduoduoEpisodeFileCount,
   bindAllUploadedVideosToDrama,
   createDramaAndBindAllUploadedVideos,
   pinduoduoUploadVerifyTimeoutMs,
@@ -16,6 +17,7 @@ import {
   readShortplayApplyRecords,
   shouldUploadApprovedShortplay,
 } from "../../src/app/shortplay-manage-page.js";
+import { createdTopicRepairState } from "../../src/storage/pinduoduo-upload-records-repository.js";
 
 test("only queues approved shortplays whose topic has not been created", () => {
   const records = readShortplayApplyRecords({
@@ -51,6 +53,54 @@ test("splits Pinduoduo videos into upload pages of at most 50 files", () => {
 
   assert.deepEqual(batches.map((batch) => batch.length), [50, 50, 23]);
   assert.deepEqual(batches.flat(), files);
+});
+
+test("rejects an incomplete local episode directory before uploading", () => {
+  assert.throws(
+    () => assertPinduoduoEpisodeFileCount(["第1集.mp4", "第2集.mp4"], 3),
+    /PINDUODUO_EPISODE_FILE_COUNT_MISMATCH.*应有 3 集.*实际发现 2 个视频/u,
+  );
+  assert.doesNotThrow(() =>
+    assertPinduoduoEpisodeFileCount(["第1集.mp4", "第2集.mp4"], 2),
+  );
+});
+
+test("retains an interrupted multi-batch record without replaying completed batches", () => {
+  assert.deepEqual(
+    createdTopicRepairState({
+      attempts: 2,
+      createdAt: "2026-09-27T00:00:00.000Z",
+      episodeCount: 83,
+      platformApplyId: 2,
+      status: "FAILED",
+      title: "断点短剧",
+      totalBatchCount: 2,
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      uploadedBatchCount: 1,
+    }),
+    {
+      resetToPending: false,
+      totalBatchCount: 2,
+      uploadedBatchCount: 1,
+    },
+  );
+});
+
+test("does not reopen a fully completed multi-batch record", () => {
+  assert.equal(
+    createdTopicRepairState({
+      attempts: 1,
+      createdAt: "2026-09-27T00:00:00.000Z",
+      episodeCount: 83,
+      platformApplyId: 3,
+      status: "UPLOADED",
+      title: "完整短剧",
+      totalBatchCount: 2,
+      updatedAt: "2026-09-27T00:00:00.000Z",
+      uploadedBatchCount: 2,
+    }),
+    undefined,
+  );
 });
 
 test("waits until every file card reports video upload success", async () => {

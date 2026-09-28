@@ -205,17 +205,16 @@ async function prepareProofFile(
 async function prepareProofReferences(
   references: string[],
   taskDir: string,
+  fallbackCover: string,
   options: IqiyiDramaRuntimeOptions,
 ) {
   const label = "知识产权声明文件";
-  if (references.length === 0) {
-    throw new Error(`[copyright-proof-invalid] ${label}至少需要上传 1 个文件。`);
-  }
-  if (references.length > 20) {
-    throw new Error(`[iqiyi-material-invalid] ${label}最多上传 20 个文件，实际 ${references.length} 个。`);
+  const sources = fillIqiyiProductionProofSources(references, fallbackCover);
+  if (sources.length > 20) {
+    throw new Error(`[iqiyi-material-invalid] ${label}最多上传 20 个文件，实际 ${sources.length} 个。`);
   }
   const resolved = await Promise.all(
-    references.map((reference, index) =>
+    sources.map((reference, index) =>
       resolveIqiyiAsset(reference, options, `production-proof-${index + 1}`)
     ),
   );
@@ -225,6 +224,13 @@ async function prepareProofReferences(
       filePrefix: "production-proof",
     })),
   );
+}
+
+export function fillIqiyiProductionProofSources(
+  references: string[],
+  fallbackCover: string,
+) {
+  return references.length > 0 ? references : [fallbackCover];
 }
 
 async function prepareCopyrightProofFiles(
@@ -479,6 +485,7 @@ export async function prepareIqiyiMaterials(
     prepareProofReferences(
       task.playlet.copyright.productionProofFiles,
       taskDir,
+      verticalCover,
       options,
     ),
     prepareCopyrightProofFiles(root, resourceName, taskDir, verticalCover, options),
