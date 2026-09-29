@@ -19,6 +19,9 @@ export type WechatMiniProgramServiceStatus = {
 export type WechatMiniProgramConfig = {
   apiBaseUrl: string
   taskApiPrefix: string
+  catalogApiBaseUrl: string
+  materialUploadApiBaseUrl: string
+  catalogAuthorizationToken: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string

@@ -137,6 +137,7 @@ export type BaiduNetdiskEnsureDownloadedRequest = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount?: number;
+  episodeDownloadLimit?: number;
   inferEpisodeCount?: boolean;
   downloadEpisodeVideos?: boolean;
   downloadAssetMaterials?: boolean;
@@ -682,6 +683,9 @@ function normalizeEnsureDownloadRequest(
   const resourceName = sanitizeWindowsName(request.resourceName);
   const localEpisodeVideoRoot = request.localEpisodeVideoRoot.trim();
   const episodeCount = Number(request.episodeCount);
+  const episodeDownloadLimit = request.episodeDownloadLimit === undefined
+    ? undefined
+    : Number(request.episodeDownloadLimit);
   const inferEpisodeCount = request.inferEpisodeCount === true;
   const downloadEpisodeVideos = request.downloadEpisodeVideos !== false;
 
@@ -701,6 +705,12 @@ function normalizeEnsureDownloadRequest(
   ) {
     throw new Error("剧集数量必须是正整数，或启用自动识别集数。");
   }
+  if (
+    episodeDownloadLimit !== undefined
+    && (!Number.isInteger(episodeDownloadLimit) || episodeDownloadLimit <= 0)
+  ) {
+    throw new Error("仅下载前 X 集的集数必须是正整数。");
+  }
 
   return {
     shareText,
@@ -709,6 +719,7 @@ function normalizeEnsureDownloadRequest(
     episodeCount: Number.isInteger(episodeCount) && episodeCount >= 0
       ? episodeCount
       : undefined,
+    episodeDownloadLimit,
     inferEpisodeCount,
     downloadEpisodeVideos,
     downloadAssetMaterials: request.downloadAssetMaterials,
@@ -835,6 +846,7 @@ async function importBaiduNetdiskDownloadRuntimePackage() {
       shareText: string;
       resourceName?: string;
       expectedEpisodeCount?: number;
+      episodeDownloadLimit?: number;
       inferEpisodeCount?: boolean;
       expectedOwnershipCounts?: {
         minimumImages?: number;
@@ -1035,7 +1047,12 @@ export async function ensureBaiduNetdiskShareDownloaded(
     resourceName: normalizedRequest.resourceName,
   });
   const shareKey = shareKeyFromText(normalizedRequest.shareText);
-  const id = createRecordId(shareKey, normalizedRequest.resourceName);
+  const id = createRecordId(
+    shareKey,
+    normalizedRequest.episodeDownloadLimit
+      ? `${normalizedRequest.resourceName}\nlimit=${normalizedRequest.episodeDownloadLimit}`
+      : normalizedRequest.resourceName,
+  );
   const localPath = playletDir(
     normalizedRequest.localEpisodeVideoRoot,
     normalizedRequest.resourceName,
@@ -1155,6 +1172,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
       resourceName: request.resourceName,
       localEpisodeVideoRoot: request.localEpisodeVideoRoot,
       episodeCount: request.episodeCount,
+      episodeDownloadLimit: request.episodeDownloadLimit,
       downloadEpisodeVideos: request.downloadEpisodeVideos,
       downloadAssetMaterials: request.downloadAssetMaterials,
       inferEpisodeCount: request.inferEpisodeCount,
@@ -1176,6 +1194,7 @@ async function ensureBaiduNetdiskShareDownloadedOnce(
             shareText: downloadRequest.shareText,
             resourceName: downloadRequest.resourceName,
             expectedEpisodeCount: downloadRequest.expectedEpisodeCount,
+            episodeDownloadLimit: downloadRequest.episodeDownloadLimit,
             inferEpisodeCount: downloadRequest.inferEpisodeCount,
             expectedOwnershipCounts: downloadRequest.expectedOwnershipCounts,
             expectedOwnershipFiles: downloadRequest.expectedOwnershipFiles,

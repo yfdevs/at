@@ -1,6 +1,11 @@
 import path from "node:path";
 import type { Frame, Locator, Page } from "playwright";
-import { TAOBAO_DRAMA_MIN_SETTLE_MS } from "../shared/constants.js";
+import {
+  TAOBAO_DRAMA_BATCH_PUBLISH_URL,
+  TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH,
+  TAOBAO_DRAMA_MIN_SETTLE_MS,
+  taobaoEpisodeBatchRanges,
+} from "../shared/constants.js";
 import { findTaobaoEpisodeVideos, validateTaobaoEpisodeVideos } from "../shared/local-materials.js";
 import { log } from "../shared/logger.js";
 import type { TaobaoBatchUploadTask, TaobaoDramaRuntimeOptions } from "../shared/types.js";
@@ -9,11 +14,17 @@ import {
   taobaoContentTags,
   type TaobaoEpisodeMetadata,
 } from "../shared/episode-metadata.js";
-import { isTaobaoCreatorSuccessNavigation } from "./browser-session.js";
+import {
+  isTaobaoBatchPublishSuccessUrl,
+  isTaobaoCreatorSuccessNavigation,
+  waitForTaobaoPage,
+} from "./browser-session.js";
 
-export const TAOBAO_MAX_FILES_PER_SELECTION = 10;
+export const TAOBAO_MAX_FILES_PER_SELECTION = TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH;
 export const TAOBAO_DROPDOWN_END_SETTLE_MS = 8_000;
 export const TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS = 120_000;
+export const TAOBAO_PUBLISH_PRECLICK_MIN_MS = 4_000;
+export const TAOBAO_PUBLISH_PRECLICK_MAX_MS = 6_000;
 type TaobaoDomScope = Page | Frame;
 
 export interface TaobaoDropdownSearchState {
@@ -210,6 +221,19 @@ export function isTaobaoVideoInputCandidate(attributes: {
   return explicitVideo || untypedBatchVideo;
 }
 
+export function isTaobaoUploadReady(input: {
+  uploadEvidence: boolean;
+  pending: boolean;
+  buttonReady: boolean;
+  matchedFileCount: number;
+  expectedFileCount: number;
+}) {
+  return input.uploadEvidence &&
+    !input.pending &&
+    input.buttonReady &&
+    input.matchedFileCount >= input.expectedFileCount;
+}
+
 async function videoInput(page: Page): Promise<Locator> {
   const inputs = page.locator("input[type='file']:not([disabled])");
   const count = await inputs.count();
@@ -266,7 +290,6 @@ async function waitForUploadComplete(
   let lastLine = "";
   let lastPageSignature = "";
   let uploadEvidence = false;
-  let stableReadySince: number | undefined;
   let uploadScope: TaobaoDomScope = page;
   while (Date.now() < deadline) {
     deadline += await waitForTaobaoHumanVerification(page, options);
@@ -321,20 +344,16 @@ async function waitForUploadComplete(
 
     const publishButton = await batchPublishButton(uploadScope);
     const buttonReady = await publishButton.isEnabled().catch(() => false);
-    const allFilesVisible = matchedFileCount >= files.length;
-    const ready = uploadEvidence && !summary.pending && buttonReady;
-    if (ready && (summary.complete || allFilesVisible)) {
+    const ready = isTaobaoUploadReady({
+      uploadEvidence,
+      pending: summary.pending,
+      buttonReady,
+      matchedFileCount,
+      expectedFileCount: files.length,
+    });
+    if (ready) {
       log(options, `[taobao-drama] ${files.length} 个剧集视频已全部上传完成`);
       return uploadScope;
-    }
-    if (ready) {
-      stableReadySince ??= Date.now();
-      if (Date.now() - stableReadySince >= 10_000) {
-        log(options, `[taobao-drama] 上传状态连续稳定10秒，确认 ${files.length} 个剧集视频已上传完成`);
-        return uploadScope;
-      }
-    } else {
-      stableReadySince = undefined;
     }
     await ownerPage(uploadScope).waitForTimeout(1_000);
   }
@@ -343,6 +362,9 @@ async function waitForUploadComplete(
 
 async function publishSucceeded(scope: TaobaoDomScope, urlBeforeSubmit: string) {
   const page = ownerPage(scope);
+  if (page.context().pages().some(
+    (candidate) => !candidate.isClosed() && isTaobaoBatchPublishSuccessUrl(candidate.url()),
+  )) return true;
   if (
     page.url() !== urlBeforeSubmit &&
     isTaobaoCreatorSuccessNavigation(page.url(), "batch")
@@ -355,32 +377,86 @@ async function publishSucceeded(scope: TaobaoDomScope, urlBeforeSubmit: string) 
     .catch(() => false);
 }
 
+async function clickTaobaoPublishControl(
+  page: Page,
+  control: Locator,
+  options: TaobaoDramaRuntimeOptions,
+  label: string,
+) {
+  await waitForTaobaoHumanVerification(page, options);
+  await control.scrollIntoViewIfNeeded({ timeout: 10_000 }).catch(() => undefined);
+  log(options, `[taobao-drama] ${label}已就绪，模拟人工停留后点击`);
+  await paceTaobaoForm(page, TAOBAO_PUBLISH_PRECLICK_MIN_MS, TAOBAO_PUBLISH_PRECLICK_MAX_MS);
+  await waitForTaobaoHumanVerification(page, options);
+  await control.hover({ timeout: 10_000 }).catch(() => undefined);
+  await paceTaobaoForm(page, 800, 1_400);
+  try {
+    await control.click({ timeout: 30_000, delay: 150 });
+  } catch (error) {
+    if (page.context().pages().some(
+      (candidate) => !candidate.isClosed() && isTaobaoBatchPublishSuccessUrl(candidate.url()),
+    )) {
+      log(options, `[taobao-drama] ${label}触发工作台跳转，按发布成功继续处理`);
+      return 0;
+    }
+    throw error;
+  }
+  await page.waitForTimeout(800);
+  return waitForTaobaoHumanVerification(page, options);
+}
+
 async function clickBatchPublish(scope: TaobaoDomScope, options: TaobaoDramaRuntimeOptions) {
   const page = ownerPage(scope);
   const publishButton = await batchPublishButton(scope);
   await publishButton.waitFor({ state: "visible", timeout: 60_000 });
   if (!(await publishButton.isEnabled())) throw new Error("TAOBAO_DRAMA_BATCH_PUBLISH_NOT_READY");
   const urlBeforeSubmit = page.url();
-  await publishButton.click({ timeout: 30_000 });
+  let verificationWaitMs = await clickTaobaoPublishControl(
+    page,
+    publishButton,
+    options,
+    "批量发布按钮",
+  );
 
   const confirmDialog = scope
     .locator(".next-dialog:visible, .ant-modal:visible, .semi-modal:visible, [role='dialog']:visible")
     .filter({ hasText: /发布/ })
     .last();
   let clickedAt = Date.now();
-  if (await confirmDialog.isVisible({ timeout: 2_000 }).catch(() => false)) {
+  let confirmVisible = await confirmDialog.isVisible({ timeout: 5_000 }).catch(() => false);
+  if (
+    verificationWaitMs > 0 &&
+    !confirmVisible &&
+    !(await publishSucceeded(scope, urlBeforeSubmit)) &&
+    await publishButton.isEnabled().catch(() => false)
+  ) {
+    log(options, "[taobao-drama] 验证完成后发布动作尚未生效，按人工节奏重试一次");
+    verificationWaitMs += await clickTaobaoPublishControl(
+      page,
+      publishButton,
+      options,
+      "批量发布按钮",
+    );
+    confirmVisible = await confirmDialog.isVisible({ timeout: 5_000 }).catch(() => false);
+  }
+  if (confirmVisible) {
     const confirm = confirmDialog
       .getByRole("button", { name: /^\s*(?:确认发布|确定|确认)\s*$/ })
       .filter({ visible: true })
       .last();
-    await confirm.click({ timeout: 30_000 });
+    verificationWaitMs += await clickTaobaoPublishControl(page, confirm, options, "确认发布按钮");
     clickedAt = Date.now();
   }
-  log(options, "[taobao-drama] 已点击批量发布，进入至少10秒结算期");
+  log(
+    options,
+    `[taobao-drama] 已点击批量发布，进入至少10秒结算期` +
+      (verificationWaitMs > 0 ? `；验证码暂停=${Math.ceil(verificationWaitMs / 1_000)}秒` : ""),
+  );
 
   let success = false;
-  const deadline = clickedAt + 60_000;
+  let deadline = clickedAt + 60_000;
   while (Date.now() < deadline) {
+    deadline += await waitForTaobaoHumanVerification(page, options);
     success ||= await publishSucceeded(scope, urlBeforeSubmit);
     if (success && Date.now() - clickedAt >= TAOBAO_DRAMA_MIN_SETTLE_MS) break;
     const failure = await scope
@@ -877,30 +953,56 @@ export async function uploadAndPublishTaobaoEpisodes(
 ) {
   await validateTaobaoEpisodeVideos(task, options);
   const episodes = await findTaobaoEpisodeVideos(task, options);
-  const files = episodes.map((episode) => episode.file);
-  log(options, `[taobao-drama] 准备上传 ${files.length} 个剧集视频并逐集填写描述和标签`);
+  const ranges = taobaoEpisodeBatchRanges(episodes.length);
+  log(
+    options,
+    `[taobao-drama] 准备上传 ${episodes.length} 个剧集视频，共 ${ranges.length} 个发布批次`,
+  );
 
-  for (let offset = 0; offset < files.length; offset += TAOBAO_MAX_FILES_PER_SELECTION) {
+  for (const [batchIndex, range] of ranges.entries()) {
+    if (batchIndex > 0) {
+      await page.goto(TAOBAO_DRAMA_BATCH_PUBLISH_URL, {
+        waitUntil: "domcontentloaded",
+        timeout: 60_000,
+      });
+      await waitForTaobaoPage(page, "batch", options);
+    }
     await waitForTaobaoHumanVerification(page, options);
-    const batch = files.slice(offset, offset + TAOBAO_MAX_FILES_PER_SELECTION);
+    const batchEpisodes = episodes.filter(
+      (episode) => episode.index >= range.start && episode.index <= range.end,
+    );
+    const expectedBatchCount = range.end - range.start + 1;
+    if (batchEpisodes.length !== expectedBatchCount) {
+      throw new Error(
+        `TAOBAO_DRAMA_EPISODE_BATCH_INCOMPLETE: range=${range.start}-${range.end} actual=${batchEpisodes.length}`,
+      );
+    }
+    const batch = batchEpisodes.map((episode) => episode.file);
     const input = await videoInput(page);
     await input.setInputFiles(batch, { timeout: 120_000 });
     log(
       options,
-      `[taobao-drama] 已选择第 ${Math.floor(offset / TAOBAO_MAX_FILES_PER_SELECTION) + 1} 批视频：` +
-        `${batch.length} 个，首文件=${path.basename(batch[0] ?? "-")}`,
+      `[taobao-drama] 已选择发布批次 ${batchIndex + 1}/${ranges.length}：` +
+        `第${range.start}-${range.end}集，共 ${batch.length} 个视频`,
     );
     await waitForTaobaoHumanVerification(page, options);
     await page.waitForTimeout(500);
-    // Uploading dozens of files concurrently causes Taobao to reject most of the
-    // batch. Finish each small group before selecting the next one.
+    // Taobao internally queues up to 100 selected videos. Selecting them in small
+    // follow-up batches can leave later files permanently stuck at “等待上传中”.
     await waitForUploadComplete(page, batch, options);
+    await fillEpisodeMetadata(page, batchEpisodes, metadata, task, options);
+    const publishScope = await findLiveTaobaoBatchScope(
+      page,
+      path.basename(batch[batch.length - 1] ?? batch[0] ?? ""),
+    );
+    await runWithTaobaoVerificationRetry(
+      page,
+      options,
+      () => clickBatchPublish(publishScope, options),
+    );
+    log(
+      options,
+      `[taobao-drama] 发布批次 ${batchIndex + 1}/${ranges.length} 已完成：第${range.start}-${range.end}集`,
+    );
   }
-
-  await fillEpisodeMetadata(page, episodes, metadata, task, options);
-  const publishScope = await findLiveTaobaoBatchScope(
-    page,
-    path.basename(files[files.length - 1] ?? files[0] ?? ""),
-  );
-  await runWithTaobaoVerificationRetry(page, options, () => clickBatchPublish(publishScope, options));
 }

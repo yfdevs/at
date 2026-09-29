@@ -66,6 +66,16 @@ export function isTaobaoCreatorSuccessNavigation(
   }
 }
 
+export function isTaobaoBatchPublishSuccessUrl(url: string) {
+  try {
+    const parsed = new URL(url);
+    return parsed.hostname === "creator.guanghe.taobao.com" &&
+      parsed.pathname.replace(/\/+$/, "") === "/page/workspace/tb";
+  } catch {
+    return false;
+  }
+}
+
 async function targetReady(page: Page, target: "collection" | "batch") {
   const marker = page
     .getByText(target === "collection" ? /合集类型|短剧类型/ : /上传视频|上传文件|添加视频/)

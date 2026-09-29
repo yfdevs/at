@@ -1,6 +1,7 @@
 import { basename } from "node:path";
 import { readFile } from "node:fs/promises";
 import * as XLSX from "xlsx";
+import { TAOBAO_DRAMA_MAX_EPISODES_PER_TASK } from "./constants.js";
 import type { TaobaoBatchUploadTask } from "./types.js";
 
 type CellValue = string | number | boolean | Date | null | undefined;
@@ -92,8 +93,12 @@ export function parseTaobaoWorkbookRows(
       else if (!hasBaiduExtractionCode(baiduPanResourceLink)) {
         rowIssues.push("百度网盘链接缺少4位提取码（链接需包含 ?pwd=xxxx）");
       }
-      if (!Number.isInteger(episodeCount) || episodeCount < 1 || episodeCount > 100) {
-        rowIssues.push("集数必须是 1-100 的整数");
+      if (
+        !Number.isInteger(episodeCount) ||
+        episodeCount < 1 ||
+        episodeCount > TAOBAO_DRAMA_MAX_EPISODES_PER_TASK
+      ) {
+        rowIssues.push(`集数必须是 1-${TAOBAO_DRAMA_MAX_EPISODES_PER_TASK} 的整数`);
       }
       if (rowIssues.length) {
         issues.push({ sheet: sheet.name, row: rowNumber, message: rowIssues.join("；") });

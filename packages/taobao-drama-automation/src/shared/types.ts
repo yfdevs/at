@@ -1,5 +1,6 @@
 import { z } from "zod";
 import type { DramaAiClient } from "@drama/ai";
+import { TAOBAO_DRAMA_MAX_EPISODES_PER_TASK } from "./constants.js";
 
 const requiredText = z.string().trim().min(1);
 
@@ -7,7 +8,7 @@ export const taobaoBatchUploadTaskSchema = z.object({
   id: requiredText,
   originalTitle: requiredText,
   baiduPanResourceLink: requiredText,
-  episodeCount: z.coerce.number().int().min(1).max(100),
+  episodeCount: z.coerce.number().int().min(1).max(TAOBAO_DRAMA_MAX_EPISODES_PER_TASK),
   sourceFileName: requiredText.optional(),
   sourceSheet: requiredText.optional(),
   sourceRow: z.number().int().positive().optional(),

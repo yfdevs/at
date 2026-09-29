@@ -5,6 +5,10 @@ export type QqDramaPublishVariant = {
   title: string;
 };
 
+export function shouldOpenNewQqDramaVariantPage(variantIndex: number) {
+  return variantIndex > 0;
+}
+
 export function createQqDramaPublishVariants(
   task: ClaimedQqDramaTask,
 ): QqDramaPublishVariant[] {

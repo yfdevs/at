@@ -2,11 +2,27 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  isTaobaoBatchPublishSuccessUrl,
   isTaobaoCreatorSuccessNavigation,
   isTaobaoTargetUrl,
   taobaoLoginStateFromPage,
   taobaoLoginStateFromUrl,
 } from "../../src/automation/browser-session.js";
+
+test("treats the Taobao workspace redirect as an explicit batch-publish success", () => {
+  assert.equal(isTaobaoBatchPublishSuccessUrl(
+    "https://creator.guanghe.taobao.com/page/workspace/tb",
+  ), true);
+  assert.equal(isTaobaoBatchPublishSuccessUrl(
+    "https://creator.guanghe.taobao.com/page/workspace/tb/?from=publish",
+  ), true);
+  assert.equal(isTaobaoBatchPublishSuccessUrl(
+    "https://creator.guanghe.taobao.com/page/unify/creation-tool/batch-publish",
+  ), false);
+  assert.equal(isTaobaoBatchPublishSuccessUrl(
+    "https://evil.example/page/workspace/tb",
+  ), false);
+});
 
 test("recognizes Taobao login, security verification and creator states", () => {
   assert.equal(taobaoLoginStateFromUrl("https://login.taobao.com/havanaone/login/login.htm"), "login-required");

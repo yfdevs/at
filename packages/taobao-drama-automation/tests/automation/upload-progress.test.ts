@@ -1,8 +1,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
+import { taobaoEpisodeBatchRanges } from "../../src/shared/constants.js";
 
 import {
   advanceTaobaoDropdownSearchState,
+  isTaobaoUploadReady,
   isTaobaoVideoInputCandidate,
   normalizeTaobaoDropdownText,
   scoreTaobaoContentTagMatch,
@@ -11,10 +13,42 @@ import {
   TAOBAO_DROPDOWN_END_SETTLE_MS,
   TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS,
   TAOBAO_MAX_FILES_PER_SELECTION,
+  TAOBAO_PUBLISH_PRECLICK_MAX_MS,
+  TAOBAO_PUBLISH_PRECLICK_MIN_MS,
 } from "../../src/automation/episodes.js";
 
-test("limits each Taobao upload selection to a stable small batch", () => {
-  assert.equal(TAOBAO_MAX_FILES_PER_SELECTION, 10);
+test("selects the complete Taobao task in one upload operation", () => {
+  assert.equal(TAOBAO_MAX_FILES_PER_SELECTION, 100);
+});
+
+test("splits a Taobao task over 100 episodes into sequential publish batches", () => {
+  assert.deepEqual(taobaoEpisodeBatchRanges(235), [
+    { start: 1, end: 100 },
+    { start: 101, end: 200 },
+    { start: 201, end: 235 },
+  ]);
+});
+
+test("never treats a partial 20-item Taobao queue as a complete larger task", () => {
+  assert.equal(isTaobaoUploadReady({
+    uploadEvidence: true,
+    pending: false,
+    buttonReady: true,
+    matchedFileCount: 20,
+    expectedFileCount: 78,
+  }), false);
+  assert.equal(isTaobaoUploadReady({
+    uploadEvidence: true,
+    pending: false,
+    buttonReady: true,
+    matchedFileCount: 78,
+    expectedFileCount: 78,
+  }), true);
+});
+
+test("paces the final Taobao publish action more slowly than normal form actions", () => {
+  assert.equal(TAOBAO_PUBLISH_PRECLICK_MIN_MS, 4_000);
+  assert.equal(TAOBAO_PUBLISH_PRECLICK_MAX_MS, 6_000);
 });
 
 test("recognizes Taobao batch items whose status is already uploaded", () => {

@@ -19,10 +19,24 @@ import {
   matchBaiduLeadingEpisodeIndex,
   planBaiduNetdiskSyncItem,
   resolveBaiduAssetDownloadRoot,
+  selectLeadingEpisodeFiles,
   shouldDownloadBaiduOwnershipDirectories,
   validateRemoteEpisodePathSelection,
   type RemoteVideoDirectoryCandidateScore,
 } from "../../src/workflows/download-baidu-folder.js";
+
+test("limits episode downloads without changing the default full selection", () => {
+  const files = Array.from({ length: 8 }, (_, index) => ({
+    index: index + 1,
+    name: `第${index + 1}集.mp4`,
+  }));
+  assert.equal(selectLeadingEpisodeFiles(files), files);
+  assert.deepEqual(
+    selectLeadingEpisodeFiles(files, 4).map((file) => file.index),
+    [1, 2, 3, 4],
+  );
+  assert.throws(() => selectLeadingEpisodeFiles(files, 0), /正整数/);
+});
 
 test("isolates generic asset directories under each drama download root", () => {
   const first = resolveBaiduAssetDownloadRoot("D:\\短剧素材", "剧目甲");

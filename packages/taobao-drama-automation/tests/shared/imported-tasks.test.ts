@@ -19,11 +19,12 @@ test("imports Taobao tasks from Chinese Excel headers", () => {
       ["说明", "淘宝批量上传"],
       ["剧名", "百度网盘链接", "集数"],
       ["逆风翻盘", "https://pan.baidu.com/s/example?pwd=1234", "60"],
+      ["千集长剧", "https://pan.baidu.com/s/long?pwd=5678", "235"],
       ["错误任务", "https://example.com/video", "0"],
     ],
   }]);
 
-  assert.equal(result.tasks.length, 1);
+  assert.equal(result.tasks.length, 2);
   assert.deepEqual(result.tasks[0], {
     id: "任务.xlsx:上传清单:3:逆风翻盘",
     originalTitle: "逆风翻盘",
@@ -33,9 +34,10 @@ test("imports Taobao tasks from Chinese Excel headers", () => {
     sourceSheet: "上传清单",
     sourceRow: 3,
   });
+  assert.equal(result.tasks[1]?.episodeCount, 235);
   assert.equal(result.issues.length, 1);
   assert.match(result.issues[0]!.message, /百度网盘链接/);
-  assert.match(result.issues[0]!.message, /1-100/);
+  assert.match(result.issues[0]!.message, /1-1000/);
 });
 
 test("reports a worksheet that is missing required headers", () => {

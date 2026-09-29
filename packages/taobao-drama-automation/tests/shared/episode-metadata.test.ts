@@ -55,6 +55,48 @@ test("reads synopsis text and generates all episode summaries", async () => {
   }
 });
 
+test("generates metadata in 100-episode ranges for a long Taobao drama", async () => {
+  const root = await mkdtemp(path.join(os.tmpdir(), "taobao-long-metadata-"));
+  await mkdir(path.join(root, "千集长剧"), { recursive: true });
+  const requestedRanges: string[] = [];
+  const client = {
+    async generateText(request: Parameters<DramaAiClient["generateText"]>[0]) {
+      const match = request.prompt.match(/本次只输出第(\d+)集到第(\d+)集/);
+      assert.ok(match);
+      const start = Number(match[1]);
+      const end = Number(match[2]);
+      requestedRanges.push(`${start}-${end}`);
+      return {
+        finishReason: "stop" as const,
+        model: "test-model",
+        text: JSON.stringify({
+          tag: "都市",
+          episodes: Array.from({ length: end - start + 1 }, (_, index) => ({
+            episode: start + index,
+            summary: `剧情推进${start + index}`,
+          })),
+        }),
+      };
+    },
+  } as DramaAiClient;
+  try {
+    const metadata = await prepareTaobaoEpisodeMetadata({
+      id: "task-long",
+      originalTitle: "千集长剧",
+      baiduPanResourceLink: "https://pan.baidu.com/s/example?pwd=1234",
+      episodeCount: 101,
+    }, {
+      localMaterialRoot: root,
+      aiClientFactory: () => client,
+    });
+    assert.deepEqual(requestedRanges, ["1-100", "101-101"]);
+    assert.equal(metadata.episodeSummaries.length, 101);
+    assert.equal(metadata.episodeSummaries[100], "剧情推进101");
+  } finally {
+    await rm(root, { recursive: true, force: true });
+  }
+});
+
 test("formats Taobao description and hashtag text", () => {
   assert.equal(formatTaobaoVideoDescription(3, "第三集：女主揭开豪门秘密。"), "第3集|女主揭开豪门秘密");
   assert.deepEqual(taobaoContentTags("顺手牵羊的代价", "现代"), ["AI短剧", "现代"]);

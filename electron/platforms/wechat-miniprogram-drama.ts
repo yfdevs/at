@@ -22,6 +22,7 @@ import {
   resolveGlobalPlatformDirectories,
 } from '../global-app-config'
 import { WechatMiniProgramDirectUploadCoordinator } from './wechat-miniprogram-drama/direct-upload'
+import { WechatMiniProgramCatalogUploadCoordinator } from './wechat-miniprogram-drama/catalog-upload'
 
 type WechatMiniProgramRuntime = {
   getStatus: () => {
@@ -50,6 +51,9 @@ export type WechatMiniProgramServiceStatus = {
 export type WechatMiniProgramConfig = {
   apiBaseUrl: string
   taskApiPrefix: string
+  catalogApiBaseUrl: string
+  materialUploadApiBaseUrl: string
+  catalogAuthorizationToken: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -90,6 +94,9 @@ type WechatMiniProgramStore = {
 const defaultWechatMiniProgramConfig: WechatMiniProgramConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
   taskApiPrefix: '/dramaAiRpa/wechatMiniProgram',
+  catalogApiBaseUrl: 'https://wxmini.xiaoshuo666.cn:8006',
+  materialUploadApiBaseUrl: 'http://115.191.39.138:19101',
+  catalogAuthorizationToken: '',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-miniprogram-drama',
@@ -126,6 +133,9 @@ const directUploadCoordinator = new WechatMiniProgramDirectUploadCoordinator({
   regularServiceRunning: () => runtimeController.running || runtimeController.startingPromise !== null,
   playwrightBrowsersPath,
 })
+const catalogUploadCoordinator = new WechatMiniProgramCatalogUploadCoordinator({
+  getSettings: () => readConfig(),
+})
 let store: Store<WechatMiniProgramStore> | null = null
 let contractCleanupTask: ScheduledTask | null = null
 
@@ -137,7 +147,7 @@ export function getWechatMiniProgramBrowserInstanceCount() {
 }
 
 export function getWechatMiniProgramRunningPlatformCount() {
-  return runtimeController.running || directUploadCoordinator.isActive() ? 1 : 0
+  return runtimeController.running || directUploadCoordinator.isActive() || catalogUploadCoordinator.isActive() ? 1 : 0
 }
 
 export function getWechatMiniProgramPlatformRuntimeSummary() {
@@ -162,7 +172,7 @@ export function getWechatMiniProgramPlatformRuntimeSummary() {
 
   return {
     platform: 'wechat-miniprogram-drama' as const,
-    running: runtimeController.running,
+    running: runtimeController.running || catalogUploadCoordinator.isActive(),
     browserInstanceCount: browserInstances.length,
     browserInstances,
     logDir: logDirPath(),
@@ -239,6 +249,9 @@ function normalizeConfig(
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatMiniProgramConfig.apiBaseUrl,
     taskApiPrefix: config.taskApiPrefix?.trim() || defaultWechatMiniProgramConfig.taskApiPrefix,
+    catalogApiBaseUrl: config.catalogApiBaseUrl?.trim() || defaultWechatMiniProgramConfig.catalogApiBaseUrl,
+    materialUploadApiBaseUrl: config.materialUploadApiBaseUrl?.trim() || defaultWechatMiniProgramConfig.materialUploadApiBaseUrl,
+    catalogAuthorizationToken: config.catalogAuthorizationToken?.trim() ?? '',
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatMiniProgramConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatMiniProgramConfig.closeFailedTaskPages,
     runDataDir:
@@ -460,6 +473,7 @@ export function registerWechatMiniProgramPlatformHandlers() {
   registerWechatMiniProgramRuntimeAssetCleanup()
   scheduleWechatCopyrightProofCleanup()
   directUploadCoordinator.registerHandlers()
+  catalogUploadCoordinator.registerHandlers()
 
   ipcMain.handle('wechat-miniprogram-drama:config:get', () => ({
     config: readConfig(),
@@ -547,11 +561,13 @@ export function registerWechatMiniProgramPlatformHandlers() {
 export function stopWechatMiniProgramPlatformRuntime() {
   runtimeController.stopInBackground()
   void directUploadCoordinator.stop()
+  void catalogUploadCoordinator.stop()
 }
 
 export async function stopWechatMiniProgramPlatformService() {
   await Promise.all([
     runtimeController.stop(),
     directUploadCoordinator.stop(),
+    catalogUploadCoordinator.stop(),
   ])
 }

@@ -19,8 +19,14 @@ test("validates a local Taobao batch upload task", () => {
   }).success, false);
   assert.equal(taobaoBatchUploadTaskSchema.safeParse({
     id: "task-3",
+    originalTitle: "超过单批集数",
+    baiduPanResourceLink: "https://pan.baidu.com/s/example",
+    episodeCount: 235,
+  }).success, true);
+  assert.equal(taobaoBatchUploadTaskSchema.safeParse({
+    id: "task-4",
     originalTitle: "超限集数",
     baiduPanResourceLink: "https://pan.baidu.com/s/example",
-    episodeCount: 101,
+    episodeCount: 1001,
   }).success, false);
 });

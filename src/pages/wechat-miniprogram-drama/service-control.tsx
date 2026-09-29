@@ -11,6 +11,7 @@ import {
   wechatMiniProgramService,
 } from "@/platforms/wechat-miniprogram-drama/service"
 import { wechatMiniProgramBaiduUploadService } from "@/platforms/wechat-miniprogram-drama/baidu-upload-service"
+import { wechatMiniProgramCatalogUploadService } from "@/platforms/wechat-miniprogram-drama/catalog-upload-service"
 
 const initialStatus: WechatMiniProgramServiceStatus = {
   running: false,
@@ -24,6 +25,7 @@ function successMessage(status: WechatMiniProgramServiceStatus) {
 
 export function WechatMiniProgramServiceControlPage() {
   const [openingDirectUpload, setOpeningDirectUpload] = useState(false)
+  const [openingCatalogUpload, setOpeningCatalogUpload] = useState(false)
   const {
     loading,
     pendingAction,
@@ -56,6 +58,20 @@ export function WechatMiniProgramServiceControlPage() {
     }
   }
 
+  const openCatalogUpload = async () => {
+    if (openingCatalogUpload) return
+    setOpeningCatalogUpload(true)
+    try {
+      await wechatMiniProgramCatalogUploadService.openWindow()
+    } catch (error) {
+      toast.error("无法打开前四集入库", {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    } finally {
+      setOpeningCatalogUpload(false)
+    }
+  }
+
   return (
     <ServiceControlButtonPage
       analyticsPlatform="wechat-miniprogram-drama"
@@ -64,16 +80,28 @@ export function WechatMiniProgramServiceControlPage() {
       running={status.running}
       onToggle={() => void toggleService()}
       additionalAction={
-        <Button
-          type="button"
-          size="lg"
-          variant="outline"
-          className="h-10 min-w-32 rounded-lg px-6"
-          disabled={openingDirectUpload}
-          onClick={() => void openDirectUpload()}
-        >
-          {openingDirectUpload ? "正在打开…" : "百度资源直传"}
-        </Button>
+        <div className="flex flex-wrap justify-center gap-2">
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            className="h-10 min-w-32 rounded-lg px-5"
+            disabled={openingDirectUpload}
+            onClick={() => void openDirectUpload()}
+          >
+            {openingDirectUpload ? "正在打开…" : "百度资源直传"}
+          </Button>
+          <Button
+            type="button"
+            size="lg"
+            variant="outline"
+            className="h-10 min-w-32 rounded-lg px-5"
+            disabled={openingCatalogUpload}
+            onClick={() => void openCatalogUpload()}
+          >
+            {openingCatalogUpload ? "正在打开…" : "前四集入库"}
+          </Button>
+        </div>
       }
     />
   )

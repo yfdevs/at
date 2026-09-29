@@ -25,7 +25,10 @@ import {
   validateQqDramaLocalEpisodeVideos,
 } from "../shared/local-episode-videos.js";
 import { prepareQqDramaPosterMaterials } from "../shared/poster-materials.js";
-import { createQqDramaPublishVariants } from "../shared/publish-variants.js";
+import {
+  createQqDramaPublishVariants,
+  shouldOpenNewQqDramaVariantPage,
+} from "../shared/publish-variants.js";
 import {
   launchQqDramaBrowserContext,
   qqDramaLoginStateFromUrl,
@@ -33,6 +36,7 @@ import {
   waitForLoginIfNeeded,
 } from "../automation/browser-session.js";
 import { openQqDramaAddPage, runQqDramaPublishTask } from "../automation/publish-runner.js";
+import { findUploadedQqDramaByExactTitle } from "../automation/drama-list.js";
 import {
   claimNextQqDramaTaskApi,
   reportQqDramaTaskErrorApi,
@@ -219,7 +223,12 @@ async function runTask(
   setLastTask: (status: LastTaskStatus) => void,
 ) {
   let publishSucceeded = false;
-  const publishedVariants: Array<{ kind: "primary" | "secondary"; title: string }> = [];
+  let activeVariantPage = page;
+  const additionalVariantPages: Page[] = [];
+  const variantResults = new Map<
+    "primary" | "secondary",
+    { kind: "primary" | "secondary"; title: string; existing: boolean; dramaId?: string }
+  >();
   setLastTask({
     accountTaskId: task.accountTaskId,
     originalTitle: task.originalTitle,
@@ -235,11 +244,54 @@ async function runTask(
         qqAccountName: task.qqAccountName,
       },
       async () => {
+        const variants = createQqDramaPublishVariants(task);
+        const missingVariants: typeof variants = [];
+        for (const variant of variants) {
+          const existingDrama = await findUploadedQqDramaByExactTitle(context, variant.title);
+          if (existingDrama) {
+            variantResults.set(variant.kind, {
+              ...variant,
+              existing: true,
+              dramaId: existingDrama.drama_id,
+            });
+            log(options, `[qq-drama] variant already exists; skipping upload`, {
+              kind: variant.kind,
+              title: variant.title,
+              dramaId: existingDrama.drama_id,
+              approvalStatus: existingDrama.approval_status,
+              uploadedEpisodeCount: existingDrama.uploaded_episode_count,
+            });
+          } else {
+            missingVariants.push(variant);
+            log(options, `[qq-drama] variant not found; upload required`, {
+              kind: variant.kind,
+              title: variant.title,
+            });
+          }
+        }
+
+        if (missingVariants.length === 0) {
+          log(options, `[qq-drama] all publish variants already exist; reporting task success`);
+          return;
+        }
+
         await ensureBaiduNetdiskResourceReady(task, options);
         await validateQqDramaLocalEpisodeVideos(task, options);
         const posters = await prepareQqDramaPosterMaterials(task, options);
         log(options, `[qq-drama] publish covers ready`, posters);
-        for (const variant of createQqDramaPublishVariants(task)) {
+        for (const variant of missingVariants) {
+          const variantIndex = variants.findIndex((candidate) => candidate.kind === variant.kind);
+          const variantPage = shouldOpenNewQqDramaVariantPage(variantIndex)
+            ? await context.newPage()
+            : page;
+          activeVariantPage = variantPage;
+          if (variantPage !== page) {
+            additionalVariantPages.push(variantPage);
+            log(options, `[qq-drama] opened dedicated variant page`, {
+              kind: variant.kind,
+              title: variant.title,
+            });
+          }
           const localCoverFile = variant.kind === "primary" ? posters.primary : posters.secondary;
           if (!localCoverFile) {
             throw new Error(`QQ_DRAMA_VARIANT_COVER_MISSING: ${variant.kind}`);
@@ -256,19 +308,24 @@ async function runTask(
             kind: variant.kind,
             title: variant.title,
           });
-          await runQqDramaPublishTask(page, context, variantTask, options);
-          publishedVariants.push(variant);
+          await runQqDramaPublishTask(variantPage, context, variantTask, options);
+          variantResults.set(variant.kind, { ...variant, existing: false });
         }
       },
     );
     publishSucceeded = true;
+    const publishedVariants = createQqDramaPublishVariants(task).map((variant) => {
+      const result = variantResults.get(variant.kind);
+      if (!result) throw new Error(`QQ_DRAMA_VARIANT_RESULT_MISSING: ${variant.kind}`);
+      return result;
+    });
     await reportWithRetry(options, task.accountTaskId, () =>
       reportQqDramaTaskSuccessApi({
         apiConfig: options.apiConfig,
         runtimeOptions: options,
         accountTaskId: task.accountTaskId,
         resultJson: {
-          activeUrl: page.url(),
+          activeUrl: activeVariantPage.url(),
           accountId: task.qqAccountId,
           accountName: task.qqAccountName,
           variants: publishedVariants,
@@ -290,7 +347,7 @@ async function runTask(
     const diagnostics = await captureAutomationFailureDiagnostics({
       platform: "qq-drama",
       error,
-      page,
+      page: activeVariantPage,
       logFilePath: options.logFilePath,
       stage: failStage,
       task: { accountTaskId: task.accountTaskId, title: task.originalTitle },
@@ -312,7 +369,7 @@ async function runTask(
           failStage,
           errorMessage: message,
           resultJson: {
-            activeUrl: page.url(),
+            activeUrl: activeVariantPage.url(),
             accountId: task.qqAccountId,
             accountName: task.qqAccountName,
           },
@@ -329,6 +386,8 @@ async function runTask(
     }
     errorLog(options, `[qq-drama] failure diagnostics: ${diagnostics?.directory ?? "unavailable"}`);
     throw error;
+  } finally {
+    await Promise.allSettled(additionalVariantPages.map((variantPage) => variantPage.close()));
   }
 }
 

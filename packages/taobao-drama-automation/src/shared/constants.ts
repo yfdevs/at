@@ -26,5 +26,18 @@ export const TAOBAO_DRAMA_FIXED_FIELDS = {
 
 export const TAOBAO_DRAMA_MIN_SETTLE_MS = 10_000;
 export const TAOBAO_DRAMA_PAGE_READY_RELOAD_MS = 30_000;
+export const TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH = 100;
+export const TAOBAO_DRAMA_MAX_EPISODES_PER_TASK = 1_000;
 export const TAOBAO_DRAMA_COVER_WIDTH = 1_080;
 export const TAOBAO_DRAMA_COVER_HEIGHT = 1_800;
+
+export function taobaoEpisodeBatchRanges(
+  episodeCount: number,
+  batchSize = TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH,
+) {
+  const ranges: Array<{ start: number; end: number }> = [];
+  for (let start = 1; start <= episodeCount; start += batchSize) {
+    ranges.push({ start, end: Math.min(episodeCount, start + batchSize - 1) });
+  }
+  return ranges;
+}

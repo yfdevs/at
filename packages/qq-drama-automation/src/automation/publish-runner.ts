@@ -15,6 +15,13 @@ import {
   qqPageMessageErrorLocator,
 } from "./steps/form-controls.js";
 
+export function qqDramaAddPageRecoveryAction(pageText: string) {
+  const normalized = pageText.replace(/\s+/g, " ").trim();
+  return normalized.includes("漫剧提交成功") && normalized.includes("继续添加")
+    ? "continue-adding" as const
+    : undefined;
+}
+
 export async function openQqDramaAddPage(
   page: Page,
   context: BrowserContext,
@@ -31,6 +38,7 @@ export async function openQqDramaAddPage(
 
   async function waitForBasicInfoPageReady() {
     let deadline = Date.now() + 60_000;
+    let successPageRecoveryAttempts = 0;
     const titleInput = page
       .locator("input[placeholder*='审核通过后不支持修改'],input[placeholder*='作品名称']")
       .filter({ visible: true })
@@ -44,6 +52,32 @@ export async function openQqDramaAddPage(
         await gotoAddPage();
         deadline = Date.now() + 60_000;
         continue;
+      }
+
+      const pageText = await page.locator("body").innerText().catch(() => "");
+      if (qqDramaAddPageRecoveryAction(pageText) === "continue-adding") {
+        const continueAddingButton = page
+          .getByRole("button", { name: "继续添加", exact: true })
+          .filter({ visible: true })
+          .or(page.getByText("继续添加", { exact: true }).filter({ visible: true }))
+          .first();
+        if (await continueAddingButton.count() > 0) {
+          successPageRecoveryAttempts += 1;
+          if (successPageRecoveryAttempts > 3) {
+            throw new Error(
+              "QQ_DRAMA_SUCCESS_PAGE_RECOVERY_FAILED: 多次点击继续添加后仍停留在提交成功页。",
+            );
+          }
+          log(
+            options,
+            `[qq-drama] stale submission success page detected; clicking continue adding `
+              + `(attempt=${successPageRecoveryAttempts})`,
+          );
+          await continueAddingButton.click({ timeout: 10_000 });
+          await page.waitForTimeout(800);
+          deadline = Date.now() + 60_000;
+          continue;
+        }
       }
 
       await page.waitForTimeout(500);

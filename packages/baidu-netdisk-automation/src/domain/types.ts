@@ -46,6 +46,8 @@ export type BaiduNetdiskShareDownloadOptions = {
   shareFile?: string;
   resourceName?: string;
   expectedEpisodeCount?: number;
+  /** Download only episodes 1..N. Omit to preserve the full-directory download flow. */
+  episodeDownloadLimit?: number;
   inferEpisodeCount?: boolean;
   expectedOwnershipCounts?: {
     minimumImages?: number;
@@ -89,6 +91,7 @@ export type BaiduNetdiskRemoteEpisodeFile = {
   index: number;
   name: string;
   path: string;
+  fsId?: number | string;
   size?: number;
   contentHash?: string;
 };

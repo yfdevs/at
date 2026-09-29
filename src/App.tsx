@@ -8,6 +8,7 @@ import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppRoutes } from "@/routes/app-routes";
 import { WechatMiniProgramBaiduUploadWindow } from "@/pages/wechat-miniprogram-drama/baidu-upload-window";
+import { WechatMiniProgramCatalogUploadWindow } from "@/pages/wechat-miniprogram-drama/catalog-upload-window";
 import { PinduoduoDramaUploadRecordsPage } from "@/pages/pinduoduo-drama/upload-records";
 import { TaobaoDramaTaskDataWindow } from "@/pages/taobao-drama/task-data-window";
 
@@ -19,6 +20,14 @@ export default function App() {
     return (
       <TooltipProvider delay={120} closeDelay={0} timeout={250}>
         <WechatMiniProgramBaiduUploadWindow />
+        <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
+      </TooltipProvider>
+    );
+  }
+  if (windowMode === "wechat-miniprogram-catalog-upload") {
+    return (
+      <TooltipProvider delay={120} closeDelay={0} timeout={250}>
+        <WechatMiniProgramCatalogUploadWindow />
         <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
       </TooltipProvider>
     );

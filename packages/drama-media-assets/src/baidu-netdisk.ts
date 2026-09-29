@@ -86,6 +86,8 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
   resourceName: string;
   localEpisodeVideoRoot: string;
   episodeCount?: number;
+  /** Download only episodes 1..N. This is opt-in and does not change normal platform downloads. */
+  episodeDownloadLimit?: number;
   inferEpisodeCount?: boolean;
   downloadEpisodeVideos?: boolean;
   downloadAssetMaterials?: boolean;
@@ -109,6 +111,7 @@ export type EnsureBaiduNetdiskEpisodeVideosOptions = {
     shareText: string;
     resourceName: string;
     expectedEpisodeCount?: number;
+    episodeDownloadLimit?: number;
     inferEpisodeCount?: boolean;
     expectedOwnershipCounts?: OwnershipMaterialRequirements;
     expectedOwnershipFiles?: number;
@@ -1105,6 +1108,9 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
   });
+  const expectedExistingEpisodes = options.episodeDownloadLimit === undefined
+    ? existingEpisodes
+    : existingEpisodes.filter((episode) => episode.index <= options.episodeDownloadLimit!);
   const existingOwnership = await listLocalOwnershipMaterials({
     root: options.localEpisodeVideoRoot,
     resourceName: options.resourceName,
@@ -1133,7 +1139,7 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     &&
     (!downloadEpisodeVideos || (
       hasConfiguredEpisodeCount
-      && isCompleteEpisodeFileSet(existingEpisodes, configuredEpisodeCount)
+      && isCompleteEpisodeFileSet(expectedExistingEpisodes, configuredEpisodeCount)
     ))
     && hasRequiredOwnershipMaterials(existingOwnership, ownershipRequirements)
     && existingRawOwnershipFiles.length >= requiredOwnershipFiles
@@ -1174,9 +1180,10 @@ export async function ensureBaiduNetdiskEpisodeVideos(
     resourceName: options.resourceName,
     expectedEpisodeCount: !downloadEpisodeVideos
       || !hasConfiguredEpisodeCount
-      || isCompleteEpisodeFileSet(existingEpisodes, configuredEpisodeCount)
+      || isCompleteEpisodeFileSet(expectedExistingEpisodes, configuredEpisodeCount)
       ? undefined
       : configuredEpisodeCount,
+    episodeDownloadLimit: options.episodeDownloadLimit,
     inferEpisodeCount: options.inferEpisodeCount === true,
     expectedOwnershipCounts: {
       minimumImages: Math.max(

@@ -2,7 +2,10 @@
 import assert from "node:assert/strict";
 import test from "node:test";
 
-import { createQqDramaPublishVariants } from "../../src/shared/publish-variants.js";
+import {
+  createQqDramaPublishVariants,
+  shouldOpenNewQqDramaVariantPage,
+} from "../../src/shared/publish-variants.js";
 import { claimedQqDramaTaskSchema } from "../../src/shared/types.js";
 
 function task(secondVersionEnabled: boolean, secondVersionTitle?: string) {
@@ -63,4 +66,9 @@ test("rejects an enabled QQ second version without a distinct title", () => {
     }).success,
     false,
   );
+});
+
+test("opens every additional QQ publish variant in a new task page", () => {
+  assert.equal(shouldOpenNewQqDramaVariantPage(0), false);
+  assert.equal(shouldOpenNewQqDramaVariantPage(1), true);
 });

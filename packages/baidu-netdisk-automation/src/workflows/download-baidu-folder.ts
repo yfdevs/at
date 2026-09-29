@@ -83,6 +83,7 @@ export type RemoteEpisodeAliasCandidate = {
   index: number;
   name: string;
   path: string;
+  fsId?: number | string;
   size?: number;
   contentHash?: string;
 };
@@ -2167,6 +2168,7 @@ async function saveShareToOwnNetdisk(
       const videoFile = {
         name,
         path: entryPath,
+        fsId: itemFsId(entry),
         size: Number(entry?.size) > 0 ? Number(entry.size) : undefined,
         contentHash: String(entry?.md5 || entry?.content_md5 || "").trim() || undefined,
       };
@@ -2235,6 +2237,7 @@ async function saveShareToOwnNetdisk(
       index: file.index,
       name: file.name,
       path: file.path,
+      fsId: file.fsId,
       size: file.size,
       contentHash: file.contentHash,
     }))
@@ -2702,6 +2705,8 @@ type SavedDownloadTask = {
   targetName: string;
   savedPath: string;
   fsId: number | string;
+  isDirectory?: boolean;
+  size?: number;
   downloadRoot?: string;
 };
 
@@ -2922,10 +2927,10 @@ async function submitNativeDownloadTask(
     const app = require("@electron/remote").app;
     const file = {
       md5: "",
-      size: 0,
+      size: ${JSON.stringify(task.size ?? 0)},
       server_path: ${JSON.stringify(task.savedPath)},
       path: ${JSON.stringify(task.savedPath)},
-      is_dir: 1,
+      is_dir: ${JSON.stringify(task.isDirectory === false ? 0 : 1)},
       fs_id: ${JSON.stringify(task.fsId)},
       local_path: ${JSON.stringify(task.downloadRoot)},
     };
@@ -3153,12 +3158,24 @@ export function inspectContiguousEpisodeIndexes(
   };
 }
 
+export function selectLeadingEpisodeFiles<
+  T extends { index: number },
+>(files: T[], episodeDownloadLimit?: number): T[] {
+  if (episodeDownloadLimit === undefined) return files;
+  const limit = Number(episodeDownloadLimit);
+  if (!Number.isInteger(limit) || limit <= 0) {
+    throw new Error("仅下载前 X 集的集数必须是正整数。");
+  }
+  return files.filter((file) => file.index >= 1 && file.index <= limit);
+}
+
 async function submitSavedDownload(
   port: number,
   shareTarget: CdpTarget,
   share: ShareInfo,
   downloadDir?: string,
   expectedEpisodeCount?: number,
+  episodeDownloadLimit?: number,
   expectedOwnershipCounts?: BaiduNetdiskShareDownloadOptions["expectedOwnershipCounts"],
   expectedOwnershipFiles?: number,
   expectedPosterImages?: number,
@@ -3265,6 +3282,15 @@ async function submitSavedDownload(
       );
     }
   }
+  if (downloadEpisodeVideos && episodeDownloadLimit !== undefined) {
+    const limit = Number(episodeDownloadLimit);
+    remoteVideos = {
+      ...remoteVideos,
+      files: selectLeadingEpisodeFiles(remoteVideos.files, limit),
+      duplicateIndexes: remoteVideos.duplicateIndexes.filter((index) => index <= limit),
+    };
+    log(`已启用按集下载：仅下载第1-${limit}集，其他剧集不会提交到本地下载队列。`);
+  }
   const remoteIndexes = [...new Set(remoteVideos.files.map((file) => file.index))].sort(
     (left, right) => left - right,
   );
@@ -3356,6 +3382,7 @@ async function submitSavedDownload(
           share,
           downloadDir,
           expectedEpisodeCount,
+          episodeDownloadLimit,
           expectedOwnershipCounts,
           expectedOwnershipFiles,
           expectedPosterImages,
@@ -3414,6 +3441,7 @@ async function submitSavedDownload(
           share,
           downloadDir,
           expectedEpisodeCount,
+          episodeDownloadLimit,
           expectedOwnershipCounts,
           expectedOwnershipFiles,
           expectedPosterImages,
@@ -3525,11 +3553,37 @@ async function submitSavedDownload(
   };
   signal?.throwIfAborted();
   let downloadRoot = downloadDir;
-  const nativeSubmission = downloadEpisodeVideos
-    ? await submitNativeDownloadTask(port, task)
-    : { submitted: true };
-  let videoSubmitted = nativeSubmission.submitted;
-  if (downloadEpisodeVideos && nativeSubmission.submitted) {
+  const limitedEpisodeDownload = downloadEpisodeVideos && episodeDownloadLimit !== undefined;
+  let videoSubmitted = true;
+  if (limitedEpisodeDownload) {
+    if (!downloadDir) throw new Error("按集下载缺少本地下载目录。");
+    const limitedDownloadRoot = path.join(downloadDir, downloadTargetName);
+    await mkdir(limitedDownloadRoot, { recursive: true });
+    for (const episode of remoteVideos.files) {
+      signal?.throwIfAborted();
+      if (!episode.fsId) {
+        throw new Error(`第${episode.index}集缺少百度网盘文件 ID，无法执行按集下载。`);
+      }
+      const submission = await submitNativeDownloadTask(port, {
+        targetName: episode.name,
+        savedPath: episode.path,
+        fsId: episode.fsId,
+        isDirectory: false,
+        size: episode.size,
+        downloadRoot: limitedDownloadRoot,
+      });
+      if (!submission.submitted) {
+        throw new Error(
+          `第${episode.index}集下载任务提交失败：${submission.error || "unknown"}`,
+        );
+      }
+    }
+    log(`前${remoteVideos.files.length}集已逐集提交到百度网盘下载队列。`);
+  } else if (downloadEpisodeVideos) {
+    const nativeSubmission = await submitNativeDownloadTask(port, task);
+    videoSubmitted = nativeSubmission.submitted;
+  }
+  if (downloadEpisodeVideos && !limitedEpisodeDownload && videoSubmitted) {
     await openClientTransfers(port);
     const started = Date.now();
     while (Date.now() - started < 15000) {
@@ -3548,7 +3602,7 @@ async function submitSavedDownload(
   // file paths as directories, so submitting individual images creates empty folders.
   const ownershipTaskNames: string[] = [];
   const submittedAssetRoots = new Set<string>(
-    downloadEpisodeVideos && remoteVideos.rootPath
+    downloadEpisodeVideos && !limitedEpisodeDownload && remoteVideos.rootPath
       ? [normalizeBaiduAssetPath(remoteVideos.rootPath)]
       : [],
   );
@@ -3697,7 +3751,7 @@ async function submitSavedDownload(
     }
   }
 
-  if (downloadEpisodeVideos && !videoSubmitted) {
+  if (downloadEpisodeVideos && !limitedEpisodeDownload && !videoSubmitted) {
     await downloadSavedFolderFromClientSearch(port, videoTargetName);
     downloadRoot = await confirmDownloadSetting(port, downloadDir);
     await waitForDownloadSubmitted(port, { ...task, downloadRoot });
@@ -3784,6 +3838,7 @@ async function downloadBaiduNetdiskSharePromise(
     share,
     downloadDir,
     options.downloadEpisodeVideos === false ? undefined : options.expectedEpisodeCount,
+    options.downloadEpisodeVideos === false ? undefined : options.episodeDownloadLimit,
     options.expectedOwnershipCounts,
     options.expectedOwnershipFiles,
     options.expectedPosterImages,

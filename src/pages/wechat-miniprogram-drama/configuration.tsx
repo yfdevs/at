@@ -37,6 +37,9 @@ import {
 const emptyConfig: WechatMiniProgramConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   taskApiPrefix: "/dramaAiRpa/wechatMiniProgram",
+  catalogApiBaseUrl: "https://wxmini.xiaoshuo666.cn:8006",
+  materialUploadApiBaseUrl: "http://115.191.39.138:19101",
+  catalogAuthorizationToken: "",
   localEpisodeVideoRoot: "",
   closeFailedTaskPages: "false",
   runDataDir: ".drama-runs/wechat-miniprogram-drama",
@@ -69,7 +72,7 @@ type TextField = {
   key: keyof WechatMiniProgramConfig;
   label: string;
   description?: string;
-  type?: "text" | "number" | "url";
+  type?: "text" | "number" | "url" | "password";
   suffix?: string;
 };
 
@@ -111,6 +114,24 @@ const sections: Array<{
         key: "taskApiPrefix",
         label: "小程序任务接口前缀",
         description: "使用独立前缀领取小程序任务，避免与微信视频号任务混用。",
+      },
+      {
+        key: "catalogApiBaseUrl",
+        label: "剧列表接口地址",
+        type: "url",
+        description: "前四集入库任务从此管理端接口逐页读取剧目。",
+      },
+      {
+        key: "materialUploadApiBaseUrl",
+        label: "素材上传接口地址",
+        type: "url",
+        description: "前四集下载完成后，上传到对应剧目的素材接口。",
+      },
+      {
+        key: "catalogAuthorizationToken",
+        label: "管理端访问令牌",
+        type: "password",
+        description: "填写 Bearer token；仅保存在本机的小程序平台配置中。",
       },
     ],
   },

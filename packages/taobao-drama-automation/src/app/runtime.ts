@@ -134,7 +134,7 @@ export async function startTaobaoDramaRuntime(
   let wake: (() => void) | null = null;
   let emptyQueueLogged = false;
   const context = await launchTaobaoBrowserContext(options.userDataDir, options);
-  const page = context.pages()[0] ?? await context.newPage();
+  let taskPage: Page | undefined = context.pages()[0] ?? await context.newPage();
   context.on("close", () => {
     running = false;
     wake?.();
@@ -150,9 +150,9 @@ export async function startTaobaoDramaRuntime(
   });
 
   const loop = (async () => {
-    await waitForTaobaoPage(page, "batch", options);
+    await waitForTaobaoPage(taskPage!, "batch", options);
     await saveTaobaoCredentialState(context, options).catch(() => undefined);
-    while (running && !page.isClosed()) {
+    while (running) {
       try {
         const task = await options.claimNextTask!();
         if (!task) {
@@ -162,19 +162,32 @@ export async function startTaobaoDramaRuntime(
           }
         } else {
           emptyQueueLogged = false;
-          const taskPage = await context.newPage();
+          if (!taskPage || taskPage.isClosed()) {
+            taskPage = await context.newPage();
+          }
+          const currentTaskPage = taskPage;
           let failed = false;
           try {
-            await runTask(taskPage, context, task, options, (value) => { lastTask = value; });
+            await runTask(currentTaskPage, context, task, options, (value) => { lastTask = value; });
           } catch (error) {
             failed = true;
             errorLog(options, `[taobao-drama] 任务失败：${errorMessage(error)}`);
           } finally {
-            if (!taskPage.isClosed() && (!failed || options.closeFailedTaskPages === true)) {
-              await taskPage.close().catch(() => undefined);
-            } else if (!taskPage.isClosed()) {
-              log(options, "[taobao-drama] 已保留失败任务页面供排查", {
-                activeUrl: taskPage.url(),
+            if (failed && !currentTaskPage.isClosed()) {
+              if (options.closeFailedTaskPages === true) {
+                await currentTaskPage.close().catch(() => undefined);
+              } else {
+                log(options, "[taobao-drama] 已保留失败任务页面供排查", {
+                  activeUrl: currentTaskPage.url(),
+                  title: task.originalTitle,
+                });
+              }
+              taskPage = undefined;
+            } else if (currentTaskPage.isClosed()) {
+              taskPage = undefined;
+            } else {
+              log(options, "[taobao-drama] 复用当前任务页面处理后续队列", {
+                activeUrl: currentTaskPage.url(),
                 title: task.originalTitle,
               });
             }
@@ -183,7 +196,7 @@ export async function startTaobaoDramaRuntime(
       } catch (error) {
         errorLog(options, `[taobao-drama] 本地任务队列处理失败：${errorMessage(error)}`);
       }
-      if (running && !page.isClosed()) await waitPoll();
+      if (running) await waitPoll();
     }
   })();
   void loop.catch((error) => {
@@ -194,12 +207,14 @@ export async function startTaobaoDramaRuntime(
   return {
     getStatus() {
       const openPages = context.pages().filter((item) => !item.isClosed());
-      const activePage = openPages[openPages.length - 1] ?? page;
+      const activePage = taskPage && !taskPage.isClosed()
+        ? taskPage
+        : openPages[openPages.length - 1];
       return {
         platform: TAOBAO_DRAMA_PLATFORM,
         running,
-        loginState: taobaoLoginStateFromUrl(activePage.url()),
-        activeUrl: activePage.url(),
+        loginState: taobaoLoginStateFromUrl(activePage?.url() ?? ""),
+        activeUrl: activePage?.url() ?? "",
         batchPublishUrl: TAOBAO_DRAMA_BATCH_PUBLISH_URL,
         loginUrl: TAOBAO_DRAMA_LOGIN_URL,
         userDataDir: options.userDataDir!,
