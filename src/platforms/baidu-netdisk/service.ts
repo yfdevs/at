@@ -120,13 +120,6 @@ export type BaiduNetdiskDownloadRecordResult = {
   path: string;
 };
 
-export type BaiduNetdiskWindowPlatformId =
-  | "wechat-drama"
-  | "wechat-miniprogram-drama"
-  | "meituan-drama"
-  | "kuaishou-drama"
-  | "tiktok-drama";
-
 function trimShareLink(value: string) {
   return value.replace(/[),，。；;、\]]+$/g, "");
 }

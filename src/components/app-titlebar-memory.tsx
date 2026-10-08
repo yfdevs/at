@@ -1,7 +1,6 @@
 import type { ReactNode } from "react";
 import { useEffect, useState } from "react";
 import { createPortal } from "react-dom";
-import { useLocation } from "react-router-dom";
 import {
   Activity,
   Chrome,
@@ -12,17 +11,10 @@ import {
 
 import { Tooltip, TooltipContent, TooltipTrigger } from "@/components/ui/tooltip";
 import {
-  defaultRoute,
-  isAppRoute,
-  platformContextRoute,
-  platformForPath,
-} from "@/config/navigation";
-import {
   getBaiduNetdiskStatus,
-  type BaiduNetdiskWindowPlatformId,
   type BaiduNetdiskCdpStatus,
 } from "@/platforms/baidu-netdisk/service";
-import { openBaiduNetdiskDrawer } from "@/platforms/baidu-netdisk/drawer";
+import { openBaiduNetdiskDialog } from "@/platforms/baidu-netdisk/dialog";
 
 type AppRuntimeStatus = {
   browserInstanceCount: number;
@@ -166,19 +158,6 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
-function baiduNetdiskPlatformId(platformId: string): BaiduNetdiskWindowPlatformId {
-  switch (platformId) {
-    case "wechat-drama":
-    case "wechat-miniprogram-drama":
-    case "meituan-drama":
-    case "kuaishou-drama":
-    case "tiktok-drama":
-      return platformId;
-    default:
-      return "wechat-drama";
-  }
-}
-
 function ensureTitlebarMemoryHost() {
   const titlebar = document.querySelector<HTMLElement>(".cet-titlebar");
 
@@ -242,10 +221,6 @@ export function AppTitlebarMemory() {
   const [runtimeStatus, setRuntimeStatus] = useState<AppRuntimeStatus | null>(null);
   const [baiduStatus, setBaiduStatus] = useState<BaiduNetdiskCdpStatus | null>(null);
   const [baiduError, setBaiduError] = useState<string | null>(null);
-  const location = useLocation();
-  const currentPath = location.pathname.replace(/^\/+/, "");
-  const activeRoute = isAppRoute(currentPath) ? currentPath : defaultRoute;
-  const activePlatform = platformForPath(platformContextRoute(activeRoute, location.state));
 
   useEffect(() => {
     let disposed = false;
@@ -421,14 +396,12 @@ export function AppTitlebarMemory() {
       <div className="h-4 w-px shrink-0 bg-border" aria-hidden="true" />
       <Tooltip>
         <TooltipTrigger
-          aria-label={`打开百度网盘下载抽屉：${baiduSummary}`}
+          aria-label={`打开百度网盘 CDP 控制：${baiduSummary}`}
           render={
             <button
               type="button"
               className={titlebarIconButtonClass}
-              onClick={() => {
-                openBaiduNetdiskDrawer(baiduNetdiskPlatformId(activePlatform.id));
-              }}
+              onClick={openBaiduNetdiskDialog}
             />
           }
         >

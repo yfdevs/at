@@ -3,7 +3,7 @@ import { HashRouter } from "react-router-dom";
 import { AppRuntimeDock } from "@/components/app-runtime-dock";
 import { AppTitlebarMemory } from "@/components/app-titlebar-memory";
 import { AppTitlebarPlatformNav } from "@/components/app-titlebar-platform-nav";
-import { BaiduNetdiskDrawerProvider } from "@/platforms/baidu-netdisk/drawer";
+import { BaiduNetdiskDialogProvider } from "@/platforms/baidu-netdisk/dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppRoutes } from "@/routes/app-routes";
@@ -59,7 +59,7 @@ export default function App() {
 function AppContent() {
   return (
     <TooltipProvider delay={120} closeDelay={0} timeout={250}>
-      <BaiduNetdiskDrawerProvider>
+      <BaiduNetdiskDialogProvider>
         <div className="flex h-full min-h-0 flex-col bg-transparent">
           <AppTitlebarMemory />
           <AppTitlebarPlatformNav />
@@ -69,7 +69,7 @@ function AppContent() {
           <AppRuntimeDock />
           <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
         </div>
-      </BaiduNetdiskDrawerProvider>
+      </BaiduNetdiskDialogProvider>
     </TooltipProvider>
   );
 }
