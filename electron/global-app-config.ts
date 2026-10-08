@@ -5,17 +5,16 @@ import {
 } from "@drama/ai";
 import {
   app,
-  BrowserWindow,
-  dialog,
   ipcMain,
   safeStorage,
   shell,
   type IpcMainInvokeEvent,
-  type OpenDialogOptions,
 } from "electron";
 import Store from "electron-store";
 import path from "node:path";
 import sharp from "sharp";
+
+import { directoryDefaultPath, selectDirectory } from "./platforms/shared";
 
 const ARK_API_KEY_URL = "https://console.volcengine.com/ark/region:ark+cn-beijing/apikey";
 const LEGACY_DEFAULT_AI_BASE_URL = "https://api.openai.com/v1";
@@ -265,25 +264,11 @@ async function selectGlobalDirectory(
   key: "runDataRoot" | "localMaterialRoot",
   currentPath?: string,
 ) {
-  const parentWindow = BrowserWindow.fromWebContents(event.sender);
-  const configuredPath = currentPath?.trim();
-  const defaultPath = configuredPath
-    ? path.isAbsolute(configuredPath)
-      ? configuredPath
-      : path.join(
-          app.isPackaged ? path.dirname(process.execPath) : process.env.APP_ROOT || process.cwd(),
-          configuredPath,
-        )
-    : app.getPath("documents");
-  const options: OpenDialogOptions = {
+  return selectDirectory(event, {
     title: key === "runDataRoot" ? "选择全局运行数据根目录" : "选择全局素材根目录",
-    defaultPath,
+    defaultPath: directoryDefaultPath(currentPath, app.getPath("documents")),
     properties: ["openDirectory", "createDirectory"],
-  };
-  const result = parentWindow
-    ? await dialog.showOpenDialog(parentWindow, options)
-    : await dialog.showOpenDialog(options);
-  return result.canceled ? null : result.filePaths[0] ?? null;
+  });
 }
 
 function aiClientOptions(config: GlobalAppConfig): OpenAiCompatibleClientOptions {

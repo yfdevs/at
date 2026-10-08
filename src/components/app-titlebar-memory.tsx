@@ -37,10 +37,10 @@ type AppRuntimeStatus = {
 };
 
 const titlebarMetricButtonClass =
-  "inline-flex h-6 cursor-pointer select-none items-center gap-1.5 rounded-md bg-transparent px-1.5 text-[11px] leading-none text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
+  "inline-flex h-6 cursor-pointer select-none items-center gap-1 rounded-md bg-transparent px-1.5 text-[11px] leading-none text-muted-foreground transition-colors duration-100 hover:bg-foreground/5 hover:text-foreground focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
 
 const titlebarIconButtonClass =
-  "inline-flex h-6 w-7 cursor-pointer select-none items-center justify-center rounded-md bg-transparent text-muted-foreground transition-colors hover:bg-foreground/5 hover:text-foreground focus-visible:outline-2 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
+  "inline-flex size-6 cursor-pointer select-none items-center justify-center rounded-md bg-transparent text-muted-foreground transition-colors duration-100 hover:bg-foreground/5 hover:text-foreground focus-visible:outline focus-visible:outline-1 focus-visible:outline-offset-0 focus-visible:outline-ring [-webkit-app-region:no-drag]";
 
 function formatBytes(bytes: number) {
   if (!Number.isFinite(bytes) || bytes <= 0) {
@@ -338,7 +338,7 @@ export function AppTitlebarMemory() {
   const baiduSummary = baiduNetdiskSummary(baiduStatus, baiduError);
 
   return createPortal(
-    <div className="flex h-7 items-center gap-2 overflow-hidden whitespace-nowrap px-1.5 text-[11px] leading-none text-muted-foreground">
+    <div className="flex h-7 items-center gap-1.5 overflow-hidden whitespace-nowrap px-1 text-[11px] leading-none text-muted-foreground">
       <div className="flex h-6 items-center gap-1">
         <TitlebarMetricTooltip
           ariaLabel={`系统内存：${memoryText}`}

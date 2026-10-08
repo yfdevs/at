@@ -1,17 +1,21 @@
 import { BrowserWindow, ipcMain } from "electron"
-import { attachTitlebarToWindow } from "custom-electron-titlebar/main"
 import { openAsBlob } from "node:fs"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
 
 import { ensureBaiduNetdiskShareDownloaded } from "../baidu-netdisk"
 import { createElectronPlatformLogger } from "../../platform-logger"
-import { resolveFromAppRoot } from "../shared"
+import {
+  configureNativeChildWindow,
+  platformWindowIconPath,
+  resolveFromAppRoot,
+} from "../shared"
 import { WechatMiniProgramCatalogUploadTaskRepository } from "../../storage/wechat-miniprogram-drama/catalog-upload-repository"
 import type { WechatMiniProgramCatalogUploadTask } from "../../storage/wechat-miniprogram-drama/catalog-upload-types"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const windowMode = "wechat-miniprogram-catalog-upload"
+const windowTitle = "剧目前四集入库"
 const pageSize = 100
 const requestedEpisodeCount = 4
 
@@ -510,8 +514,8 @@ export class WechatMiniProgramCatalogUploadCoordinator {
       minWidth: 900,
       minHeight: 600,
       show: false,
-      title: "微信小程序 · 前四集入库",
-      titleBarStyle: "hidden",
+      title: windowTitle,
+      icon: platformWindowIconPath("wechat-miniprogram.png"),
       autoHideMenuBar: true,
       backgroundColor: "#fafafa",
       webPreferences: {
@@ -520,8 +524,7 @@ export class WechatMiniProgramCatalogUploadCoordinator {
       },
     })
     this.window = window
-    attachTitlebarToWindow(window)
-    window.setMenu(null)
+    configureNativeChildWindow(window, windowTitle)
     window.once("ready-to-show", () => window.show())
     window.on("closed", () => {
       if (this.window === window) this.window = null

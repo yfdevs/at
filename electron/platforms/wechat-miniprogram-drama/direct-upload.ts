@@ -1,5 +1,4 @@
 import { BrowserWindow, ipcMain } from "electron"
-import { attachTitlebarToWindow } from "custom-electron-titlebar/main"
 import { createHash } from "node:crypto"
 import path from "node:path"
 import { fileURLToPath } from "node:url"
@@ -10,12 +9,17 @@ import type {
 } from "@drama/wechat-miniprogram-drama-automation"
 import { ensureBaiduNetdiskShareDownloaded } from "../baidu-netdisk"
 import { createElectronPlatformLogger } from "../../platform-logger"
-import { resolveFromAppRoot } from "../shared"
+import {
+  configureNativeChildWindow,
+  platformWindowIconPath,
+  resolveFromAppRoot,
+} from "../shared"
 import { WechatMiniProgramDirectUploadTaskRepository } from "../../storage/wechat-miniprogram-drama/direct-upload-repository"
 import type { WechatMiniProgramDirectUploadTask } from "../../storage/wechat-miniprogram-drama/direct-upload-types"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const directUploadWindowMode = "wechat-miniprogram-baidu-upload"
+const directUploadWindowTitle = "百度网盘直传"
 
 function taskInterruptionError(message: string): Error {
   const error = new Error(message)
@@ -497,8 +501,8 @@ export class WechatMiniProgramDirectUploadCoordinator {
       minWidth: 860,
       minHeight: 600,
       show: false,
-      title: "微信小程序 · 百度资源直传",
-      titleBarStyle: "hidden",
+      title: directUploadWindowTitle,
+      icon: platformWindowIconPath("wechat-miniprogram.png"),
       autoHideMenuBar: true,
       backgroundColor: "#fafafa",
       webPreferences: {
@@ -507,8 +511,7 @@ export class WechatMiniProgramDirectUploadCoordinator {
       },
     })
     this.window = window
-    attachTitlebarToWindow(window)
-    window.setMenu(null)
+    configureNativeChildWindow(window, directUploadWindowTitle)
     window.once("ready-to-show", () => window.show())
     window.on("closed", () => {
       if (this.window === window) this.window = null

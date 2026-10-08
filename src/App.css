@@ -1,16 +1,8 @@
 :root {
-  --app-titlebar-height: 37px;
+  --app-titlebar-height: 32px;
   --app-titlebar-left-reserve: 4px;
   --app-titlebar-right-reserve: 92px;
-  --app-shell-background: radial-gradient(
-      circle at 0 0,
-      rgba(150, 195, 255, 0.28) 0%,
-      rgba(190, 220, 255, 0.18) 25%,
-      rgba(220, 235, 255, 0.12) 45%,
-      rgba(240, 248, 255, 0.08) 65%,
-      rgba(255, 255, 255, 0) 75%
-    ),
-    #ffffff;
+  --app-shell-background: #ffffff;
 }
 
 :root[data-platform="darwin"] {
@@ -20,7 +12,7 @@
 }
 
 .dark {
-  --app-shell-background:#F8F9FD;
+  --app-shell-background: #f8f9fd;
 }
 
 html,
@@ -56,12 +48,13 @@ body {
 
 .cet-titlebar {
   z-index: 0;
+  box-sizing: border-box;
   height: var(--app-titlebar-height) !important;
-  border-bottom: 1px solid color-mix(in oklch, var(--border) 52%, transparent);
-  background: transparent !important;
+  border-bottom: 1px solid color-mix(in oklch, var(--border) 58%, transparent);
+  background: var(--app-shell-background) !important;
   color: var(--foreground) !important;
   font-family: var(--font-sans) !important;
-  line-height: var(--app-titlebar-height) !important;
+  line-height: normal !important;
 }
 
 .cet-titlebar.inactive {
@@ -89,7 +82,10 @@ body {
 }
 
 .cet-titlebar .cet-window-controls {
+  display: flex !important;
+  align-items: stretch;
   height: var(--app-titlebar-height) !important;
+  line-height: 0;
 }
 
 :root[data-direct-upload-drawer-open="true"] .cet-titlebar .cet-window-controls {
@@ -110,7 +106,7 @@ body {
   height: var(--app-titlebar-height);
   display: flex;
   align-items: center;
-  padding-right: 6px;
+  padding-right: 4px;
   -webkit-app-region: no-drag;
 }
 
@@ -123,19 +119,19 @@ body {
 
 .app-titlebar-platform-switcher {
   position: absolute;
-  top: calc((var(--app-titlebar-height) - 30px) / 2);
+  top: calc((var(--app-titlebar-height) - 28px) / 2);
   left: var(--app-titlebar-left-reserve);
   display: inline-flex;
-  height: 30px;
+  height: 28px;
   align-items: center;
-  gap: 3px;
+  gap: 2px;
   pointer-events: auto;
   -webkit-app-region: no-drag;
 }
 
 .app-titlebar-platform-button {
-  width: 28px;
-  height: 28px;
+  width: 26px;
+  height: 26px;
   border-radius: 6px;
   pointer-events: auto;
   cursor: pointer;
@@ -149,9 +145,16 @@ body {
 }
 
 .cet-titlebar .cet-control-icon {
+  display: flex !important;
+  align-items: center;
+  justify-content: center;
   height: var(--app-titlebar-height) !important;
-  width: 44px;
-  transition: background-color 150ms ease;
+  width: 46px !important;
+  min-width: 46px;
+  padding: 0 !important;
+  border-radius: 0;
+  line-height: 0;
+  transition: background-color 100ms ease, color 100ms ease;
 }
 
 .cet-titlebar .cet-control-maximize {
@@ -171,11 +174,13 @@ body {
 }
 
 .cet-titlebar .cet-control-icon:focus-visible {
-  outline: 2px solid var(--ring);
-  outline-offset: -2px;
+  outline: 1px solid var(--ring);
+  outline-offset: -1px;
 }
 
 .cet-titlebar .cet-window-controls .cet-control-icon svg {
+  width: 10px !important;
+  height: 10px !important;
   color: color-mix(in oklch, var(--foreground) 84%, transparent) !important;
   fill: currentColor !important;
 }
@@ -185,11 +190,11 @@ body {
 }
 
 .cet-titlebar .cet-control-close:not(.inactive):hover {
-  background-color: var(--destructive) !important;
+  background-color: #c42b1c !important;
 }
 
 .cet-titlebar .cet-control-close:not(.inactive):active {
-  background-color: color-mix(in oklch, var(--destructive) 86%, black) !important;
+  background-color: #b5261a !important;
 }
 
 .cet-titlebar .cet-control-close:not(.inactive):hover svg,

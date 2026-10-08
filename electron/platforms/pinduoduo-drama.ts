@@ -1,5 +1,4 @@
 import { app, BrowserWindow, ipcMain } from "electron";
-import { attachTitlebarToWindow } from "custom-electron-titlebar/main";
 import Store from "electron-store";
 import { registerTaskAnalyticsHandler } from "./task-analytics";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
@@ -10,9 +9,11 @@ import {
   type BaiduNetdiskEnsureDownloadedRequest,
 } from "./baidu-netdisk";
 import {
+  configureNativeChildWindow,
   directoryDefaultPath,
   normalizePlatformRunDataDir,
   openExistingPath,
+  platformWindowIconPath,
   playwrightBrowsersPath,
   resolveFromAppRoot,
   RuntimeController,
@@ -30,6 +31,7 @@ import {
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
 const uploadRecordsWindowMode = "pinduoduo-drama-upload-records";
+const uploadRecordsWindowTitle = "拼多多审核与上传状态";
 
 type PinduoduoDramaRuntimeStatus = {
   platform: "pinduoduo-drama";
@@ -128,8 +130,8 @@ function openUploadRecordsWindow() {
     minWidth: 860,
     minHeight: 560,
     show: false,
-    title: "拼多多短剧 · 审核与上传状态",
-    titleBarStyle: "hidden",
+    title: uploadRecordsWindowTitle,
+    icon: platformWindowIconPath("pdd.png"),
     autoHideMenuBar: true,
     backgroundColor: "#fafafa",
     webPreferences: {
@@ -138,8 +140,7 @@ function openUploadRecordsWindow() {
     },
   });
   uploadRecordsWindow = nextWindow;
-  attachTitlebarToWindow(nextWindow);
-  nextWindow.setMenu(null);
+  configureNativeChildWindow(nextWindow, uploadRecordsWindowTitle);
   nextWindow.once("ready-to-show", () => nextWindow.show());
   nextWindow.on("closed", () => {
     if (uploadRecordsWindow === nextWindow) uploadRecordsWindow = null;

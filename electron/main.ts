@@ -4,122 +4,17 @@ import windowStateKeeper from "electron-window-state";
 import { fileURLToPath } from "node:url";
 import path from "node:path";
 
+import { registerAppRuntimeHandlers } from "./app-runtime";
 import { registerAppUpdaterHandlers } from "./app-updater";
 import { registerGlobalAppConfigHandlers } from "./global-app-config";
-import { getMainLogDir, logMain, openMainLogDir, registerMainProcessLogging } from "./main-logger";
+import { getMainLogDir, logMain, registerMainProcessLogging } from "./main-logger";
+import { ensureBaiduNetdiskCdpReadyOnStartup } from "./platforms/baidu-netdisk";
 import {
-  getWechatVideoBrowserInstanceCount,
-  getWechatVideoPlatformRuntimeSummary,
-  getWechatVideoRunningPlatformCount,
-  openWechatVideoLogDir,
-  registerWechatVideoPlatformHandlers,
-  stopWechatVideoPlatformService,
-  stopWechatVideoPlatformRuntime,
-} from "./platforms/wechat-drama";
-import {
-  getWechatMiniProgramBrowserInstanceCount,
-  getWechatMiniProgramPlatformRuntimeSummary,
-  getWechatMiniProgramRunningPlatformCount,
-  openWechatMiniProgramLogDir,
-  registerWechatMiniProgramPlatformHandlers,
-  stopWechatMiniProgramPlatformService,
-  stopWechatMiniProgramPlatformRuntime,
-} from "./platforms/wechat-miniprogram-drama";
-import {
-  getMeituanCreationBrowserInstanceCount,
-  getMeituanCreationPlatformRuntimeSummary,
-  getMeituanCreationRunningPlatformCount,
-  openMeituanCreationLogDir,
-  registerMeituanCreationPlatformHandlers,
-  stopMeituanCreationPlatformService,
-  stopMeituanCreationPlatformRuntime,
-} from "./platforms/meituan-drama";
-import {
-  getTaobaoDramaBrowserInstanceCount,
-  getTaobaoDramaPlatformRuntimeSummary,
-  getTaobaoDramaRunningPlatformCount,
-  openTaobaoDramaLogDir,
-  registerTaobaoDramaPlatformHandlers,
-  stopTaobaoDramaPlatformService,
-  stopTaobaoDramaPlatformRuntime,
-} from "./platforms/taobao-drama";
-import {
-  getKuaishouDramaBrowserInstanceCount,
-  getKuaishouDramaPlatformRuntimeSummary,
-  getKuaishouDramaRunningPlatformCount,
-  openKuaishouDramaLogDir,
-  registerKuaishouDramaPlatformHandlers,
-  stopKuaishouDramaPlatformService,
-  stopKuaishouDramaPlatformRuntime,
-} from "./platforms/kuaishou-drama";
-import {
-  getQqDramaBrowserInstanceCount,
-  getQqDramaPlatformRuntimeSummary,
-  getQqDramaRunningPlatformCount,
-  openQqDramaLogDir,
-  registerQqDramaPlatformHandlers,
-  stopQqDramaPlatformService,
-  stopQqDramaPlatformRuntime,
-} from "./platforms/qq-drama";
-import {
-  getTencentHuolongDramaBrowserInstanceCount,
-  getTencentHuolongDramaPlatformRuntimeSummary,
-  getTencentHuolongDramaRunningPlatformCount,
-  openTencentHuolongDramaLogDir,
-  registerTencentHuolongDramaPlatformHandlers,
-  stopTencentHuolongDramaPlatformService,
-  stopTencentHuolongDramaPlatformRuntime,
-} from "./platforms/tencent-huolong-drama";
-import {
-  getIqiyiDramaBrowserInstanceCount,
-  getIqiyiDramaPlatformRuntimeSummary,
-  getIqiyiDramaRunningPlatformCount,
-  openIqiyiDramaLogDir,
-  registerIqiyiDramaPlatformHandlers,
-  stopIqiyiDramaPlatformService,
-  stopIqiyiDramaPlatformRuntime,
-} from "./platforms/iqiyi-drama";
-import {
-  getTiktokDramaCenterBrowserInstanceCount,
-  getTiktokDramaCenterPlatformRuntimeSummary,
-  getTiktokDramaCenterRunningPlatformCount,
-  openTiktokDramaCenterLogDir,
-  registerTiktokDramaCenterPlatformHandlers,
-  stopTiktokDramaCenterPlatformService,
-  stopTiktokDramaCenterPlatformRuntime,
-} from "./platforms/tiktok-drama";
-import {
-  getPinduoduoDramaBrowserInstanceCount,
-  getPinduoduoDramaPlatformRuntimeSummary,
-  getPinduoduoDramaRunningPlatformCount,
-  openPinduoduoDramaLogDir,
-  registerPinduoduoDramaPlatformHandlers,
-  stopPinduoduoDramaPlatformService,
-  stopPinduoduoDramaPlatformRuntime,
-} from "./platforms/pinduoduo-drama";
-import {
-  getBaiduDramaBrowserInstanceCount,
-  getBaiduDramaPlatformRuntimeSummary,
-  getBaiduDramaRunningPlatformCount,
-  openBaiduDramaLogDir,
-  registerBaiduDramaPlatformHandlers,
-  stopBaiduDramaPlatformService,
-  stopBaiduDramaPlatformRuntime,
-} from "./platforms/baidu-drama";
-import {
-  getDouyinDramaBrowserInstanceCount,
-  getDouyinDramaPlatformRuntimeSummary,
-  getDouyinDramaRunningPlatformCount,
-  openDouyinDramaLogDir,
-  registerDouyinDramaPlatformHandlers,
-  stopDouyinDramaPlatformService,
-  stopDouyinDramaPlatformRuntime,
-} from "./platforms/douyin-drama";
-import {
-  ensureBaiduNetdiskCdpReadyOnStartup,
-  registerBaiduNetdiskPlatformHandlers,
-} from "./platforms/baidu-netdisk";
-import { readDriveStatus, readMemoryStatus } from "./platforms/shared";
+  getGlobalRunningPlatformStatus,
+  registerAllPlatformHandlers,
+  stopAllPlatformRuntimes,
+  stopAllPlatformServices,
+} from "./platforms/registry";
 import { startRuntimeAssetCleanupMonitor } from "./runtime-asset-cleanup";
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url));
@@ -145,20 +40,6 @@ logMain("info", "Application startup initiated", {
 });
 
 let win: BrowserWindow | null;
-
-type PlatformId =
-  | "wechat-drama"
-  | "wechat-miniprogram-drama"
-  | "meituan-drama"
-  | "taobao-drama"
-  | "kuaishou-drama"
-  | "qq-drama"
-  | "tencent-huolong-drama"
-  | "iqiyi-drama"
-  | "baidu-drama"
-  | "douyin-drama"
-  | "tiktok-drama"
-  | "pinduoduo-drama";
 
 setupTitlebar();
 ipcMain.removeAllListeners("update-window-controls");
@@ -250,18 +131,7 @@ app.on("window-all-closed", () => {
 
 app.on("before-quit", () => {
   logMain("info", "Stopping all platform services");
-  stopWechatVideoPlatformRuntime();
-  stopWechatMiniProgramPlatformRuntime();
-  stopMeituanCreationPlatformRuntime();
-  stopTaobaoDramaPlatformRuntime();
-  stopKuaishouDramaPlatformRuntime();
-  stopQqDramaPlatformRuntime();
-  stopTencentHuolongDramaPlatformRuntime();
-  stopIqiyiDramaPlatformRuntime();
-  stopBaiduDramaPlatformRuntime();
-  stopDouyinDramaPlatformRuntime();
-  stopTiktokDramaCenterPlatformRuntime();
-  stopPinduoduoDramaPlatformRuntime();
+  stopAllPlatformRuntimes();
 });
 
 app.on("activate", () => {
@@ -274,23 +144,11 @@ app.whenReady().then(() => {
   try {
     logMain("info", "Application ready");
     Menu.setApplicationMenu(null);
-    ipcMainHandleAppRuntimeStatus();
+    registerAppRuntimeHandlers();
     registerGlobalAppConfigHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
     });
-    registerWechatVideoPlatformHandlers();
-    registerWechatMiniProgramPlatformHandlers();
-    registerMeituanCreationPlatformHandlers();
-    registerTaobaoDramaPlatformHandlers();
-    registerKuaishouDramaPlatformHandlers();
-    registerQqDramaPlatformHandlers();
-    registerTencentHuolongDramaPlatformHandlers();
-    registerIqiyiDramaPlatformHandlers();
-    registerBaiduDramaPlatformHandlers();
-    registerDouyinDramaPlatformHandlers();
-    registerTiktokDramaCenterPlatformHandlers();
-    registerPinduoduoDramaPlatformHandlers();
-    registerBaiduNetdiskPlatformHandlers();
+    registerAllPlatformHandlers();
     startRuntimeAssetCleanupMonitor();
     registerAppUpdaterHandlers({
       getRunningPlatformCount: () => getGlobalRunningPlatformStatus().running,
@@ -326,175 +184,4 @@ function ensureBaiduNetdiskCdpReadyInBackground() {
       logMain("error", "Baidu Netdisk connection check failed", error);
     }
   })();
-}
-
-function ipcMainHandleAppRuntimeStatus() {
-  ipcMain.handle("app:runtime:status", async () => {
-    const runningPlatformStatus = getGlobalRunningPlatformStatus();
-
-    return {
-      pid: process.pid,
-      browserInstanceCount: getGlobalBrowserInstanceCount(),
-      runningPlatformCount: runningPlatformStatus.running,
-      totalPlatformCount: runningPlatformStatus.total,
-      disk: {
-        dDrive: await readDriveStatus("D:"),
-      },
-      memory: await readMemoryStatus(),
-    };
-  });
-
-  ipcMain.handle("app:platform:runtime", (_event, platformId: PlatformId) => ({
-    appVersion: app.getVersion(),
-    platform: getPlatformRuntimeSummary(platformId),
-  }));
-
-  ipcMain.handle("app:platform:open-logs", (_event, platformId: PlatformId) =>
-    openPlatformLogDir(platformId),
-  );
-
-  ipcMain.handle("app:logs:open-main", () => openMainLogDir());
-}
-
-function getPlatformRuntimeSummary(platformId: PlatformId) {
-  switch (platformId) {
-    case "wechat-drama":
-      return getWechatVideoPlatformRuntimeSummary();
-    case "wechat-miniprogram-drama":
-      return getWechatMiniProgramPlatformRuntimeSummary();
-    case "meituan-drama":
-      return getMeituanCreationPlatformRuntimeSummary();
-    case "taobao-drama":
-      return getTaobaoDramaPlatformRuntimeSummary();
-    case "kuaishou-drama":
-      return getKuaishouDramaPlatformRuntimeSummary();
-    case "qq-drama":
-      return getQqDramaPlatformRuntimeSummary();
-    case "tencent-huolong-drama":
-      return getTencentHuolongDramaPlatformRuntimeSummary();
-    case "iqiyi-drama":
-      return getIqiyiDramaPlatformRuntimeSummary();
-    case "baidu-drama":
-      return getBaiduDramaPlatformRuntimeSummary();
-    case "douyin-drama":
-      return getDouyinDramaPlatformRuntimeSummary();
-    case "tiktok-drama":
-      return getTiktokDramaCenterPlatformRuntimeSummary();
-    case "pinduoduo-drama":
-      return getPinduoduoDramaPlatformRuntimeSummary();
-    default:
-      throw new Error(`未知平台：${String(platformId)}`);
-  }
-}
-
-function openPlatformLogDir(platformId: PlatformId) {
-  switch (platformId) {
-    case "wechat-drama":
-      return openWechatVideoLogDir();
-    case "wechat-miniprogram-drama":
-      return openWechatMiniProgramLogDir();
-    case "meituan-drama":
-      return openMeituanCreationLogDir();
-    case "taobao-drama":
-      return openTaobaoDramaLogDir();
-    case "kuaishou-drama":
-      return openKuaishouDramaLogDir();
-    case "qq-drama":
-      return openQqDramaLogDir();
-    case "tencent-huolong-drama":
-      return openTencentHuolongDramaLogDir();
-    case "iqiyi-drama":
-      return openIqiyiDramaLogDir();
-    case "baidu-drama":
-      return openBaiduDramaLogDir();
-    case "douyin-drama":
-      return openDouyinDramaLogDir();
-    case "tiktok-drama":
-      return openTiktokDramaCenterLogDir();
-    case "pinduoduo-drama":
-      return openPinduoduoDramaLogDir();
-    default:
-      throw new Error(`未知平台：${String(platformId)}`);
-  }
-}
-
-function getGlobalBrowserInstanceCount() {
-  const counters = [
-    getWechatVideoBrowserInstanceCount,
-    getWechatMiniProgramBrowserInstanceCount,
-    getMeituanCreationBrowserInstanceCount,
-    getTaobaoDramaBrowserInstanceCount,
-    getKuaishouDramaBrowserInstanceCount,
-    getQqDramaBrowserInstanceCount,
-    getTencentHuolongDramaBrowserInstanceCount,
-    getIqiyiDramaBrowserInstanceCount,
-    getBaiduDramaBrowserInstanceCount,
-    getDouyinDramaBrowserInstanceCount,
-    getTiktokDramaCenterBrowserInstanceCount,
-    getPinduoduoDramaBrowserInstanceCount,
-  ];
-
-  return counters.reduce((count, readCount) => {
-    try {
-      return count + readCount();
-    } catch {
-      return count;
-    }
-  }, 0);
-}
-
-function getGlobalRunningPlatformStatus() {
-  const counters = [
-    getWechatVideoRunningPlatformCount,
-    getWechatMiniProgramRunningPlatformCount,
-    getMeituanCreationRunningPlatformCount,
-    getTaobaoDramaRunningPlatformCount,
-    getKuaishouDramaRunningPlatformCount,
-    getQqDramaRunningPlatformCount,
-    getTencentHuolongDramaRunningPlatformCount,
-    getIqiyiDramaRunningPlatformCount,
-    getBaiduDramaRunningPlatformCount,
-    getDouyinDramaRunningPlatformCount,
-    getTiktokDramaCenterRunningPlatformCount,
-    getPinduoduoDramaRunningPlatformCount,
-  ];
-
-  return {
-    running: counters.reduce((count, readCount) => {
-      try {
-        return count + readCount();
-      } catch {
-        return count;
-      }
-    }, 0),
-    total: counters.length,
-  };
-}
-
-async function stopAllPlatformServices() {
-  const services = [
-    { label: "微信视频号", stop: stopWechatVideoPlatformService },
-    { label: "微信小程序", stop: stopWechatMiniProgramPlatformService },
-    { label: "美团短剧", stop: stopMeituanCreationPlatformService },
-    { label: "淘宝短剧", stop: stopTaobaoDramaPlatformService },
-    { label: "快手短剧", stop: stopKuaishouDramaPlatformService },
-    { label: "QQ 短剧", stop: stopQqDramaPlatformService },
-    { label: "腾讯火龙", stop: stopTencentHuolongDramaPlatformService },
-    { label: "爱奇艺短剧", stop: stopIqiyiDramaPlatformService },
-    { label: "百度短剧", stop: stopBaiduDramaPlatformService },
-    { label: "抖音短剧", stop: stopDouyinDramaPlatformService },
-    { label: "TikTok 短剧", stop: stopTiktokDramaCenterPlatformService },
-    { label: "拼多多短剧", stop: stopPinduoduoDramaPlatformService },
-  ];
-  const results = await Promise.allSettled(services.map(({ stop }) => stop()));
-  const failures = results.flatMap((result, index) => {
-    if (result.status !== "rejected") return [];
-    const label = services[index]?.label ?? `平台 ${index + 1}`;
-    logMain("error", `Failed to stop ${label} before update installation`, result.reason);
-    return [label];
-  });
-
-  if (failures.length > 0) {
-    throw new Error(`${failures.join("、")}停止失败。`);
-  }
 }

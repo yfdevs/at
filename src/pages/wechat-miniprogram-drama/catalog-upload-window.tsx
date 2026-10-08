@@ -5,13 +5,13 @@ import { toast } from "sonner";
 import { Badge } from "@/components/ui/badge";
 import { Button } from "@/components/ui/button";
 import {
-  Combobox,
-  ComboboxContent,
-  ComboboxEmpty,
-  ComboboxInput,
-  ComboboxItem,
-  ComboboxList,
-} from "@/components/ui/combobox";
+  Select,
+  SelectContent,
+  SelectGroup,
+  SelectItem,
+  SelectTrigger,
+  SelectValue,
+} from "@/components/ui/select";
 import { Input } from "@/components/ui/input";
 import { Progress } from "@/components/ui/progress";
 import { Spinner } from "@/components/ui/spinner";
@@ -86,7 +86,7 @@ const publishStatusLabels: Record<string, string> = {
 
 type StateFilter = "all" | WechatMiniProgramCatalogUploadState;
 type InventoryFilter = "all" | "stocked" | "unstocked" | "has-source" | "missing-source";
-type ComboboxOption<T extends string | number> = { value: T; label: string };
+type SelectOption<T extends string | number> = { value: T; label: string };
 
 const autoSyncOptions = [15, 30, 60, 300, 0] as const;
 const pageSizeOptions = [20, 50, 100] as const;
@@ -97,7 +97,7 @@ function autoSyncLabel(seconds: number) {
   return `每 ${seconds} 秒获取`;
 }
 
-const stateFilterOptions: ComboboxOption<StateFilter>[] = [
+const stateFilterOptions: SelectOption<StateFilter>[] = [
   { value: "all", label: "全部任务状态" },
   ...Object.entries(stateLabels).map(([value, label]) => ({
     value: value as WechatMiniProgramCatalogUploadState,
@@ -105,7 +105,7 @@ const stateFilterOptions: ComboboxOption<StateFilter>[] = [
   })),
 ];
 
-const inventoryFilterOptions: ComboboxOption<InventoryFilter>[] = [
+const inventoryFilterOptions: SelectOption<InventoryFilter>[] = [
   { value: "all", label: "全部资源状态" },
   { value: "stocked", label: "前四集已入库" },
   { value: "unstocked", label: "前四集待入库" },
@@ -113,7 +113,7 @@ const inventoryFilterOptions: ComboboxOption<InventoryFilter>[] = [
   { value: "missing-source", label: "缺少网盘链接" },
 ];
 
-function CompactCombobox<T extends string | number>({
+function CompactSelect<T extends string | number>({
   ariaLabel,
   className,
   options,
@@ -122,37 +122,35 @@ function CompactCombobox<T extends string | number>({
 }: {
   ariaLabel: string;
   className: string;
-  options: ComboboxOption<T>[];
+  options: SelectOption<T>[];
   value: T;
   onValueChange: (value: T) => void;
 }) {
-  const selectedOption = options.find((option) => option.value === value) ?? options[0];
-
   return (
-    <Combobox
+    <Select
       items={options}
-      value={selectedOption}
-      itemToStringValue={(option) => option.label}
-      onValueChange={(option) => {
-        if (option) onValueChange(option.value);
+      value={value}
+      onValueChange={(nextValue) => {
+        if (nextValue !== null) onValueChange(nextValue);
       }}
     >
-      <ComboboxInput className={className} aria-label={ariaLabel} />
-      <ComboboxContent className="min-w-44">
-        <ComboboxEmpty className="px-3 py-3">没有匹配选项</ComboboxEmpty>
-        <ComboboxList className="space-y-0.5 p-1.5">
-          {(option) => (
-            <ComboboxItem
+      <SelectTrigger className={className} size="sm" aria-label={ariaLabel}>
+        <SelectValue />
+      </SelectTrigger>
+      <SelectContent align="start" alignItemWithTrigger={false}>
+        <SelectGroup>
+          {options.map((option) => (
+            <SelectItem
               key={String(option.value)}
-              value={option}
-              className="min-h-9 px-2.5 py-2 pr-9 leading-5"
+              value={option.value}
+              className="min-h-8 px-2 py-1.5 pr-8 text-xs"
             >
               {option.label}
-            </ComboboxItem>
-          )}
-        </ComboboxList>
-      </ComboboxContent>
-    </Combobox>
+            </SelectItem>
+          ))}
+        </SelectGroup>
+      </SelectContent>
+    </Select>
   );
 }
 
@@ -385,7 +383,7 @@ export function WechatMiniProgramCatalogUploadWindow() {
                   ? "定时获取已暂停"
                   : "定时获取剧目"}
             </span>
-            <CompactCombobox
+            <CompactSelect
               ariaLabel="定时获取全部剧目频率"
               className="w-32"
               options={autoSyncOptions.map((seconds) => ({
@@ -412,14 +410,14 @@ export function WechatMiniProgramCatalogUploadWindow() {
             placeholder="搜索剧名、剧 ID 或网盘链接"
             aria-label="搜索剧目"
           />
-          <CompactCombobox
+          <CompactSelect
             ariaLabel="任务状态筛选"
             className="w-36"
             options={stateFilterOptions}
             value={stateFilter}
             onValueChange={setStateFilter}
           />
-          <CompactCombobox
+          <CompactSelect
             ariaLabel="资源状态筛选"
             className="w-40"
             options={inventoryFilterOptions}
@@ -615,7 +613,7 @@ export function WechatMiniProgramCatalogUploadWindow() {
           <div className="flex shrink-0 flex-wrap items-center justify-between gap-3 text-xs text-muted-foreground">
             <div className="flex items-center gap-2">
               <span>每页</span>
-              <CompactCombobox
+              <CompactSelect
                 ariaLabel="每页显示数量"
                 className="w-20"
                 options={pageSizeOptions.map((size) => ({ value: size, label: `${size} 条` }))}

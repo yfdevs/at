@@ -3,7 +3,6 @@ import { useEffect, useState, type ReactNode } from "react";
 import {
   Dialog,
   DialogContent,
-  DialogDescription,
   DialogHeader,
   DialogTitle,
 } from "@/components/ui/dialog";

@@ -123,6 +123,19 @@ export function playwrightBrowsersPath() {
     : path.join(process.env.APP_ROOT, '.cache', 'playwright-browsers')
 }
 
+export function platformWindowIconPath(fileName: string) {
+  return path.join(process.env.VITE_PUBLIC, fileName)
+}
+
+export function configureNativeChildWindow(window: BrowserWindow, title: string) {
+  window.setMenu(null)
+  window.setTitle(title)
+  window.on('page-title-updated', (event) => {
+    event.preventDefault()
+    window.setTitle(title)
+  })
+}
+
 export async function openExistingPath(targetPath: string) {
   const errorMessage = existsSync(targetPath)
     ? await shell.openPath(targetPath)

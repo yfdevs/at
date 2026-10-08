@@ -104,7 +104,7 @@ export function AppTitlebarPlatformNav() {
                 alt=""
                 aria-hidden="true"
                 draggable={false}
-                className="size-5 object-contain"
+                className="size-[18px] object-contain"
               />
             </button>
           );

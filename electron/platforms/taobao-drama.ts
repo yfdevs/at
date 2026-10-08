@@ -1,5 +1,4 @@
 import { app, BrowserWindow, dialog, ipcMain, Notification } from "electron";
-import { attachTitlebarToWindow } from "custom-electron-titlebar/main";
 import Store from "electron-store";
 import { existsSync, mkdirSync, readdirSync, statSync } from "node:fs";
 import { fileURLToPath } from "node:url";
@@ -19,9 +18,11 @@ import {
 import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import { aggregateTaskAnalytics } from "./task-analytics";
 import {
+  configureNativeChildWindow,
   directoryDefaultPath,
   normalizePlatformRunDataDir,
   openExistingPath,
+  platformWindowIconPath,
   playwrightBrowsersPath,
   resolveFromAppRoot,
   RuntimeController,
@@ -83,6 +84,7 @@ const loginUrl =
   "https://login.taobao.com/havanaone/login/login.htm?bizName=taobao&sub=true" +
   `&redirectURL=${encodeURIComponent(batchPublishUrl)}`;
 const taskDataWindowMode = "taobao-drama-task-data";
+const taskDataWindowTitle = "淘宝本地任务数据";
 
 function defaultTaobaoBrowserExecutablePath() {
   const candidates = [
@@ -129,8 +131,8 @@ function openTaskDataWindow() {
     minWidth: 880,
     minHeight: 560,
     show: false,
-    title: "淘宝短剧 · 本地任务数据",
-    titleBarStyle: "hidden",
+    title: taskDataWindowTitle,
+    icon: platformWindowIconPath("taobao.png"),
     autoHideMenuBar: true,
     backgroundColor: "#fafafa",
     webPreferences: {
@@ -139,8 +141,7 @@ function openTaskDataWindow() {
     },
   });
   taskDataWindow = nextWindow;
-  attachTitlebarToWindow(nextWindow);
-  nextWindow.setMenu(null);
+  configureNativeChildWindow(nextWindow, taskDataWindowTitle);
   nextWindow.once("ready-to-show", () => nextWindow.show());
   nextWindow.on("closed", () => {
     if (taskDataWindow === nextWindow) taskDataWindow = null;

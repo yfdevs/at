@@ -4,6 +4,12 @@ import { Titlebar, TitlebarColor } from 'custom-electron-titlebar'
 type IpcRendererListener = Parameters<typeof ipcRenderer.on>[1]
 
 const listenerMap = new Map<string, WeakMap<IpcRendererListener, IpcRendererListener>>()
+const nativeTitlebarWindowModes = new Set([
+  'wechat-miniprogram-baidu-upload',
+  'wechat-miniprogram-catalog-upload',
+  'pinduoduo-drama-upload-records',
+  'taobao-drama-task-data',
+])
 
 function getListenerMap(channel: string) {
   let channelListeners = listenerMap.get(channel)
@@ -45,10 +51,13 @@ contextBridge.exposeInMainWorld('ipcRenderer', {
 })
 
 window.addEventListener('DOMContentLoaded', () => {
+  const windowMode = new URLSearchParams(window.location.search).get('window')
+  if (windowMode && nativeTitlebarWindowModes.has(windowMode)) return
+
   const titlebar = new Titlebar({
-    backgroundColor: TitlebarColor.fromHex('#fafafa'),
-    itemBackgroundColor: TitlebarColor.fromHex('#f0f0f0'),
-    menuBarBackgroundColor: TitlebarColor.fromHex('#fafafa'),
+    backgroundColor: TitlebarColor.fromHex('#ffffff'),
+    itemBackgroundColor: TitlebarColor.fromHex('#f3f4f6'),
+    menuBarBackgroundColor: TitlebarColor.fromHex('#ffffff'),
     menuSeparatorColor: TitlebarColor.fromHex('#e5e5e5'),
     svgColor: TitlebarColor.fromHex('#404040'),
     icon: './icon.png',
