@@ -3,9 +3,7 @@ import test from "node:test";
 import {
   claimNextDouyinDramaTaskApi,
   normalizeClaimedDouyinDramaTask,
-  reportDouyinDramaTaskErrorApi,
   reportDouyinDramaTaskSuccessApi,
-  resetMockDouyinDramaTaskApi,
 } from "../../src/api/task.js";
 import {
   createMockDouyinCopyrightSeriesTask,
@@ -17,6 +15,7 @@ import {
 } from "../../src/api/mock-task.js";
 import {
   DOUYIN_DRAMA_AIGC_TOOL,
+  DOUYIN_DRAMA_CONTRACT_NAMES,
   DOUYIN_DRAMA_CREATOR_NAME,
   DOUYIN_DRAMA_PRODUCTION_TEAM,
 } from "../../src/shared/constants.js";
@@ -24,6 +23,7 @@ import { douyinDramaTaskPayloadSchema } from "../../src/shared/types.js";
 import type { DouyinDramaHttpClient } from "../../src/api/http-client.js";
 
 const requiredMaterialReferences = {
+  contractName: DOUYIN_DRAMA_CONTRACT_NAMES[1],
   scheduledPublishAt: "2026-09-22 18:00:00",
   costConfigurationFiles: [DOUYIN_DRAMA_MOCK_IMAGE_URL],
   ownershipProofFiles: [DOUYIN_DRAMA_MOCK_DOCUMENT_URL],
@@ -85,6 +85,32 @@ test("derives update status and production cost range without backend input", ()
   assert.deepEqual(task.screenwriters, []);
 });
 
+test("accepts multiple Douyin drama categories and preserves their order", () => {
+  const task = douyinDramaTaskPayloadSchema.parse({
+    title: "多分类测试剧",
+    summary: "用于验证后台多选分类可以完整传递给抖音表单。",
+    episodeCount: 2,
+    isAi: false,
+    categories: ["都市日常", "逆袭", "情感"],
+    audience: "通用",
+    ...requiredMaterialReferences,
+  });
+
+  assert.deepEqual(task.categories, ["都市日常", "逆袭", "情感"]);
+  assert.throws(
+    () => douyinDramaTaskPayloadSchema.parse({
+      title: "无分类测试剧",
+      summary: "用于验证分类仍然是必填字段。",
+      episodeCount: 2,
+      isAi: false,
+      categories: [],
+      audience: "通用",
+      ...requiredMaterialReferences,
+    }),
+    /分类至少选择1项/u,
+  );
+});
+
 test("rejects missing business material references before resource downloading", () => {
   assert.throws(
     () => normalizeClaimedDouyinDramaTask({
@@ -103,6 +129,73 @@ test("rejects missing business material references before resource downloading",
     }),
     /DOUYIN_DRAMA_CLAIMED_TASK_INVALID:.*costConfigurationFiles/u,
   );
+});
+
+test("keeps missing and empty contract names compatible with legacy tasks", () => {
+  for (const contractName of [undefined, ""]) {
+    const task = normalizeClaimedDouyinDramaTask({
+      accountTaskId: 91,
+      originalTitle: "未选合同测试剧",
+      payloadJson: {
+        name: "未选合同测试剧",
+        summary: "用于验证后台没有选择合同时，任务不会自动猜测或选择第一个合同。",
+        episodeCount: 2,
+        douyinPlaylet: {
+          categories: ["剧情"],
+          audience: "通用",
+          contractName,
+          scheduledPublishAt: requiredMaterialReferences.scheduledPublishAt,
+          costConfigurationFiles: requiredMaterialReferences.costConfigurationFiles,
+          ownershipProofFiles: requiredMaterialReferences.ownershipProofFiles,
+          nonInfringementCommitmentFiles:
+            requiredMaterialReferences.nonInfringementCommitmentFiles,
+        },
+      },
+    });
+    assert.equal(task.playlet.contractName, undefined);
+  }
+});
+
+test("maps real backend contract files into Douyin upload fields", () => {
+  const task = normalizeClaimedDouyinDramaTask({
+    accountTaskId: 10,
+    accountId: "17732354154",
+    originalTitle: "真实后台测试剧",
+    payloadJson: {
+      name: "真实后台测试剧",
+      summary: "用于验证真实抖音后台任务结构与合同材料映射。",
+      episodeCount: 3,
+      productionCost: { amountWan: 1, proofFiles: [] },
+      douyinPlaylet: {
+        isAi: true,
+        title: "真实后台测试剧",
+        summary: "用于验证真实抖音后台任务结构与合同材料映射。",
+        categories: ["都市日常", "逆袭", "家庭"],
+        audience: "通用",
+        episodeCount: 3,
+        scheduledPublishAt: "2026-10-01 18:00:00",
+        contractName: DOUYIN_DRAMA_CONTRACT_NAMES[3],
+      },
+      douyinContractFiles: [
+        { fileType: "CONTRACT", fileUrl: "https://example.test/contract.pdf" },
+        { fileType: "AUTHORIZATION", fileUrl: "https://example.test/authorization.pdf" },
+        { fileType: "COST_REPORT", fileUrl: "https://example.test/cost-report.pdf" },
+        { fileType: "COMMITMENT", fileUrl: "https://example.test/commitment.pdf" },
+      ],
+    },
+  });
+
+  assert.deepEqual(task.playlet.categories, ["都市日常", "逆袭", "家庭"]);
+  assert.deepEqual(task.playlet.costConfigurationFiles, ["https://example.test/cost-report.pdf"]);
+  assert.deepEqual(task.playlet.ownershipProofFiles, [
+    "https://example.test/contract.pdf",
+    "https://example.test/authorization.pdf",
+  ]);
+  assert.deepEqual(task.playlet.nonInfringementCommitmentFiles, [
+    "https://example.test/commitment.pdf",
+  ]);
+  assert.equal(task.playlet.contractName, DOUYIN_DRAMA_CONTRACT_NAMES[3]);
+  assert.equal(task.playlet.submit, true);
 });
 
 test("provides AI, non-AI, and copyright-series mock builders", () => {
@@ -133,7 +226,7 @@ test("provides AI, non-AI, and copyright-series mock builders", () => {
   assert.deepEqual(netdisk.playlet.roles, []);
   assert.deepEqual(netdisk.playlet.costConfigurationFiles, [DOUYIN_DRAMA_MOCK_IMAGE_URL]);
   assert.deepEqual(netdisk.playlet.nonInfringementCommitmentFiles, [DOUYIN_DRAMA_MOCK_IMAGE_URL]);
-  assert.equal(netdisk.playlet.useFirstAvailableContract, true);
+  assert.equal(netdisk.playlet.contractName, DOUYIN_DRAMA_CONTRACT_NAMES[1]);
   assert.equal(netdisk.playlet.publishMode, "自主发布");
   assert.equal(netdisk.playlet.publishAccountName, "兜兜动漫");
   assert.equal(netdisk.playlet.unitPriceYuan, 0.5);
@@ -144,42 +237,6 @@ test("provides AI, non-AI, and copyright-series mock builders", () => {
   assert.equal(netdisk.playlet.ownershipProofFiles.length, 1);
   assert.equal(netdisk.playlet.nonInfringementCommitmentFiles.length, 1);
   assert.equal(netdisk.playlet.projectScreenshotFiles.length, 0);
-});
-
-test("runs one local netdisk task for the temporary phone account without backend calls", async () => {
-  const accountId = "17732354154";
-  let backendCallCount = 0;
-  const client = {
-    async post() {
-      backendCallCount += 1;
-      throw new Error("the mock task must not call the unfinished backend");
-    },
-  } as DouyinDramaHttpClient;
-  const runtimeOptions = {
-    douyinAccountId: accountId,
-    douyinAccountName: accountId,
-    paidEpisodeStart: 6,
-    unitPriceYuan: 1.5,
-  };
-  resetMockDouyinDramaTaskApi(accountId);
-
-  const task = await claimNextDouyinDramaTaskApi({ client, runtimeOptions });
-  assert.equal(task?.douyinAccountId, accountId);
-  assert.equal(task?.originalTitle, "货车被当免费拉货站，我收车");
-  assert.equal(task?.playlet.episodeCount, 35);
-  assert.equal(task?.playlet.unitPriceYuan, 1.5);
-  assert.equal(task?.playlet.paidEpisodeStart, 6);
-  assert.match(task?.playlet.baiduPanResourceLink ?? "", /1GyEobepwLhJj5ND2swgvIQ/u);
-  assert.equal(await claimNextDouyinDramaTaskApi({ client, runtimeOptions }), null);
-
-  await reportDouyinDramaTaskErrorApi({
-    client,
-    runtimeOptions,
-    accountTaskId: task!.accountTaskId,
-    failStage: "OTHER",
-    errorMessage: "本地假任务测试错误",
-  });
-  assert.equal(backendCallCount, 0);
 });
 
 test("uses the same READY -> claim -> report protocol as other platform adapters", async () => {
@@ -245,6 +302,7 @@ test("uses the same READY -> claim -> report protocol as other platform adapters
     client,
     runtimeOptions,
     accountTaskId: task!.accountTaskId,
+    resultJson: { platformDramaId: "dy-91" },
   });
 
   assert.deepEqual(calls.map((call) => call.path), [
@@ -252,4 +310,11 @@ test("uses the same READY -> claim -> report protocol as other platform adapters
     "/dramaAiRpa/douyin/rpa/claim",
     "/dramaAiRpa/douyin/rpa/report",
   ]);
+  assert.deepEqual(calls.at(-1)?.payload, {
+    taskId: 91,
+    success: true,
+    failStage: undefined,
+    errorMessage: undefined,
+    resultJson: { platformDramaId: "dy-91" },
+  });
 });

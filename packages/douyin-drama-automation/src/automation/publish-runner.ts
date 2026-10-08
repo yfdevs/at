@@ -7,7 +7,10 @@ import {
 import type { Page } from "playwright";
 import {
   DOUYIN_DRAMA_CREATE_URL,
+  DOUYIN_DRAMA_FRAMEWORK_CONTRACT_ID,
+  DOUYIN_DRAMA_FRAMEWORK_CONTRACT_NAME,
   DOUYIN_DRAMA_PRODUCTION_COST_RANGE,
+  DOUYIN_DRAMA_STANDARD_CONTRACT_NAME,
   DOUYIN_DRAMA_UPDATE_STATUS,
 } from "../shared/constants.js";
 import {
@@ -18,6 +21,7 @@ import { errorLog, log } from "../shared/logger.js";
 import { douyinDramaLocalRoot, douyinDramaResourceName } from "../shared/resources.js";
 import type { ClaimedDouyinDramaTask, DouyinDramaRuntimeOptions } from "../shared/types.js";
 import { waitForDouyinDramaCreatePageReady } from "./browser-session.js";
+import { prepareShortDouyinEpisodeVideos } from "./episode-speed.js";
 import {
   addDouyinRole,
   assertNoDouyinFormError,
@@ -27,15 +31,21 @@ import {
   fillDouyinEpisodeBatchEdit,
   fillNearestDouyinCompletionPromiseDateTime,
   fillDouyinPublishDateTime,
+  hasInvalidDouyinEpisodeDuration,
+  hasTooShortDouyinEpisodeDuration,
   fillInputById,
   fillStableInputById,
   installDouyinPageMessageCapture,
   resetRestoredDouyinFormIfPresent,
+  reuploadFailedDouyinEpisodeAfterDelete,
+  sanitizeDouyinDescriptionText,
   selectDropdownByPlaceholder,
   selectDropdownValues,
   selectDouyinChargeEpisodes,
   selectFirstDropdownByPlaceholder,
   selectRadio,
+  selectRequiredDropdownByContractName,
+  selectRequiredDropdownByStableId,
   selectSearchableDropdownByPlaceholder,
   selectVisibleRadio,
   uploadFormFiles,
@@ -44,7 +54,7 @@ import {
 type DouyinAutomationAction = <T>(name: string, action: () => Promise<T>) => Promise<T>;
 
 const episodeUploadPollIntervalMs = 5_000;
-const postSubmitSettleMs = 10_000;
+const postSubmitSettleMs = 15_000;
 const salesConfigurationSelector = [
   "#complete_promise_time input",
   'input[placeholder="请选择更新完成时间"]',
@@ -110,10 +120,16 @@ async function fillBasicInformation(
   recorder: DouyinDramaDropdownRecorder,
 ) {
   const data = task.playlet;
+  const sanitizedSummary = sanitizeDouyinDescriptionText(data.summary);
+  if (sanitizedSummary.length <= 100) {
+    throw new Error(
+      `DOUYIN_DRAMA_SUMMARY_TOO_SHORT_AFTER_SANITIZE: actual=${sanitizedSummary.length}`,
+    );
+  }
   await runAction(`填写作品名称=${logValue(data.title)}`, () =>
     fillInputById(page, "book_name_input", data.title));
-  await runAction(`填写作品简介=${logValue(data.summary)}`, () =>
-    fillInputById(page, "abstract_input", data.summary));
+  await runAction(`填写作品简介=${logValue(sanitizedSummary)}`, () =>
+    fillInputById(page, "abstract_input", sanitizedSummary));
   if (!data.localHongguoCoverFile || !data.localDouyinCoverFile) {
     throw new Error("DOUYIN_DRAMA_COVER_FILE_REQUIRED");
   }
@@ -141,7 +157,7 @@ async function fillBasicInformation(
     await runAction("填写系列剧信息（季播剧，复用剧名、红果封面和简介）", () =>
       fillDouyinSeriesDialog(page, {
         coverFile: data.localHongguoCoverFile!,
-        summary: data.summary,
+        summary: sanitizedSummary,
         title: data.title,
       }));
   }
@@ -173,8 +189,9 @@ async function fillBasicInformation(
   }
   await runAction(`选择制作金额范围=${DOUYIN_DRAMA_PRODUCTION_COST_RANGE}`, () =>
     selectRadio(page, "制作金额范围", DOUYIN_DRAMA_PRODUCTION_COST_RANGE));
-  await runAction(`上传成本配置情况=${fileNames(data.costConfigurationFiles)}`, () =>
-    uploadFormFiles(page, "成本配置情况", data.costConfigurationFiles));
+  const costConfigurationFile = data.costConfigurationFiles.slice(0, 1);
+  await runAction(`上传成本配置情况=${fileNames(costConfigurationFile)}`, () =>
+    uploadFormFiles(page, "成本配置情况", costConfigurationFile));
   await runAction(`填写剧目制作成本=${data.productionCostWan}万元`, () =>
     fillStableInputById(page, "cost_price_input", data.productionCostWan));
   if (data.payCommitmentFiles.length > 0) {
@@ -191,25 +208,39 @@ async function fillBasicInformation(
       );
     }
   }
-  if (data.contractName) {
-    await runAction(`选择绑定合同=${logValue(data.contractName)}`, () =>
-      selectDropdownByPlaceholder(
+  const contractPlaceholder = "请选择（温馨提示：合同绑定错误会影响结算）";
+  const selectedContractName = data.contractName?.trim();
+  if (selectedContractName) {
+    const contractId = /^CT\d+/u.exec(selectedContractName)?.[0];
+    if (!contractId) {
+      throw new Error(`DOUYIN_DRAMA_CONTRACT_ID_INVALID: contractName=${selectedContractName}`);
+    }
+    await runAction(`选择后台指定合同=${selectedContractName}`, () =>
+      selectRequiredDropdownByStableId(
         page,
-        "请选择（温馨提示：合同绑定错误会影响结算）",
+        contractPlaceholder,
         "contract",
-        data.contractName!,
+        contractId,
+        recorder,
+      ));
+  } else if (data.isCopyrightIpAdaptation) {
+    await runAction(`旧任务兼容选择绑定合同=${DOUYIN_DRAMA_FRAMEWORK_CONTRACT_NAME}`, () =>
+      selectRequiredDropdownByStableId(
+        page,
+        contractPlaceholder,
+        "contract",
+        DOUYIN_DRAMA_FRAMEWORK_CONTRACT_ID,
         recorder,
       ));
   } else {
-    await runAction("未指定合同，自动选择第一个可用合同并记录合同下拉", async () => {
-      const selected = await selectFirstDropdownByPlaceholder(
+    await runAction(`旧任务兼容选择绑定合同=${DOUYIN_DRAMA_STANDARD_CONTRACT_NAME}`, () =>
+      selectRequiredDropdownByContractName(
         page,
-        "请选择（温馨提示：合同绑定错误会影响结算）",
+        contractPlaceholder,
         "contract",
+        DOUYIN_DRAMA_STANDARD_CONTRACT_NAME,
         recorder,
-      );
-      log(options, `[douyin-drama] 自动选择绑定合同：${selected}`, { selected }, "dropdown");
-    });
+      ));
   }
   await runAction(`上传权属文件=${fileNames(data.ownershipProofFiles)}`, () =>
     uploadFormFiles(page, "权属文件", data.ownershipProofFiles, 120_000, "copyright_files_input"));
@@ -248,41 +279,117 @@ async function uploadEpisodes(
       uploadBaseName: task.playlet.title,
     }));
   try {
-    await runAction(`选择并上传剧集视频=${prepared.files.length}个文件`, async () => {
-      const panel = page.locator(".edit-page-video-upload-shortplay-container").filter({ visible: true }).first();
-      await panel.waitFor({ state: "visible", timeout: 15_000 });
-      const input = panel.locator('input[type="file"][multiple][accept*=".mp4"]').first();
-      await input.waitFor({ state: "attached", timeout: 15_000 });
-      await input.setInputFiles(prepared.files, { timeout: 120_000 });
-    });
+    await runAction("检查短视频并执行0.9倍速处理", () =>
+      prepareShortDouyinEpisodeVideos(prepared.files, {
+        thresholdSeconds: 35,
+        speed: 0.9,
+        concurrency: 2,
+        onLog: (message) => log(options, message, { accountTaskId: task.accountTaskId }, "upload"),
+      }));
     const timeout = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
-    await runAction(`等待${prepared.files.length}集上传完成，超时=${timeout / 60_000}分钟`, async () => {
-      const panel = page.locator(".edit-page-video-upload-shortplay-container").filter({ visible: true }).first();
-      const deadline = Date.now() + timeout;
-      let lastStatus = "";
-      let settledPasses = 0;
-      while (Date.now() < deadline) {
-        await assertNoDouyinFormError(page, "等待剧集上传完成");
-        const text = (await panel.innerText().catch(() => "")).replace(/\s+/g, " ").trim();
-        const countMatch = text.match(/正片数量[·・]?\s*(\d+)/);
-        const visibleCount = countMatch ? Number(countMatch[1]) : 0;
-        const busy = /上传中|处理中|转码中|等待上传|解析中|重试/.test(text) ||
-          (await panel.locator("[role='progressbar'], .arco-progress").count()) > 0;
-        const failed = /上传失败|处理失败|转码失败|上传异常/.test(text);
-        if (failed) throw new Error(`DOUYIN_DRAMA_EPISODE_UPLOAD_FAILED: ${text.slice(0, 500)}`);
-        const status = `已出现=${visibleCount}/${prepared.files.length}，处理中=${busy ? "是" : "否"}`;
-        if (status !== lastStatus) {
-          lastStatus = status;
-          log(options, `[douyin-drama] 剧集上传进度：${status}`, undefined, "automation");
+    const maximumReuploadAttempts = Math.max(
+      0,
+      Math.floor(options.episodeUploadReplaceAttempts ?? 5),
+    );
+    const uploadBatchSize = Math.max(
+      1,
+      Math.min(50, Math.floor(options.episodeUploadBatchSize ?? 3)),
+    );
+    const panel = page.locator(".edit-page-video-upload-shortplay-container").filter({ visible: true }).first();
+    await panel.waitFor({ state: "visible", timeout: 15_000 });
+    const input = panel.locator('input[type="file"][multiple][accept*=".mp4"]').first();
+    await input.waitFor({ state: "attached", timeout: 15_000 });
+    const deadline = Date.now() + timeout;
+    const reuploadAttemptsByFile = new Map<string, number>();
+    const initialFiles = prepared.files.slice(0, uploadBatchSize);
+    let selectedCount = initialFiles.length;
+    await runAction(
+      `启动剧集视频滑动上传，并行=${uploadBatchSize}，首轮=${initialFiles.length}个文件`,
+      () => input.setInputFiles(initialFiles, { timeout: 120_000 }),
+    );
+    await runAction(
+      `保持最多${uploadBatchSize}个剧集视频上传，完成一个立即补充一个`,
+      async () => {
+        let lastStatus = "";
+        let settledPasses = 0;
+        while (Date.now() < deadline) {
+          await assertNoDouyinFormError(page, "等待剧集上传完成");
+          const items = panel.locator(".uploaded_list_item");
+          const visibleCount = await items.count();
+          const completedCount = await items
+            .locator(".file-status-text-success")
+            .filter({ hasText: /上传完成|处理完成|转码完成/u })
+            .count();
+          const failedCount = await items
+            .locator(".file-status-text-error")
+            .filter({ hasText: /上传失败|处理失败|转码失败|上传异常/u })
+            .count();
+          const invalidDurationCount = (await items.allInnerTexts())
+            .filter(hasInvalidDouyinEpisodeDuration)
+            .length;
+          const tooShortDurationCount = (await items.allInnerTexts())
+            .filter(hasTooShortDouyinEpisodeDuration)
+            .length;
+          if (failedCount > 0 || invalidDurationCount > 0 || tooShortDurationCount > 0) {
+            const reuploaded = await reuploadFailedDouyinEpisodeAfterDelete(
+              panel,
+              input,
+              prepared.files,
+              maximumReuploadAttempts,
+              reuploadAttemptsByFile,
+            );
+            for (const retry of reuploaded) {
+              log(
+                options,
+                `[douyin-drama] 剧集视频上传失败或时长异常，已删除异常条目并重新上传：${retry.fileName} ` +
+                  `第${retry.attempt}/${maximumReuploadAttempts}次`,
+                retry,
+                "automation",
+              );
+            }
+            settledPasses = 0;
+            await page.waitForTimeout(episodeUploadPollIntervalMs);
+            continue;
+          }
+
+          const uploadingCount = Math.max(0, selectedCount - completedCount);
+          const availableSlots = Math.max(0, uploadBatchSize - uploadingCount);
+          if (availableSlots > 0 && selectedCount < prepared.files.length) {
+            const nextFiles = prepared.files.slice(
+              selectedCount,
+              Math.min(prepared.files.length, selectedCount + availableSlots),
+            );
+            await input.setInputFiles(nextFiles, { timeout: 120_000 });
+            selectedCount += nextFiles.length;
+            settledPasses = 0;
+            log(
+              options,
+              `[douyin-drama] 上传槽位已释放，立即补充 ${nextFiles.length} 集：` +
+                `已选择=${selectedCount}/${prepared.files.length}，并行上限=${uploadBatchSize}`,
+              { files: nextFiles.map((file) => path.basename(file)) },
+              "automation",
+            );
+          }
+
+          const status = `已选择=${selectedCount}/${prepared.files.length}，` +
+            `已出现=${visibleCount}/${selectedCount}，已完成=${completedCount}/${prepared.files.length}，` +
+            `上传中=${Math.max(0, selectedCount - completedCount)}/${uploadBatchSize}`;
+          if (status !== lastStatus) {
+            lastStatus = status;
+            log(options, `[douyin-drama] 剧集上传进度：${status}`, undefined, "automation");
+          }
+          const allCompleted = selectedCount >= prepared.files.length
+            && visibleCount >= prepared.files.length
+            && completedCount >= prepared.files.length;
+          settledPasses = allCompleted ? settledPasses + 1 : 0;
+          if (settledPasses >= 2) return;
+          await page.waitForTimeout(episodeUploadPollIntervalMs);
         }
-        settledPasses = visibleCount === prepared.files.length && !busy ? settledPasses + 1 : 0;
-        if (settledPasses >= 2) return;
-        await page.waitForTimeout(episodeUploadPollIntervalMs);
-      }
-      throw new Error(
-        `DOUYIN_DRAMA_EPISODE_UPLOAD_TIMEOUT: timeoutMinutes=${timeout / 60_000}; ${lastStatus}`,
-      );
-    });
+        throw new Error(
+          `DOUYIN_DRAMA_EPISODE_UPLOAD_TIMEOUT: timeoutMinutes=${timeout / 60_000}; ${lastStatus}`,
+        );
+      },
+    );
   } finally {
     await runAction("清理剧集上传临时文件", () => cleanupEpisodeUploadFiles(prepared));
   }
@@ -307,8 +414,6 @@ async function fillPublishConfiguration(
   recorder: DouyinDramaDropdownRecorder,
 ) {
   const data = task.playlet;
-  await runAction(`设置发布时间=${logValue(data.scheduledPublishAt)}`, () =>
-    fillDouyinPublishDateTime(page, data.scheduledPublishAt));
   const brandAccountPlaceholder = "请选择（选择授权中的红果厂牌账号，仅支持选1个）";
   if (data.brandAccountName) {
     await runAction(`选择红果厂牌账号=${logValue(data.brandAccountName)}`, () =>
@@ -355,6 +460,8 @@ async function fillPublishConfiguration(
       });
     }
   }
+  await runAction(`设置发布时间=${logValue(data.scheduledPublishAt)}`, () =>
+    fillDouyinPublishDateTime(page, data.scheduledPublishAt));
   await runAction("进入销售配置表单", () => enterSalesConfiguration(page));
 }
 
@@ -398,21 +505,12 @@ export async function waitForDouyinSubmitSuccess(
   const settleMs = options.settleMs ?? postSubmitSettleMs;
   const timeoutMs = options.timeoutMs ?? 90_000;
   const deadline = submittedAt + timeoutMs;
-  let verified = false;
   while (Date.now() < deadline) {
     await assertNoDouyinFormError(page, "提交抖音漫剧");
-    const activeUrl = new URL(page.url());
-    const returnedToManagement = activeUrl.hostname === "www.shortdramas.com"
-      && activeUrl.pathname.startsWith("/page/copyright/book-manage");
-    const successMessage = await page.locator([
-      ".arco-message-success:visible",
-      ".arco-result-success:visible",
-      "[role='alert']:visible",
-    ].join(", ")).filter({
-      hasText: /提交成功|上传成功|已提交|提交完成|创建成功/,
-    }).first().isVisible().catch(() => false);
-    verified ||= returnedToManagement || successMessage;
-    if (verified && Date.now() - submittedAt >= settleMs) return;
+    // The platform does not consistently render a success toast or redirect.
+    // Treat a 15-second error-free settle window after the confirmed submit
+    // click as success.
+    if (Date.now() - submittedAt >= settleMs) return;
     await page.waitForTimeout(500);
   }
   throw new Error(`DOUYIN_DRAMA_SUBMIT_SUCCESS_NOT_VERIFIED: url=${page.url()}`);

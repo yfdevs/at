@@ -13,11 +13,13 @@ const outputDir = path.join(rootDir, "release", "${version}");
 const packageJsonPath = path.join(rootDir, "package.json");
 // Keep this aligned with Electron externals and dependencies loaded through dynamic require.
 const runtimeDependencyNames = [
+  "@napi-rs/canvas",
   "better-sqlite3",
   "electron-store",
   "electron-updater",
   "ffmpeg-static",
   "p-queue",
+  "pdf-to-img",
   "playwright",
   "sharp",
 ];

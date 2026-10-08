@@ -4,6 +4,8 @@ export type DouyinDramaConfig = {
   apiBaseUrl: string
   localEpisodeVideoRoot: string
   baiduNetdiskDownloadRetryAttempts: string
+  episodeUploadReplaceAttempts: string
+  episodeUploadBatchSize: string
   episodeUploadWaitTimeoutMinutes: string
   unitPriceYuan: string
   paidEpisodeStart: string

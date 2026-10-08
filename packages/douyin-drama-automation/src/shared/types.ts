@@ -1,6 +1,7 @@
 import { z } from "zod";
 import {
   DOUYIN_DRAMA_AIGC_TOOL,
+  DOUYIN_DRAMA_CONTRACT_NAMES,
   DOUYIN_DRAMA_CREATOR_NAME,
   DOUYIN_DRAMA_PRODUCTION_COST_RANGE,
   DOUYIN_DRAMA_PRODUCTION_TEAM,
@@ -68,7 +69,6 @@ export const douyinDramaMockCategoryValues = [
 export type DouyinDramaLoginState = "login-required" | "logged-in" | "unknown";
 export type DouyinDramaTaskFailStage =
   | "LOGIN"
-  | "DOWNLOAD"
   | "FILL_FORM"
   | "UPLOAD_FILE"
   | "SUBMIT"
@@ -99,7 +99,7 @@ export const douyinDramaTaskPayloadSchema = z
     isAi: z.boolean().default(true),
     aigcTools: z.array(z.literal(DOUYIN_DRAMA_AIGC_TOOL)).max(1)
       .default([DOUYIN_DRAMA_AIGC_TOOL]),
-    categories: z.array(requiredText).length(1),
+    categories: z.array(requiredText).min(1, "分类至少选择1项"),
     audience: z.enum(douyinDramaAudienceValues),
     isSeries: z.boolean().default(false),
     isCopyrightIpAdaptation: z.boolean().default(false),
@@ -108,8 +108,12 @@ export const douyinDramaTaskPayloadSchema = z
     productionCostWan: z.coerce.number().int().refine((value) => value === 1, {
       message: "剧目制作成本固定为 1 万元",
     }).default(1),
-    contractName: optionalText,
-    useFirstAvailableContract: z.boolean().default(false),
+    contractName: z.preprocess(
+      (value) => typeof value === "string" && !value.trim() ? undefined : value,
+      z.enum(DOUYIN_DRAMA_CONTRACT_NAMES, {
+        errorMap: () => ({ message: "必须选择后台配置的抖音绑定合同" }),
+      }).optional(),
+    ),
     brandAccountName: optionalText,
     publishMode: z.enum(douyinDramaPublishModeValues).default("自主发布"),
     publishAccountName: optionalText,
@@ -192,6 +196,21 @@ export type DouyinDramaAiClient = {
       totalTokens: number;
     };
   }>;
+  generateImage?: (options: {
+    model?: string;
+    prompt: string;
+    referenceImages?: ReadonlyArray<{
+      type: "file";
+      path: string;
+      mimeType?: string;
+      detail?: "auto" | "low" | "high";
+    }>;
+    size?: string;
+    watermark?: boolean;
+  }) => Promise<{
+    model: string;
+    images: Array<{ data: Uint8Array; mimeType: string }>;
+  }>;
 };
 
 export type DouyinDramaRuntimeStatus = {
@@ -224,6 +243,8 @@ export type DouyinDramaRuntimeOptions = {
   logRetentionDays?: number;
   localEpisodeVideoRoot?: string;
   baiduNetdiskDownloadRetryAttempts?: number;
+  episodeUploadReplaceAttempts?: number;
+  episodeUploadBatchSize?: number;
   episodeUploadWaitTimeoutMinutes?: number;
   unitPriceYuan?: number;
   paidEpisodeStart?: number;
@@ -231,6 +252,7 @@ export type DouyinDramaRuntimeOptions = {
   config?: { browser?: { headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;
   aiClientFactory?: () => DouyinDramaAiClient;
+  aiImageModelFactory?: () => string;
   ensureBaiduNetdiskResource?: (request: {
     shareText: string;
     resourceName: string;

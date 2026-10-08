@@ -56,3 +56,43 @@ test("removes unknown internal prefixes and remains stable when formatted twice"
   assert.equal(formatted, "任务执行失败：第 3 集视频不存在（错误码：local-video-invalid）");
   assert.equal(formatAutomationErrorReport(formatted), formatted);
 });
+
+test("explains exhausted Douyin episode delete-and-reupload attempts", () => {
+  const report = formatAutomationErrorReport(
+    'DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOADS_EXHAUSTED: file="一颗榴莲，撕开保姆真面目-第3集.mp4"; reuploadAttempts=5; maximum=5',
+  );
+
+  assert.match(report, /第 3 集视频/);
+  assert.match(report, /自动删除并重新上传 5 次/);
+  assert.match(report, /检查该集源视频能否正常播放/);
+  assert.match(report, /错误码：DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOADS_EXHAUSTED/);
+});
+
+test("explains that a short Douyin episode is not retried", () => {
+  const report = formatAutomationErrorReport(
+    'DOUYIN_DRAMA_EPISODE_DURATION_TOO_SHORT: file="测试剧-第3集.mp4"; duration=00:00:29; minimumSeconds=30',
+  );
+
+  assert.match(report, /第 3 集视频/);
+  assert.match(report, /不足 30 秒/);
+  assert.match(report, /不会自动删除或重传/);
+  assert.match(report, /错误码：DOUYIN_DRAMA_EPISODE_DURATION_TOO_SHORT/);
+});
+
+test("explains a disabled Douyin scheduled publish hour", () => {
+  assert.equal(
+    formatAutomationErrorReport(
+      "DOUYIN_DRAMA_SCHEDULED_PUBLISH_TIME_DISABLED: column=0; value=18",
+    ),
+    "平台当前不允许选择定时发布小时“18”。该时间可能已过、距离当前时间太近，或超出平台允许的预约范围，请调整发布时间后重新执行任务" +
+      "（错误码：DOUYIN_DRAMA_SCHEDULED_PUBLISH_TIME_DISABLED）",
+  );
+});
+
+test("explains a disabled Douyin scheduled publish date", () => {
+  assert.equal(
+    formatAutomationErrorReport("DOUYIN_DRAMA_SCHEDULED_PUBLISH_DATE_DISABLED: 2026-10-03"),
+    "平台当前不允许选择定时发布日期“2026-10-03”。抖音要求发布时间至少晚于当前时间 72 小时，" +
+      "系统会将过近日期按整天顺延后重试（错误码：DOUYIN_DRAMA_SCHEDULED_PUBLISH_DATE_DISABLED）",
+  );
+});

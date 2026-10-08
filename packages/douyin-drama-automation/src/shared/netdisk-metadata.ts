@@ -1,9 +1,12 @@
-import { readFile, readdir, stat } from "node:fs/promises";
+import { createHash } from "node:crypto";
+import { mkdir, readFile, readdir, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
 import { z } from "zod";
-import { log } from "./logger.js";
+import { listLocalPosterImages } from "@drama/drama-media-assets";
+import { log, warn } from "./logger.js";
 import type {
   ClaimedDouyinDramaTask,
+  DouyinDramaAiClient,
   DouyinDramaRole,
   DouyinDramaRuntimeOptions,
 } from "./types.js";
@@ -43,7 +46,7 @@ const aiRoleSchema = z.object({
 
 const aiMetadataSchema = z.object({
   summary: z.string().trim().min(1).max(200),
-  roles: z.array(aiRoleSchema).max(10),
+  roles: z.array(aiRoleSchema).min(2).max(10),
 });
 
 type MetadataImage = {
@@ -169,7 +172,6 @@ function mergeRoles(
     });
   };
   const generatedByName = new Map(generated.map((role) => [role.name, role]));
-  const backendProvidedRoles = supplied.length >= 2;
   const source: DouyinDramaRole[] = supplied.length >= 2
     ? supplied
     : generated.map((role) => ({
@@ -186,7 +188,7 @@ function mergeRoles(
       intro: role.intro ?? generatedRole?.intro ?? `${role.name}是本剧重要角色。`,
       photoFile: role.photoFile ?? matchedImage?.file,
     } satisfies DouyinDramaRole;
-  }).filter((role) => backendProvidedRoles || Boolean(role.photoFile));
+  });
 }
 
 function buildPrompt(task: ClaimedDouyinDramaTask, inputs: MetadataInputs) {
@@ -194,7 +196,7 @@ function buildPrompt(task: ClaimedDouyinDramaTask, inputs: MetadataInputs) {
     "请一次性整理抖音漫剧提报所需的简介和角色资料，只输出 JSON 对象，不要 Markdown。",
     "JSON 格式：{\"summary\":\"...\",\"roles\":[{\"name\":\"...\",\"roleType\":\"主角|配角|参演\",\"intro\":\"...\",\"photoImageId\":\"image-1或null\"}]}。",
     "规则：summary 必须为 101-200 个中文字符，忠于资料，不虚构关键剧情；每个角色简介不超过100字。",
-    "角色必须能在图片候选中明确匹配到单人头像，并填写对应 photoImageId；只返回有头像的角色，至少2个、最多10个。不要把封面、海报、横图、竖图当成角色头像，也不要虚构角色或图片。",
+    "根据简介和角色资料返回至少2个、最多10个重要角色。图片候选中能明确匹配到单人头像时填写对应 photoImageId；没有匹配头像时填写 null，后续会为该角色生成头像。不要把封面、海报、横图或竖图当成角色头像。",
     "后端已提供的简介和角色属于权威信息，应保留事实并补全缺项。所有角色和简介在这一次响应中同时完成。",
     `剧名：${task.playlet.title}`,
     `后端简介：${task.playlet.summary || "（未提供）"}`,
@@ -210,6 +212,103 @@ function buildPrompt(task: ClaimedDouyinDramaTask, inputs: MetadataInputs) {
       relativePath: image.relativePath,
     })))}`,
   ].join("\n");
+}
+
+function safeRoleFileName(value: string) {
+  return value.replace(/[<>:"/\\|?*\u0000-\u001f]/gu, " ").replace(/\s+/gu, " ").trim() || "角色";
+}
+
+function buildRolePortraitPrompt(
+  task: ClaimedDouyinDramaTask,
+  role: DouyinDramaRole,
+  summary: string,
+) {
+  return [
+    "参考随请求附带的剧目封面，生成一张同一部剧角色的单人头像，用于平台角色资料上传。",
+    "只展示一个角色，正面或轻微侧脸，头肩构图，五官清晰，人物完整，不要多人、拼图、海报或场景远景。",
+    "画面不得包含任何文字、剧名、字幕、标志、水印、二维码、边框或界面元素。",
+    "根据剧情简介、角色身份和人物介绍设计年龄、气质、服装与表情，不改变人物性别和核心身份。",
+    "必须先判断参考封面属于真人实拍、写实AI、动漫、插画或3D等哪种视觉风格，并严格保持与封面一致，不要擅自把真人改成动漫，也不要把动漫改成真人。",
+    "若封面中能识别到对应角色，应继承其性别、年龄、发型、脸型、服装、色彩和整体美术风格；背景简洁，不照搬封面文字。",
+    `剧名：${task.playlet.title}`,
+    `剧情简介：${summary}`,
+    `角色姓名：${role.name}`,
+    `角色性质：${role.roleType ?? "参演"}`,
+    `角色介绍：${role.intro ?? `${role.name}是本剧重要角色。`}`,
+  ].join("\n");
+}
+
+async function generateMissingRolePortraits(
+  task: ClaimedDouyinDramaTask,
+  roles: DouyinDramaRole[],
+  resourceDir: string,
+  options: DouyinDramaRuntimeOptions,
+  client: DouyinDramaAiClient,
+  summary: string,
+  referenceCoverFile?: string,
+) {
+  const missing = roles.filter((role) => !role.photoFile);
+  if (missing.length === 0) return roles;
+  if (!client.generateImage) throw new Error("DOUYIN_DRAMA_AI_ROLE_IMAGE_CLIENT_REQUIRED");
+  const model = options.aiImageModelFactory?.().trim();
+  if (!model) throw new Error("DRAMA_AI_IMAGE_MODEL_REQUIRED");
+  const outputDir = path.join(resourceDir, "海报封面", "AI角色头像");
+  await mkdir(outputDir, { recursive: true });
+
+  for (const role of missing) {
+    const prompt = buildRolePortraitPrompt(task, role, summary);
+    const cacheKey = createHash("sha256").update(model).update(prompt).digest("hex").slice(0, 12);
+    const output = path.join(outputDir, `AI角色头像-${safeRoleFileName(role.name)}-${cacheKey}.png`);
+    const existing = await stat(output).catch(() => undefined);
+    if (existing?.isFile() && existing.size > 0) {
+      role.photoFile = output;
+      log(options, `[douyin-drama] 复用 AI 角色头像：角色=${role.name} 文件=${output}`, undefined, "metadata");
+      continue;
+    }
+    log(options, `[douyin-drama] 网盘未匹配到角色头像，开始 AI 生成：角色=${role.name}`, {
+      accountTaskId: task.accountTaskId,
+      roleName: role.name,
+      roleType: role.roleType,
+      model,
+    }, "metadata");
+    let imageData: Uint8Array | undefined;
+    let lastError: unknown;
+    for (let attempt = 1; attempt <= 3; attempt += 1) {
+      try {
+        const generated = await client.generateImage({
+          model,
+          prompt,
+          referenceImages: referenceCoverFile
+            ? [{ type: "file", path: referenceCoverFile, detail: "high" }]
+            : undefined,
+          size: "1024x1024",
+          watermark: false,
+        });
+        imageData = generated.images[0]?.data;
+        if (!imageData?.length) {
+          throw new Error(`DOUYIN_DRAMA_AI_ROLE_IMAGE_RESPONSE_MISSING: role=${role.name}`);
+        }
+        break;
+      } catch (error) {
+        lastError = error;
+        warn(options, `[douyin-drama] AI 角色头像生成失败，准备重试：角色=${role.name} ${attempt}/3`, {
+          accountTaskId: task.accountTaskId,
+          roleName: role.name,
+          error,
+        }, "metadata");
+      }
+    }
+    if (!imageData?.length) {
+      throw Object.assign(
+        new Error(`DOUYIN_DRAMA_AI_ROLE_IMAGE_GENERATION_FAILED: role=${role.name}`),
+        { cause: lastError },
+      );
+    }
+    await writeFile(output, Buffer.from(imageData));
+    role.photoFile = output;
+    log(options, `[douyin-drama] AI 角色头像生成完成：角色=${role.name} 文件=${output}`, undefined, "metadata");
+  }
+  return roles;
 }
 
 export async function enrichDouyinTaskFromNetdisk(
@@ -233,7 +332,8 @@ export async function enrichDouyinTaskFromNetdisk(
     textFiles: inputs.texts.map((text) => text.relativePath),
     imageCandidates: inputs.images.map((image) => image.relativePath),
   }, "metadata");
-  const completion = await options.aiClientFactory().generateText({
+  const aiClient = options.aiClientFactory();
+  const completion = await aiClient.generateText({
     systemPrompt: "你是短剧资料整理助手。严格基于输入资料输出合法 JSON，不解释、不追加文字。",
     prompt: buildPrompt(task, inputs),
     maxTokens: 2_000,
@@ -252,6 +352,20 @@ export async function enrichDouyinTaskFromNetdisk(
       `DOUYIN_DRAMA_ROLE_PHOTO_REQUIRED: 网盘中至少需要找到2个可与角色姓名匹配的角色图片，实际=${roles.length}`,
     );
   }
+  const referenceCover = (await listLocalPosterImages({
+    root: resourceDir,
+    resourceName: task.originalTitle,
+    rootIsResourceDir: true,
+  }))[0]?.file;
+  await generateMissingRolePortraits(
+    task,
+    roles,
+    resourceDir,
+    options,
+    aiClient,
+    summary,
+    referenceCover,
+  );
   const rolesWithoutPhoto = roles.filter((role) => !role.photoFile);
   if (rolesWithoutPhoto.length > 0) {
     throw new Error(

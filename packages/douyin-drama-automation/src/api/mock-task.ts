@@ -1,4 +1,7 @@
-import { DOUYIN_DRAMA_AIGC_TOOL } from "../shared/constants.js";
+import {
+  DOUYIN_DRAMA_AIGC_TOOL,
+  DOUYIN_DRAMA_CONTRACT_NAMES,
+} from "../shared/constants.js";
 import { claimedDouyinDramaTaskSchema, type ClaimedDouyinDramaTask } from "../shared/types.js";
 
 export const DOUYIN_DRAMA_MOCK_DOCUMENT_URL =
@@ -108,7 +111,7 @@ function createMockTask(options: CreateMockDouyinDramaTaskOptions): ClaimedDouyi
       // 工程文件截图必须来自当前任务的百度网盘“剪映”素材，不能用通用
       // mock 图片冒充。资源准备阶段会从下载目录中严格挑选 4 张。
       projectScreenshotFiles: options.projectScreenshotFiles ?? [],
-      useFirstAvailableContract: true,
+      contractName: DOUYIN_DRAMA_CONTRACT_NAMES[1],
       submit: options.submit ?? false,
     },
   });

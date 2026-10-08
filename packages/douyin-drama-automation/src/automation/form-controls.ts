@@ -1,4 +1,10 @@
+import { readFile, stat } from "node:fs/promises";
+import { createRequire } from "node:module";
+import path from "node:path";
+import { DOMMatrix, DOMPoint, DOMRect, ImageData, Path2D } from "@napi-rs/canvas";
+import { PDFDocument } from "pdf-lib/dist/pdf-lib.esm.js";
 import type { Locator, Page } from "playwright";
+import sharp from "sharp";
 import { DOUYIN_DRAMA_SERIES_TYPE } from "../shared/constants.js";
 import type { DouyinDramaDropdownRecorder } from "../shared/dropdown-options.js";
 import type { DouyinDramaRole } from "../shared/types.js";
@@ -66,6 +72,22 @@ async function selectDouyinVideoTopics(page: Page, drawer: Locator) {
 
 function exactTextPattern(value: string) {
   return new RegExp(`^\\s*${value.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}\\s*$`);
+}
+
+export function sanitizeDouyinDescriptionText(value: string) {
+  return value
+    .replace(/[:：]/gu, "，")
+    .replace(/[,]/gu, "，")
+    .replace(/[.;；]/gu, (character) => character === "." ? "。" : "；")
+    .replace(/[?？]/gu, "？")
+    .replace(/[!！]/gu, "！")
+    .replace(/[“”"]/gu, (character) => character === "”" ? "”" : "“")
+    .replace(/[(（]/gu, "（")
+    .replace(/[)）]/gu, "）")
+    .replace(/[—–_]/gu, "—")
+    .replace(/\s+/gu, "")
+    .replace(/[^\p{Script=Han}A-Za-z0-9，。；“”？、—《》！（）\-·]/gu, "")
+    .slice(0, 200);
 }
 
 export function douyinFormItem(page: Page, label: string) {
@@ -212,9 +234,10 @@ export function resolveDouyinScheduledPublishDateTime(value: string, now = new D
     Number(target.second),
   );
   const oneDayMs = 24 * 60 * 60 * 1_000;
-  if (targetTime <= now.getTime()) {
-    const elapsedDays = Math.floor((now.getTime() - targetTime) / oneDayMs) + 1;
-    targetTime += elapsedDays * oneDayMs;
+  const minimumScheduledTime = now.getTime() + 72 * 60 * 60 * 1_000;
+  if (targetTime < minimumScheduledTime) {
+    const daysToAdvance = Math.ceil((minimumScheduledTime - targetTime) / oneDayMs);
+    targetTime += daysToAdvance * oneDayMs;
   }
   return normalizeDouyinPublishDateTime(new Date(targetTime).toISOString());
 }
@@ -288,7 +311,14 @@ async function selectArcoPublishDate(
     .filter({ hasText: exactTextPattern(String(target.day)) })
     .first();
   await dateCell.waitFor({ state: "visible", timeout: 5_000 });
-  const cellClass = await dateCell.getAttribute("class") ?? "";
+  // The platform recalculates disabled dates asynchronously after navigating
+  // between months. Give a valid +72-hour date time to become selectable.
+  const enabledDeadline = Date.now() + 3_000;
+  let cellClass = await dateCell.getAttribute("class") ?? "";
+  while (/arco-picker-cell-disabled/u.test(cellClass) && Date.now() < enabledDeadline) {
+    await page.waitForTimeout(100);
+    cellClass = await dateCell.getAttribute("class") ?? "";
+  }
   if (/arco-picker-cell-disabled/u.test(cellClass)) {
     throw new Error(
       `DOUYIN_DRAMA_SCHEDULED_PUBLISH_DATE_DISABLED: `
@@ -319,7 +349,14 @@ async function selectArcoPublishTime(
       .filter({ hasText: exactTextPattern(values[index]) })
       .first();
     await cell.waitFor({ state: "visible", timeout: 5_000 });
-    const cellClass = await cell.getAttribute("class") ?? "";
+    // Arco updates disabled time cells asynchronously after a date is selected.
+    // Wait briefly so a stale class does not reject an otherwise valid time.
+    const enabledDeadline = Date.now() + 3_000;
+    let cellClass = await cell.getAttribute("class") ?? "";
+    while (/arco-timepicker-cell-disabled/u.test(cellClass) && Date.now() < enabledDeadline) {
+      await cell.page().waitForTimeout(100);
+      cellClass = await cell.getAttribute("class") ?? "";
+    }
     if (/arco-timepicker-cell-disabled/u.test(cellClass)) {
       throw new Error(
         `DOUYIN_DRAMA_SCHEDULED_PUBLISH_TIME_DISABLED: column=${index}; value=${values[index]}`,
@@ -359,10 +396,10 @@ async function fillDouyinDateTimePicker(
   const deadline = Date.now() + 10_000;
   while (Date.now() < deadline) {
     const actual = (await input.inputValue()).trim();
-    // The shortdramas page currently formats this Arco DatePicker only to the
-    // minute even though the task contract carries seconds. A missing ":00"
-    // is therefore the same confirmed time, not a failed selection.
-    const minutePrecisionExpected = expected.endsWith(":00") ? expected.slice(0, -3) : undefined;
+    // The shortdramas page stores and displays this Arco DatePicker only to
+    // the minute, while the task contract may contain any seconds value.
+    // Seconds are intentionally ignored when confirming the browser value.
+    const minutePrecisionExpected = expected.slice(0, 16);
     if (actual === expected || actual === minutePrecisionExpected) return expected;
     await page.waitForTimeout(200);
   }
@@ -452,6 +489,17 @@ export async function selectDouyinChargeEpisodes(
 
   const item = douyinFormItem(page, "售卖集数");
   await item.waitFor({ state: "visible", timeout: 10_000 });
+  const expandText = item.getByText("展开", { exact: true }).filter({ visible: true }).first();
+  if (await expandText.isVisible().catch(() => false)) {
+    const expandControl = expandText.locator(
+      "xpath=ancestor::*[self::button or self::div][contains(@class, 'expand-')][1]",
+    );
+    const trigger = await expandControl.count() > 0 ? expandControl : expandText;
+    await trigger.click();
+    await expandText.waitFor({ state: "hidden", timeout: 5_000 }).catch(() => {
+      throw new Error("DOUYIN_DRAMA_PAID_EPISODES_EXPAND_NOT_CONFIRMED");
+    });
+  }
   for (let episode = firstPaidEpisode; episode <= episodeCount; episode += 1) {
     const option = item
       .locator("div:visible")
@@ -481,7 +529,40 @@ async function restoredFormSnapshot(page: Page) {
   return { title: title.trim(), uploadedFileCount };
 }
 
+export async function dismissDouyinGuideIfPresent(page: Page, timeoutMs = 5_000) {
+  const deadline = Date.now() + timeoutMs;
+  let dismissed = false;
+  for (let attempt = 0; attempt < 5 && Date.now() < deadline; attempt += 1) {
+    const mask = page.locator(".guide-popup-content-mask:visible").first();
+    if (!await mask.isVisible().catch(() => false)) return dismissed;
+
+    const guideButton = page
+      .locator('[class*="guide-popup"]:visible')
+      .getByRole("button", { name: /^(?:我知道了|知道了|跳过|关闭|完成)$/ })
+      .filter({ visible: true })
+      .last();
+    const fallbackButton = page
+      .getByRole("button", { name: /^(?:我知道了|知道了|跳过引导)$/ })
+      .filter({ visible: true })
+      .last();
+    const button = await guideButton.count() > 0 ? guideButton : fallbackButton;
+    if (await button.count() === 0) {
+      throw new Error("DOUYIN_DRAMA_GUIDE_DISMISS_BUTTON_NOT_FOUND");
+    }
+
+    await button.click({ timeout: Math.max(1_000, deadline - Date.now()) });
+    dismissed = true;
+    await mask.waitFor({ state: "hidden", timeout: 1_500 }).catch(() => undefined);
+  }
+
+  if (await page.locator(".guide-popup-content-mask:visible").count() > 0) {
+    throw new Error("DOUYIN_DRAMA_GUIDE_NOT_DISMISSED");
+  }
+  return dismissed;
+}
+
 export async function resetRestoredDouyinFormIfPresent(page: Page, timeoutMs = 8_000) {
+  await dismissDouyinGuideIfPresent(page, Math.min(timeoutMs, 5_000));
   const restoredMessage = page
     .locator(".arco-message:visible, [role='alert']:visible")
     .filter({ hasText: "已同步上次填写内容" })
@@ -752,6 +833,109 @@ export async function selectDropdownByPlaceholder(
   await selectDropdownValuesFromTrigger(page, trigger, field, [value], recorder);
 }
 
+export async function selectRequiredDropdownByStableId(
+  page: Page,
+  placeholder: string,
+  field: string,
+  stableId: string,
+  recorder: DouyinDramaDropdownRecorder,
+) {
+  const input = page.getByPlaceholder(placeholder, { exact: true }).filter({ visible: true }).first();
+  const selectRoot = input.locator(
+    "xpath=ancestor::*[@role='combobox' or contains(@class, 'arco-select')][1]",
+  );
+  const trigger = (await selectRoot.count()) ? selectRoot : input;
+  const currentValues = await dropdownDisplayValues(trigger);
+  if (dropdownValuesInclude([...currentValues.display, ...currentValues.inputs], stableId)) {
+    await closeVisibleDropdowns(page, field);
+    return currentValues.display.find((value) => value.includes(stableId)) ?? stableId;
+  }
+
+  const options = await openDropdown(page, trigger);
+  const observed = await observedOptions(options);
+  await recorder.record(field, observed);
+  const option = options
+    .filter({ hasText: new RegExp(`^\\s*${stableId.replace(/[.*+?^${}()|[\]\\]/g, "\\$&")}(?:\\s|$)`), visible: true })
+    .first();
+  const exists = await option.count() > 0;
+  if (!exists) {
+    throw new Error(
+      `DOUYIN_DRAMA_REQUIRED_CONTRACT_NOT_FOUND: contractId=${stableId}; ` +
+        `observed=${JSON.stringify(observed)}`,
+    );
+  }
+  const disabled = await option.evaluate((element) =>
+    element.getAttribute("aria-disabled") === "true"
+      || element.classList.contains("arco-select-option-disabled")
+  );
+  if (disabled) {
+    throw new Error(`DOUYIN_DRAMA_REQUIRED_CONTRACT_DISABLED: contractId=${stableId}`);
+  }
+  const selected = compactDropdownText(await option.textContent()) || stableId;
+  await option.click();
+  await confirmDropdownSelection(page, trigger, option, field, stableId);
+  await closeVisibleDropdowns(page, field);
+  return selected;
+}
+
+function contractNameWithoutId(value: string) {
+  return compactDropdownText(value).replace(/^CT\d+\s*/u, "");
+}
+
+export async function selectRequiredDropdownByContractName(
+  page: Page,
+  placeholder: string,
+  field: string,
+  contractName: string,
+  recorder: DouyinDramaDropdownRecorder,
+) {
+  const expectedName = contractNameWithoutId(contractName);
+  const input = page.getByPlaceholder(placeholder, { exact: true }).filter({ visible: true }).first();
+  const selectRoot = input.locator(
+    "xpath=ancestor::*[@role='combobox' or contains(@class, 'arco-select')][1]",
+  );
+  const trigger = (await selectRoot.count()) ? selectRoot : input;
+  const currentValues = await dropdownDisplayValues(trigger);
+  if (
+    [...currentValues.display, ...currentValues.inputs]
+      .some((value) => contractNameWithoutId(value) === expectedName)
+  ) {
+    await closeVisibleDropdowns(page, field);
+    return expectedName;
+  }
+
+  const options = await openDropdown(page, trigger);
+  const observed = await observedOptions(options);
+  await recorder.record(field, observed);
+  const candidates = await options.evaluateAll((elements, expected) =>
+    elements.map((element, index) => {
+      const text = (element.textContent ?? "").replace(/\s+/g, " ").trim();
+      const normalizedName = text.replace(/^CT\d+\s*/u, "");
+      return {
+        index,
+        text,
+        matches: normalizedName === expected,
+        disabled: element.getAttribute("aria-disabled") === "true"
+          || element.classList.contains("arco-select-option-disabled"),
+      };
+    }), expectedName);
+  const candidate = candidates.find((item) => item.matches && !item.disabled);
+  if (!candidate) {
+    const matchingDisabled = candidates.some((item) => item.matches && item.disabled);
+    throw new Error(
+      `${matchingDisabled
+        ? "DOUYIN_DRAMA_REQUIRED_CONTRACT_DISABLED"
+        : "DOUYIN_DRAMA_REQUIRED_CONTRACT_NOT_FOUND"}: contractName=${expectedName}; ` +
+        `observed=${JSON.stringify(observed)}`,
+    );
+  }
+  const option = options.nth(candidate.index);
+  await option.click();
+  await confirmDropdownSelection(page, trigger, option, field, candidate.text);
+  await closeVisibleDropdowns(page, field);
+  return candidate.text;
+}
+
 export async function selectSearchableDropdownByPlaceholder(
   page: Page,
   placeholder: string,
@@ -824,6 +1008,7 @@ async function waitForUploadSettlement(
   label: string,
   timeoutMs = 120_000,
   expectedFileCount = 1,
+  expectedFiles: string[] = [],
 ) {
   const deadline = Date.now() + timeoutMs;
   const stalledAt100TimeoutMs = Math.min(15_000, Math.max(750, Math.floor(timeoutMs / 4)));
@@ -834,6 +1019,9 @@ async function waitForUploadSettlement(
   let lastObservedStatuses: string[] = [];
   let lastObservedFileCount = 0;
   let lastCompletedFileCount = 0;
+  let lastBoundValueCount = 0;
+  let lastExpectedGlobalFileCount = 0;
+  const expectedFileNames = expectedFiles.map((file) => path.basename(file));
   while (Date.now() < deadline) {
     await assertNoDouyinFormError(page, `上传${label}`);
     const transientUploadMessages = page.locator([
@@ -853,6 +1041,7 @@ async function waitForUploadSettlement(
       arcoUploadItemCount,
       observedFileNames,
       observedStatuses,
+      boundValues,
     ] = await Promise.all([
       item.innerText().catch(() => ""),
       transientUploadMessages.count(),
@@ -865,16 +1054,53 @@ async function waitForUploadSettlement(
       item.locator(".arco-upload-list-item").count(),
       item.locator(".uploaded_list_item .file-name").allTextContents(),
       item.locator(".uploaded_list_item .file-status-text").allTextContents(),
+      item.locator("input:not([type='file']), textarea").evaluateAll((elements) =>
+        elements
+          .map((element) => (element as HTMLInputElement).value?.trim() ?? "")
+          .filter(Boolean)),
     ]);
     const text = itemText.replace(/\s+/g, " ").trim();
     lastObservedFileNames = observedFileNames.map((value) => value.trim()).filter(Boolean);
     lastObservedStatuses = observedStatuses
       .map((value) => value.replace(/\s+/g, " ").trim())
       .filter(Boolean);
-    lastObservedFileCount = cloudUploadItemCount || arcoUploadItemCount;
+    lastBoundValueCount = boundValues.length;
+    let expectedGlobalFileCount = 0;
+    let expectedGlobalCompletedCount = 0;
+    if (expectedFileNames.length > 0) {
+      const globalUploadItems = page.locator(".uploaded_list_item, .arco-upload-list-item");
+      for (const fileName of expectedFileNames) {
+        const matching = globalUploadItems.filter({
+          has: page.locator(".file-name, [title]").filter({ hasText: exactTextPattern(fileName) }),
+        });
+        if (await matching.count() === 0) continue;
+        expectedGlobalFileCount += 1;
+        const matchingText = (await matching.first().innerText().catch(() => ""))
+          .replace(/\s+/gu, " ")
+          .trim();
+        const matchingBusy = /上传中|处理中|等待上传|解析中|进度/u.test(matchingText)
+          || await matching.first().locator(
+            "[role='progressbar'], .arco-progress, .arco-upload-list-item-uploading, [class*='uploading']",
+          ).count() > 0;
+        const matchingFailed = /上传失败|处理失败|转码失败|上传异常/u.test(matchingText)
+          || await matching.first().locator(".file-status-text-error, .arco-upload-list-item-error").count() > 0;
+        if (!matchingBusy && !matchingFailed) expectedGlobalCompletedCount += 1;
+      }
+    }
+    lastExpectedGlobalFileCount = expectedGlobalFileCount;
+    lastObservedFileCount = Math.max(
+      cloudUploadItemCount || arcoUploadItemCount,
+      expectedGlobalFileCount,
+      boundValues.length,
+    );
     lastCompletedFileCount = cloudUploadItemCount > 0
       ? cloudCompletedCount
       : arcoUploadItemCount;
+    lastCompletedFileCount = Math.max(
+      lastCompletedFileCount,
+      expectedGlobalCompletedCount,
+      boundValues.length,
+    );
     const stalledAt100Indices = lastObservedStatuses
       .map((status, index) => (/上传中\s*100\s*%/u.test(status) ? index : -1))
       .filter((index) => index >= 0);
@@ -916,7 +1142,8 @@ async function waitForUploadSettlement(
   throw new Error(
     `DOUYIN_DRAMA_UPLOAD_NOT_CONFIRMED: ${label}; expected=${expectedFileCount}; ` +
       `actual=${lastObservedFileCount}; completed=${lastCompletedFileCount}; ` +
-      `files=${JSON.stringify(lastObservedFileNames)}; statuses=${JSON.stringify(lastObservedStatuses)}`,
+      `files=${JSON.stringify(lastObservedFileNames)}; statuses=${JSON.stringify(lastObservedStatuses)}; ` +
+      `boundValues=${lastBoundValueCount}; matchedGlobalFiles=${lastExpectedGlobalFileCount}`,
   );
 }
 
@@ -951,7 +1178,8 @@ async function chooseCloudUploadFiles(
   const trigger = control.locator(".file-picker-box:visible").first();
   await trigger.waitFor({ state: "visible", timeout: 10_000 });
   const chooserTimeoutMs = Math.min(timeoutMs, 15_000);
-  const fileChooser = await Promise.all([
+  const item = control.locator("xpath=ancestor::*[contains(@class, 'arco-form-item')][1]");
+  const openChooser = () => Promise.all([
     page.waitForEvent("filechooser", { timeout: chooserTimeoutMs }),
     trigger.click({ timeout: chooserTimeoutMs }),
   ]).then(([chooser]) => chooser).catch((error: unknown) => {
@@ -959,7 +1187,32 @@ async function chooseCloudUploadFiles(
       `DOUYIN_DRAMA_FILE_CHOOSER_NOT_OPENED: ${label}; ${error instanceof Error ? error.message : String(error)}`,
     );
   });
-  await fileChooser.setFiles(files, { timeout: timeoutMs });
+
+  const firstChooser = await openChooser();
+  if (files.length <= 1 || firstChooser.isMultiple()) {
+    await firstChooser.setFiles(files, { timeout: timeoutMs });
+    return;
+  }
+
+  // Some cloud upload components support multiple list entries but expose a
+  // single-file chooser. Add every converted PDF page through a fresh chooser.
+  for (const [index, file] of files.entries()) {
+    const beforeCount = await item.locator(".uploaded_list_item, .arco-upload-list-item").count();
+    const chooser = index === 0 ? firstChooser : await openChooser();
+    await chooser.setFiles([file], { timeout: timeoutMs });
+    const deadline = Date.now() + Math.min(timeoutMs, 15_000);
+    while (Date.now() < deadline) {
+      const currentCount = await item.locator(".uploaded_list_item, .arco-upload-list-item").count();
+      if (currentCount > beforeCount) break;
+      await page.waitForTimeout(100);
+    }
+    const currentCount = await item.locator(".uploaded_list_item, .arco-upload-list-item").count();
+    if (currentCount <= beforeCount) {
+      throw new Error(
+        `DOUYIN_DRAMA_UPLOAD_FILE_NOT_ADDED: ${label}; file=${JSON.stringify(path.basename(file))}`,
+      );
+    }
+  }
 }
 
 async function deleteStalledCloudUploadItems(
@@ -1018,6 +1271,154 @@ async function confirmImageCropDialogIfPresent(page: Page, label: string) {
   });
 }
 
+export async function readDouyinUploadPdfPageCount(file: string) {
+  const document = await PDFDocument.load(await readFile(file), { ignoreEncryption: true });
+  const pageCount = document.getPageCount();
+  if (pageCount < 1) {
+    throw new Error(`DOUYIN_DRAMA_PDF_EMPTY: file=${file}`);
+  }
+  return pageCount;
+}
+
+let pdfConverterPromise: Promise<typeof import("pdf-to-img")> | undefined;
+const requireBuiltinModule = createRequire(import.meta.url);
+
+function installPdfRuntimeGlobals() {
+  const runtime = globalThis as unknown as Record<string, unknown>;
+  const runtimeProcess = process as unknown as {
+    getBuiltinModule?: (id: string) => unknown;
+  };
+  runtimeProcess.getBuiltinModule ??= (id) => requireBuiltinModule(id);
+  runtime.DOMMatrix ??= DOMMatrix;
+  runtime.DOMPoint ??= DOMPoint;
+  runtime.DOMRect ??= DOMRect;
+  runtime.ImageData ??= ImageData;
+  runtime.Path2D ??= Path2D;
+}
+
+async function loadPdfConverter() {
+  installPdfRuntimeGlobals();
+  pdfConverterPromise ??= import("pdf-to-img");
+  return pdfConverterPromise;
+}
+
+async function renderPdfPagesForImageUpload(
+  label: string,
+  file: string,
+  maximumPages?: number,
+) {
+  const sourceStat = await stat(file);
+  const pageCount = await readDouyinUploadPdfPageCount(file);
+  const renderedPageCount = Math.min(pageCount, maximumPages ?? pageCount);
+  const outputPrefix = path.join(
+    path.dirname(file),
+    `${path.basename(file, path.extname(file))}-upload-v3`,
+  );
+  const outputs = Array.from(
+    { length: renderedPageCount },
+    (_, index) => `${outputPrefix}-page-${index + 1}.jpg`,
+  );
+  const outputStats = await Promise.all(outputs.map((output) => stat(output).catch(() => undefined)));
+  if (outputStats.every((outputStat) =>
+    outputStat?.isFile() && outputStat.size > 0 && outputStat.mtimeMs >= sourceStat.mtimeMs)) {
+    return outputs;
+  }
+
+  try {
+    const { pdf } = await loadPdfConverter();
+    const document = await pdf(file, { scale: 2 });
+    for (let pageIndex = 0; pageIndex < renderedPageCount; pageIndex += 1) {
+      const output = outputs[pageIndex]!;
+      const cached = outputStats[pageIndex];
+      if (cached?.isFile() && cached.size > 0 && cached.mtimeMs >= sourceStat.mtimeMs) continue;
+      const renderedPage = await document.getPage(pageIndex + 1);
+      await sharp(renderedPage)
+        .flatten({ background: "white" })
+        .jpeg({ quality: 94, mozjpeg: true })
+        .toFile(output);
+    }
+  } catch (error) {
+    throw new Error(
+      `DOUYIN_DRAMA_PDF_IMAGE_CONVERSION_FAILED: ${label}; file=${file}; ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  for (const output of outputs) {
+    const converted = await stat(output).catch(() => undefined);
+    if (!converted?.isFile() || converted.size <= 0 || converted.size > 10 * 1024 * 1024) {
+      throw new Error(
+        `DOUYIN_DRAMA_CONVERTED_IMAGE_INVALID: ${label}; file=${output}; size=${converted?.size ?? 0}`,
+      );
+    }
+  }
+  return outputs;
+}
+
+async function mergePdfPagesForSingleImageUpload(
+  label: string,
+  pdfFile: string,
+  pageImages: string[],
+) {
+  if (pageImages.length === 1) return pageImages[0]!;
+  const sourceStat = await stat(pdfFile);
+  const output = path.join(
+    path.dirname(pdfFile),
+    `${path.basename(pdfFile, path.extname(pdfFile))}-upload-v4-all-pages.jpg`,
+  );
+  const cached = await stat(output).catch(() => undefined);
+  if (cached?.isFile() && cached.size > 0 && cached.mtimeMs >= sourceStat.mtimeMs) return output;
+
+  try {
+    const metadata = await Promise.all(pageImages.map((image) => sharp(image).metadata()));
+    const width = Math.max(...metadata.map((item) => item.width ?? 0));
+    const height = metadata.reduce((total, item) => total + (item.height ?? 0), 0);
+    if (width <= 0 || height <= 0) {
+      throw new Error(`invalid merged dimensions: width=${width}; height=${height}`);
+    }
+    let top = 0;
+    const layers = pageImages.map((image, index) => {
+      const layer = { input: image, left: 0, top };
+      top += metadata[index]?.height ?? 0;
+      return layer;
+    });
+    await sharp({
+      create: { width, height, channels: 3, background: "white" },
+      limitInputPixels: false,
+    })
+      .composite(layers)
+      .jpeg({ quality: 90, mozjpeg: true })
+      .toFile(output);
+  } catch (error) {
+    throw new Error(
+      `DOUYIN_DRAMA_PDF_PAGE_MERGE_FAILED: ${label}; file=${pdfFile}; ` +
+        `${error instanceof Error ? error.message : String(error)}`,
+    );
+  }
+  const converted = await stat(output).catch(() => undefined);
+  if (!converted?.isFile() || converted.size <= 0 || converted.size > 10 * 1024 * 1024) {
+    throw new Error(
+      `DOUYIN_DRAMA_CONVERTED_IMAGE_INVALID: ${label}; file=${output}; size=${converted?.size ?? 0}`,
+    );
+  }
+  return output;
+}
+
+async function prepareUploadFiles(label: string, files: string[]) {
+  if (label !== "成本配置情况" && label !== "不侵权承诺函") return files;
+  const sourceFiles = label === "成本配置情况" ? files.slice(0, 1) : files;
+  const prepared = await Promise.all(sourceFiles.map(async (file) => {
+    if (path.extname(file).toLowerCase() !== ".pdf") return [file];
+    const pages = await renderPdfPagesForImageUpload(
+      label,
+      file,
+      label === "成本配置情况" ? 1 : undefined,
+    );
+    if (label === "成本配置情况") return pages;
+    return [await mergePdfPagesForSingleImageUpload(label, file, pages)];
+  }));
+  return prepared.flat();
+}
+
 export async function uploadFormFiles(
   page: Page,
   label: string,
@@ -1026,6 +1427,7 @@ export async function uploadFormFiles(
   controlId?: string,
 ) {
   if (files.length === 0) return;
+  const preparedFiles = await prepareUploadFiles(label, files);
   const control = controlId
     ? page.locator(`#${controlId}`).first()
     : undefined;
@@ -1044,19 +1446,26 @@ export async function uploadFormFiles(
     // to either input directly does not reliably enter its cloud-upload queue.
     // Drive the visible drop zone and use the chooser opened by the component,
     // which is the same path as a user selecting files in the browser dialog.
-    await chooseCloudUploadFiles(page, control, label, files, timeoutMs);
+    await chooseCloudUploadFiles(page, control, label, preparedFiles, timeoutMs);
   } else {
     const input = item.locator('input[type="file"]').first();
     await input.waitFor({ state: "attached", timeout: 10_000 });
-    await input.setInputFiles(files, { timeout: timeoutMs });
+    await input.setInputFiles(preparedFiles, { timeout: timeoutMs });
   }
   if (/封面/.test(label)) await confirmImageCropDialogIfPresent(page, label);
   try {
-    await waitForUploadSettlement(page, item, label, timeoutMs, files.length);
+    await waitForUploadSettlement(
+      page,
+      item,
+      label,
+      timeoutMs,
+      preparedFiles.length,
+      preparedFiles,
+    );
   } catch (error) {
     if (!control || !(error instanceof DouyinUploadStalledAt100Error)) throw error;
 
-    const retryFiles = error.stalledIndices.map((index) => files[index]).filter(Boolean);
+    const retryFiles = error.stalledIndices.map((index) => preparedFiles[index]).filter(Boolean);
     if (retryFiles.length !== error.stalledIndices.length) throw error;
     await deleteStalledCloudUploadItems(page, item, label, error.stalledIndices);
 
@@ -1075,6 +1484,7 @@ export async function uploadFormFiles(
             label,
             timeoutMs,
             expectedCompletedCount + 1,
+            preparedFiles,
           );
           expectedCompletedCount += 1;
           recovered = true;
@@ -1092,8 +1502,116 @@ export async function uploadFormFiles(
         );
       }
     }
-    await waitForUploadSettlement(page, item, label, timeoutMs, files.length);
+    await waitForUploadSettlement(
+      page,
+      item,
+      label,
+      timeoutMs,
+      preparedFiles.length,
+      preparedFiles,
+    );
   }
+}
+
+export function hasInvalidDouyinEpisodeDuration(text: string) {
+  const matched = text.match(/时长[：:]\s*(\d{1,2}):(\d{2}):(\d{2})/u);
+  if (!matched) return false;
+  const minutes = Number(matched[2]);
+  const seconds = Number(matched[3]);
+  // Douyin occasionally renders an exact minute as 00:00:60. Treat that as a
+  // valid 60-second duration instead of deleting an otherwise successful upload.
+  return minutes >= 60 || seconds > 60;
+}
+
+export function hasTooShortDouyinEpisodeDuration(text: string) {
+  const matched = text.match(/时长[：:]\s*(\d{1,2}):(\d{2}):(\d{2})/u);
+  if (!matched || hasInvalidDouyinEpisodeDuration(text)) return false;
+  const hours = Number(matched[1]);
+  const minutes = Number(matched[2]);
+  const seconds = Number(matched[3]);
+  return hours * 3_600 + minutes * 60 + seconds < 30;
+}
+
+export async function reuploadFailedDouyinEpisodeAfterDelete(
+  panel: Locator,
+  uploadInput: Locator,
+  sourceFiles: string[],
+  maximumReuploadAttempts: number,
+  reuploadAttemptsByFile: Map<string, number>,
+) {
+  const failedItems = panel.locator(".uploaded_list_item");
+  for (let index = 0; index < await failedItems.count(); index += 1) {
+    const item = failedItems.nth(index);
+    const itemText = await item.innerText().catch(() => "");
+    const failed = await item
+      .locator(".file-status-text-error")
+      .filter({ hasText: /上传失败|处理失败|转码失败|上传异常/u })
+      .count() > 0;
+    const invalidDuration = hasInvalidDouyinEpisodeDuration(itemText);
+    const tooShort = hasTooShortDouyinEpisodeDuration(itemText);
+    if (!failed && !invalidDuration && !tooShort) continue;
+
+    const fileName = (await item.locator(".file-name").first().textContent().catch(() => ""))
+      ?.replace(/\s+/gu, " ")
+      .trim() || `第${index + 1}个视频`;
+    if (tooShort) {
+      const duration = itemText.match(/时长[：:]\s*(\d{1,2}:\d{2}:\d{2})/u)?.[1] ?? "未知";
+      throw new Error(
+        `DOUYIN_DRAMA_EPISODE_DURATION_TOO_SHORT: file=${JSON.stringify(fileName)}; ` +
+          `duration=${duration}; minimumSeconds=30`,
+      );
+    }
+    const sourceFile = sourceFiles.find((file) => path.basename(file) === fileName)
+      ?? sourceFiles[index];
+    if (!sourceFile) {
+      throw new Error(
+        `DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOAD_SOURCE_NOT_FOUND: ` +
+          `file=${JSON.stringify(fileName)}; index=${index}`,
+      );
+    }
+    const completedAttempts = reuploadAttemptsByFile.get(fileName) ?? 0;
+    if (completedAttempts >= maximumReuploadAttempts) {
+      throw new Error(
+        `DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOADS_EXHAUSTED: file=${JSON.stringify(fileName)}; ` +
+          `reuploadAttempts=${completedAttempts}; maximum=${maximumReuploadAttempts}`,
+      );
+    }
+
+    const deleteButton = item
+      .locator(".uploaded_list_item-ops button:has(.serial-icon-general_delete)")
+      .filter({ visible: true })
+      .first();
+    await deleteButton.waitFor({ state: "visible", timeout: 5_000 }).catch(() => {
+      throw new Error(
+        `DOUYIN_DRAMA_EPISODE_UPLOAD_DELETE_BUTTON_NOT_FOUND: file=${JSON.stringify(fileName)}`,
+      );
+    });
+    const page = panel.page();
+    await deleteButton.click();
+    const confirmDialog = page.locator(".arco-modal:visible, [role='dialog']:visible")
+      .filter({ hasText: /删除|移除/u })
+      .last();
+    if (await confirmDialog.isVisible({ timeout: 500 }).catch(() => false)) {
+      await confirmDialog
+        .getByRole("button", { name: /确定|确认|删除|移除/u })
+        .filter({ visible: true })
+        .last()
+        .click();
+    }
+    const deletedItem = panel.locator(".uploaded_list_item").filter({
+      has: panel.locator(".file-name").filter({ hasText: exactTextPattern(fileName) }),
+    });
+    await deletedItem.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {
+      throw new Error(
+        `DOUYIN_DRAMA_EPISODE_UPLOAD_DELETE_NOT_CONFIRMED: file=${JSON.stringify(fileName)}`,
+      );
+    });
+    await uploadInput.setInputFiles([sourceFile], { timeout: 120_000 });
+    const attempt = completedAttempts + 1;
+    reuploadAttemptsByFile.set(fileName, attempt);
+    return [{ attempt, fileName }];
+  }
+  return [];
 }
 
 export async function fillDouyinEpisodeBatchEdit(

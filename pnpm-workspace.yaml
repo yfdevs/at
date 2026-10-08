@@ -3,6 +3,7 @@ packages:
 
 allowBuilds:
   better-sqlite3: true
+  canvas: false
   electron: true
   esbuild: true
   ffmpeg-static: true

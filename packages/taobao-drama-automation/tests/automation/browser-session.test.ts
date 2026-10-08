@@ -2,12 +2,60 @@ import assert from "node:assert/strict";
 import test from "node:test";
 
 import {
+  hideTaobaoWebDriver,
   isTaobaoBatchPublishSuccessUrl,
   isTaobaoCreatorSuccessNavigation,
   isTaobaoTargetUrl,
+  taobaoBrowserLaunchOptions,
   taobaoLoginStateFromPage,
   taobaoLoginStateFromUrl,
+  testTaobaoBrowserExecutable,
 } from "../../src/automation/browser-session.js";
+
+test("launches Taobao Chromium without the standard automation switches", () => {
+  const launchOptions = taobaoBrowserLaunchOptions({
+    config: { browser: { headless: false, slowMo: 50 } },
+  });
+
+  assert.deepEqual(launchOptions.args, ["--disable-blink-features=AutomationControlled"]);
+  assert.deepEqual(launchOptions.ignoreDefaultArgs, ["--enable-automation"]);
+  assert.equal(launchOptions.channel, "chrome");
+  assert.equal(launchOptions.headless, false);
+  assert.equal(launchOptions.locale, "zh-CN");
+  assert.equal(launchOptions.slowMo, 50);
+  assert.equal(launchOptions.timezoneId, "Asia/Shanghai");
+  assert.equal(launchOptions.viewport, null);
+});
+
+test("removes webdriver from the navigator prototype", () => {
+  const originalNavigator = Object.getOwnPropertyDescriptor(globalThis, "navigator");
+  const navigatorPrototype = { webdriver: true };
+  Object.defineProperty(globalThis, "navigator", {
+    configurable: true,
+    value: Object.create(navigatorPrototype),
+  });
+
+  try {
+    hideTaobaoWebDriver();
+    assert.equal(globalThis.navigator.webdriver, undefined);
+    assert.equal("webdriver" in globalThis.navigator, false);
+  } finally {
+    if (originalNavigator) {
+      Object.defineProperty(globalThis, "navigator", originalNavigator);
+    } else {
+      Reflect.deleteProperty(globalThis, "navigator");
+    }
+  }
+});
+
+test("reports a configured local browser path that cannot be launched", async () => {
+  const result = await testTaobaoBrowserExecutable(
+    "Z:\\missing-taobao-browser\\chrome.exe",
+  );
+
+  assert.equal(result.ok, false);
+  assert.ok(result.message.length > 0);
+});
 
 test("treats the Taobao workspace redirect as an explicit batch-publish success", () => {
   assert.equal(isTaobaoBatchPublishSuccessUrl(

@@ -51,6 +51,7 @@ type Runtime = { getStatus: () => RuntimeStatus; stop: () => Promise<void> };
 
 export type TaobaoDramaConfig = {
   accountProfileName: string;
+  browserExecutablePath: string;
   headless: string;
   operationDelaySeconds: string;
   baiduNetdiskDownloadRetryAttempts: string;
@@ -83,8 +84,24 @@ const loginUrl =
   `&redirectURL=${encodeURIComponent(batchPublishUrl)}`;
 const taskDataWindowMode = "taobao-drama-task-data";
 
+function defaultTaobaoBrowserExecutablePath() {
+  const candidates = [
+    process.env.LOCALAPPDATA
+      ? path.join(process.env.LOCALAPPDATA, "Google", "Chrome", "Application", "chrome.exe")
+      : "",
+    process.env.PROGRAMFILES
+      ? path.join(process.env.PROGRAMFILES, "Google", "Chrome", "Application", "chrome.exe")
+      : "",
+    process.env["PROGRAMFILES(X86)"]
+      ? path.join(process.env["PROGRAMFILES(X86)"], "Google", "Chrome", "Application", "chrome.exe")
+      : "",
+  ];
+  return candidates.find((candidate) => candidate && existsSync(candidate)) ?? "";
+}
+
 const defaults: TaobaoDramaConfig = {
   accountProfileName: "default",
+  browserExecutablePath: defaultTaobaoBrowserExecutablePath(),
   headless: "false",
   operationDelaySeconds: "0",
   baiduNetdiskDownloadRetryAttempts: "3",
@@ -169,6 +186,8 @@ function numberText(value: string | undefined, fallback: string, minimum = 0) {
 function normalizeConfig(config: Partial<TaobaoDramaConfig>): TaobaoDramaConfig {
   return {
     accountProfileName: config.accountProfileName?.trim() || defaults.accountProfileName,
+    browserExecutablePath:
+      config.browserExecutablePath?.trim() ?? defaults.browserExecutablePath,
     headless: config.headless ?? defaults.headless,
     operationDelaySeconds: numberText(config.operationDelaySeconds, defaults.operationDelaySeconds),
     baiduNetdiskDownloadRetryAttempts: numberText(
@@ -244,6 +263,9 @@ async function importRuntimePackage() {
       issues: Array<{ sheet: string; row: number; message: string }>;
     }>;
     startTaobaoDramaRuntime: (options: Record<string, unknown>) => Promise<Runtime>;
+    testTaobaoBrowserExecutable: (
+      executablePath: string,
+    ) => Promise<{ ok: boolean; message: string }>;
   }>;
 }
 
@@ -323,6 +345,7 @@ async function startRuntime(): Promise<Runtime> {
       ensureBaiduNetdiskShareDownloaded({ ...request, requesterPlatform: "taobao-drama" }),
     config: {
       browser: {
+        executablePath: config.browserExecutablePath || undefined,
         headless: config.headless === "true",
         slowMo: (Number(config.operationDelaySeconds) || 0) * 1_000,
       },
@@ -414,6 +437,13 @@ export function registerTaobaoDramaPlatformHandlers() {
       restartRequired: controller.running || controller.startingPromise !== null,
     };
   });
+  ipcMain.handle(
+    "taobao-drama:config:test-browser-path",
+    async (_event, executablePath: string) => {
+      const { testTaobaoBrowserExecutable } = await importRuntimePackage();
+      return testTaobaoBrowserExecutable(executablePath);
+    },
+  );
   ipcMain.handle("taobao-drama:config:select-run-data-dir", async (event, current?: string) => {
     const selected = await selectDirectory(event, {
       title: "选择淘宝短剧运行数据目录",

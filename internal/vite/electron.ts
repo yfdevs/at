@@ -16,6 +16,10 @@ const electronMainExternalPatterns = [
   /^playwright-core(?:\/.*)?$/,
   /^chromium-bidi(?:\/.*)?$/,
   /^sharp(?:\/.*)?$/,
+  /^pdf-to-img(?:\/.*)?$/,
+  /^pdfjs-dist(?:\/.*)?$/,
+  /^@napi-rs\/canvas(?:\/.*)?$/,
+  /^@napi-rs\/canvas-[^/]+(?:\/.*)?$/,
   /^tesseract\.js(?:\/.*)?$/,
   /^tesseract\.js-core(?:\/.*)?$/,
   /^@tesseract\.js-data\/chi_sim(?:\/.*)?$/,
@@ -24,7 +28,7 @@ const electronMainExternalPatterns = [
 
 const electronMainExternals = (id: string) =>
   electronMainExternalPatterns.some((pattern) => pattern.test(id)) ||
-  /[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:ffmpeg-static|sharp|tesseract\.js|tesseract\.js-core|@tesseract\.js-data[\\/]chi_sim|@img)(?:[\\/]|$)/.test(id);
+  /[\\/]node_modules[\\/](?:\.pnpm[\\/][^\\/]+[\\/]node_modules[\\/])?(?:ffmpeg-static|sharp|pdf-to-img|pdfjs-dist|tesseract\.js|tesseract\.js-core|@tesseract\.js-data[\\/]chi_sim|@napi-rs[\\/]canvas(?:-[^\\/]+)?|@img)(?:[\\/]|$)/.test(id);
 
 export function createElectronPlugin(rootDir: string) {
   return electron({

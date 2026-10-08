@@ -8,9 +8,12 @@ import {
   taobaoDramaService,
   type TaobaoDramaConfig,
 } from "@/platforms/taobao-drama/service"
+import { Button } from "@/components/ui/button"
+import { toast } from "sonner"
 
 const emptyConfig: TaobaoDramaConfig = {
   accountProfileName: "default",
+  browserExecutablePath: "",
   headless: "false",
   operationDelaySeconds: "0",
   baiduNetdiskDownloadRetryAttempts: "3",
@@ -26,6 +29,7 @@ const sections: ConfigSectionDefinition<TaobaoDramaConfig>[] = [
     description: "淘宝使用独立浏览器登录态；Excel 只负责导入，上传任务统一从本地数据库读取。",
     fields: [
       { key: "accountProfileName", label: "浏览器账号标识", type: "text", description: "用于隔离淘宝登录态，本地单账号运行，不再读取后台账号。" },
+      { key: "browserExecutablePath", label: "浏览器可执行文件路径", type: "text", description: "本机 Chrome 或 Chromium 的 exe 路径；留空使用系统 Chrome。" },
       { key: "baiduNetdiskDownloadRetryAttempts", label: "网盘下载重试", type: "number", suffix: "次", min: 0, description: "百度网盘素材准备失败后的重试次数。" },
     ],
   },
@@ -54,6 +58,22 @@ export function TaobaoDramaConfigurationPage() {
     getConfig: taobaoDramaService.getConfig,
     saveConfig: taobaoDramaService.saveConfig,
   })
+
+  const testBrowserPath = async () => {
+    try {
+      const result = await taobaoDramaService.testBrowserPath(state.config.browserExecutablePath)
+      if (result.ok) {
+        toast.success("浏览器路径测试通过", { description: result.message })
+      } else {
+        toast.error("浏览器路径测试失败", { description: result.message })
+      }
+    } catch (error) {
+      toast.error("浏览器路径测试失败", {
+        description: error instanceof Error ? error.message : String(error),
+      })
+    }
+  }
+
   return (
     <ConfigurationPageFrame
       hasChanges={state.hasChanges}
@@ -63,12 +83,21 @@ export function TaobaoDramaConfigurationPage() {
       onDiscard={state.discardChanges}
       onSave={state.persistConfig}
     >
-      {sections.map((section) => (
+      {sections.map((section, index) => (
         <ConfigSection
           key={section.title}
           config={state.config}
           fields={section.fields}
           section={section}
+          footer={index === 0 ? (
+            <Button
+              disabled={state.loading}
+              onClick={() => void testBrowserPath()}
+              variant="outline"
+            >
+              测试浏览器路径
+            </Button>
+          ) : undefined}
           onChange={state.updateConfig}
         />
       ))}

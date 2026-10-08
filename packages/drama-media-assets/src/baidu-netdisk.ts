@@ -522,15 +522,39 @@ async function listCurrentMetadataFiles(
   const standardResourceDir = playletDir(targetRoot, resourceName);
   const roots = new Map<string, string>();
   const addRoot = (value: string) => roots.set(path.resolve(value).toLowerCase(), value);
+  const expectedDirectoryNames = new Set(
+    directoryNames
+      .map((value) => path.basename(value.trim()))
+      .filter((value) => value && value !== "." && value !== ".."),
+  );
   addRoot(path.join(standardResourceDir, "海报封面", "剧情资料"));
   addRoot(path.join(standardResourceDir, "海报封面", "原始图片"));
   for (const localPath of localPaths) {
-    for (const directoryName of directoryNames) {
+    for (const directoryName of expectedDirectoryNames) {
       if (path.basename(localPath) === directoryName) addRoot(localPath);
       addRoot(path.join(localPath, directoryName));
       addRoot(path.join(localPath, resourceName, directoryName));
     }
   }
+
+  // A shared folder can contain an uploader-prefixed wrapper (for example
+  // `A刘晓-剧名/简介`) whose name is different from the task's resourceName.
+  // Search only inside this task's download roots and only for directory names
+  // that the remote metadata listing explicitly reported.
+  const findNestedMetadataRoots = async (directory: string, depth: number): Promise<void> => {
+    if (depth > 8 || expectedDirectoryNames.size === 0) return;
+    const entries = await readdir(directory, { withFileTypes: true }).catch(() => []);
+    for (const entry of entries) {
+      if (!entry.isDirectory()) continue;
+      const nestedDirectory = path.join(directory, entry.name);
+      if (expectedDirectoryNames.has(entry.name)) {
+        addRoot(nestedDirectory);
+        continue;
+      }
+      await findNestedMetadataRoots(nestedDirectory, depth + 1);
+    }
+  };
+  for (const localPath of localPaths) await findNestedMetadataRoots(localPath, 0);
 
   const files = new Map<string, LocalMetadataFile>();
   const walk = async (directory: string, depth: number): Promise<void> => {
@@ -979,7 +1003,7 @@ async function waitForCompleteLocalEpisodeVideos(options: {
         if (Date.now() - lastProgressLogAt > 15_000) {
           options.onLog?.(
             `[video-assets] 下载状态：${options.resourceName}` +
-              (bestLocalSummary
+              (options.requireEpisodeVideos && bestLocalSummary
                 ? ` 本地识别=${bestLocalSummary.count}/${options.episodeCount}集` +
                   (bestLocalSummary.min !== undefined
                     ? `(${bestLocalSummary.min}-${bestLocalSummary.max})`

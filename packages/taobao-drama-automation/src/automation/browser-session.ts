@@ -11,6 +11,53 @@ import type { TaobaoDramaLoginState, TaobaoDramaRuntimeOptions } from "../shared
 
 const loginHosts = ["login.taobao.com", "passport.taobao.com", "aq.taobao.com", "sec.taobao.com"];
 
+export function hideTaobaoWebDriver() {
+  const navigatorPrototype = Object.getPrototypeOf(navigator) as Record<string, unknown> | null;
+  if (!navigatorPrototype) return;
+
+  try {
+    if (Reflect.deleteProperty(navigatorPrototype, "webdriver")) return;
+    throw new Error("webdriver descriptor is not configurable");
+  } catch {
+    try {
+      Object.defineProperty(navigatorPrototype, "webdriver", {
+        configurable: true,
+        get: () => undefined,
+      });
+    } catch {
+      // Some custom browser builds expose a non-configurable descriptor. In that
+      // case the Chromium launch flag below remains the primary protection.
+    }
+  }
+}
+
+async function installTaobaoStealth(context: BrowserContext) {
+  await context.addInitScript(hideTaobaoWebDriver);
+
+  // A persistent profile can restore an already-loaded tab. Init scripts cover
+  // subsequent documents and iframes; this also patches those restored tabs.
+  await Promise.all(context.pages().map((page) =>
+    page.evaluate(hideTaobaoWebDriver).catch(() => undefined)
+  ));
+}
+
+export function taobaoBrowserLaunchOptions(options: TaobaoDramaRuntimeOptions) {
+  const executablePath = options.config?.browser?.executablePath?.trim();
+  return {
+    ...(executablePath
+      ? { executablePath }
+      : { channel: "chrome" as const }),
+    args: ["--disable-blink-features=AutomationControlled"],
+    extraHTTPHeaders: { "accept-language": "zh-CN,zh;q=0.9,en;q=0.8" },
+    headless: options.config?.browser?.headless ?? false,
+    ignoreDefaultArgs: ["--enable-automation"],
+    locale: "zh-CN",
+    slowMo: options.config?.browser?.slowMo ?? 0,
+    timezoneId: "Asia/Shanghai",
+    viewport: null,
+  } satisfies Parameters<typeof chromium.launchPersistentContext>[1];
+}
+
 export function taobaoLoginStateFromUrl(url?: string): TaobaoDramaLoginState {
   if (!url) return "unknown";
   try {
@@ -106,12 +153,54 @@ export async function launchTaobaoBrowserContext(
   userDataDir: string,
   options: TaobaoDramaRuntimeOptions,
 ) {
-  const context = await chromium.launchPersistentContext(userDataDir, {
-    headless: options.config?.browser?.headless ?? false,
-    slowMo: options.config?.browser?.slowMo ?? 0,
-  });
-  log(options, "[taobao-drama] Playwright Chromium 已启动");
-  return context;
+  const executablePath = options.config?.browser?.executablePath?.trim();
+  try {
+    const context = await chromium.launchPersistentContext(
+      userDataDir,
+      taobaoBrowserLaunchOptions(options),
+    );
+    await installTaobaoStealth(context);
+    log(
+      options,
+      executablePath
+        ? "[taobao-drama] 已使用配置的本地浏览器启动"
+        : "[taobao-drama] 已使用系统 Chrome 启动",
+    );
+    return context;
+  } catch (error) {
+    throw Object.assign(
+      new Error(
+        executablePath
+          ? "无法启动配置的浏览器，请检查可执行文件路径和浏览器安装。"
+          : "淘宝短剧需要本机安装 Google Chrome，请安装或修复 Chrome 后重启服务。",
+      ),
+      { cause: error },
+    );
+  }
+}
+
+export async function testTaobaoBrowserExecutable(
+  executablePath: string,
+): Promise<{ ok: boolean; message: string }> {
+  const trimmedPath = executablePath.trim();
+  let browser;
+  try {
+    browser = await chromium.launch(
+      trimmedPath
+        ? { executablePath: trimmedPath, headless: true }
+        : { channel: "chrome", headless: true },
+    );
+    return {
+      ok: true,
+      message: trimmedPath
+        ? "浏览器路径可用，Playwright 已成功启动。"
+        : "未填写自定义路径，系统 Chrome 可用。",
+    };
+  } catch (error) {
+    return { ok: false, message: error instanceof Error ? error.message : String(error) };
+  } finally {
+    await browser?.close().catch(() => undefined);
+  }
 }
 
 export async function saveTaobaoCredentialState(

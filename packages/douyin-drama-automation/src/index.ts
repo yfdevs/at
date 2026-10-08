@@ -1,11 +1,6 @@
 export { startDouyinDramaRuntime } from "./app/runtime.js";
 export { fetchDouyinDramaAccounts } from "./api/account-config.js";
 export type { DouyinDramaAccount } from "./api/account-config.js";
-export {
-  createMockDouyinDramaAccounts,
-  DOUYIN_DRAMA_MOCK_ACCOUNT_ID,
-  isMockDouyinDramaAccountId,
-} from "./api/mock-account.js";
 export { createDouyinDramaHttpClient } from "./api/http-client.js";
 export type { DouyinDramaHttpClient } from "./api/http-client.js";
 export {
@@ -40,7 +35,6 @@ export {
   normalizeClaimedDouyinDramaTask,
   reportDouyinDramaTaskErrorApi,
   reportDouyinDramaTaskSuccessApi,
-  resetMockDouyinDramaTaskApi,
 } from "./api/task.js";
 export {
   createDouyinDramaDropdownRecorder,

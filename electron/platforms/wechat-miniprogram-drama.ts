@@ -52,8 +52,6 @@ export type WechatMiniProgramConfig = {
   apiBaseUrl: string
   taskApiPrefix: string
   catalogApiBaseUrl: string
-  materialUploadApiBaseUrl: string
-  catalogAuthorizationToken: string
   localEpisodeVideoRoot: string
   closeFailedTaskPages: string
   runDataDir: string
@@ -95,8 +93,6 @@ const defaultWechatMiniProgramConfig: WechatMiniProgramConfig = {
   apiBaseUrl: 'http://180.184.76.232:19090',
   taskApiPrefix: '/dramaAiRpa/wechatMiniProgram',
   catalogApiBaseUrl: 'https://wxmini.xiaoshuo666.cn:8006',
-  materialUploadApiBaseUrl: 'http://115.191.39.138:19101',
-  catalogAuthorizationToken: '',
   localEpisodeVideoRoot: '',
   closeFailedTaskPages: 'false',
   runDataDir: '.drama-runs/wechat-miniprogram-drama',
@@ -249,9 +245,10 @@ function normalizeConfig(
   return {
     apiBaseUrl: config.apiBaseUrl ?? defaultWechatMiniProgramConfig.apiBaseUrl,
     taskApiPrefix: config.taskApiPrefix?.trim() || defaultWechatMiniProgramConfig.taskApiPrefix,
-    catalogApiBaseUrl: config.catalogApiBaseUrl?.trim() || defaultWechatMiniProgramConfig.catalogApiBaseUrl,
-    materialUploadApiBaseUrl: config.materialUploadApiBaseUrl?.trim() || defaultWechatMiniProgramConfig.materialUploadApiBaseUrl,
-    catalogAuthorizationToken: config.catalogAuthorizationToken?.trim() ?? '',
+    catalogApiBaseUrl:
+      config.catalogApiBaseUrl?.trim()
+      || config.materialUploadApiBaseUrl?.trim()
+      || defaultWechatMiniProgramConfig.catalogApiBaseUrl,
     localEpisodeVideoRoot: config.localEpisodeVideoRoot ?? defaultWechatMiniProgramConfig.localEpisodeVideoRoot,
     closeFailedTaskPages: config.closeFailedTaskPages ?? defaultWechatMiniProgramConfig.closeFailedTaskPages,
     runDataDir:

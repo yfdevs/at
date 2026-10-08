@@ -1,11 +1,12 @@
 import { mkdir, readdir, rm, stat, writeFile } from "node:fs/promises";
 import path from "node:path";
+import sharp from "sharp";
 import {
+  classifyOwnershipProjectProof,
   classifyOwnershipProjectProofName,
   listLocalOwnershipMaterials,
   listLocalPosterImages,
   prepareStretchedImageVariant,
-  readImageDimensions,
   validateLocalEpisodeVideos,
 } from "@drama/drama-media-assets";
 import {
@@ -23,6 +24,79 @@ const supportedMaterialExtensions = new Set([
   ".bmp",
   ".webp",
 ]);
+
+const DOUYIN_ROLE_PHOTO_MIN_BYTES = 50 * 1024;
+const DOUYIN_ROLE_PHOTO_TARGET_BYTES = 64 * 1024;
+const DOUYIN_ROLE_PHOTO_MAX_BYTES = 4_700_000;
+const DOUYIN_ROLE_PHOTO_SIZE = 1_024;
+
+/**
+ * Douyin rejects role photos smaller than 50 KiB. Detailed AI portraits can
+ * still become much smaller after mozjpeg compression, so role photos need a
+ * dedicated encoder instead of the normal poster compression helper.
+ */
+export async function prepareDouyinRolePhoto(
+  inputFile: string,
+  outputBaseFile: string,
+  onLog?: (message: string) => void,
+) {
+  await mkdir(path.dirname(outputBaseFile), { recursive: true });
+  const image = sharp(inputFile, { failOn: "error" })
+    .rotate()
+    .resize({
+      width: DOUYIN_ROLE_PHOTO_SIZE,
+      height: DOUYIN_ROLE_PHOTO_SIZE,
+      fit: "cover",
+      position: "centre",
+    })
+    .flatten({ background: "#ffffff" })
+    .toColourspace("srgb");
+  const jpegBuffer = await image.clone().jpeg({
+    quality: 100,
+    progressive: false,
+    mozjpeg: false,
+    chromaSubsampling: "4:4:4",
+  }).toBuffer();
+
+  let outputFile = outputBaseFile.replace(/\.[^.]+$/u, ".jpg");
+  let outputBuffer = jpegBuffer;
+  let format = "JPEG";
+  if (jpegBuffer.length < DOUYIN_ROLE_PHOTO_TARGET_BYTES) {
+    outputFile = outputBaseFile.replace(/\.[^.]+$/u, ".png");
+    outputBuffer = await image.clone().png({
+      compressionLevel: 0,
+      adaptiveFiltering: false,
+      palette: false,
+    }).toBuffer();
+    format = "PNG";
+  }
+
+  if (outputBuffer.length < DOUYIN_ROLE_PHOTO_MIN_BYTES) {
+    throw new Error(
+      `DOUYIN_DRAMA_ROLE_PHOTO_TOO_SMALL_AFTER_PROCESSING: ` +
+        `actual=${outputBuffer.length}; minimum=${DOUYIN_ROLE_PHOTO_MIN_BYTES}; file=${inputFile}`,
+    );
+  }
+  if (outputBuffer.length > DOUYIN_ROLE_PHOTO_MAX_BYTES) {
+    throw new Error(
+      `DOUYIN_DRAMA_ROLE_PHOTO_TOO_LARGE_AFTER_PROCESSING: ` +
+        `actual=${outputBuffer.length}; maximum=${DOUYIN_ROLE_PHOTO_MAX_BYTES}; file=${inputFile}`,
+    );
+  }
+  await writeFile(outputFile, outputBuffer);
+  const metadata = await sharp(outputBuffer, { failOn: "error" }).metadata();
+  if (metadata.width !== DOUYIN_ROLE_PHOTO_SIZE || metadata.height !== DOUYIN_ROLE_PHOTO_SIZE) {
+    throw new Error(
+      `DOUYIN_DRAMA_ROLE_PHOTO_DIMENSION_INVALID: ` +
+        `actual=${metadata.width ?? 0}x${metadata.height ?? 0}; file=${inputFile}`,
+    );
+  }
+  onLog?.(
+    `[role-photo] 生成合规角色头像：${inputFile} -> ${outputFile} ` +
+      `${format} ${DOUYIN_ROLE_PHOTO_SIZE}x${DOUYIN_ROLE_PHOTO_SIZE} size=${outputBuffer.length}`,
+  );
+  return { file: outputFile, size: outputBuffer.length };
+}
 
 export function douyinDramaResourceName(task: ClaimedDouyinDramaTask) {
   return task.originalTitle.trim();
@@ -129,17 +203,31 @@ async function prepareMaterialReferences(
 }
 
 const douyinImageMaterialExtensions = new Set([".png", ".jpg", ".jpeg"]);
+const douyinDocumentMaterialExtensions = new Set([".pdf", ...douyinImageMaterialExtensions]);
 
-export function selectDouyinJianyingProjectScreenshots(
+type DouyinProjectProofClassifier = (
+  material: Awaited<ReturnType<typeof listLocalOwnershipMaterials>>[number],
+) => Promise<"jianying" | "juchuang" | "unknown">;
+
+export async function selectDouyinJianyingProjectScreenshots(
   ownershipMaterials: Awaited<ReturnType<typeof listLocalOwnershipMaterials>>,
   count = 4,
+  classifyUnknown?: DouyinProjectProofClassifier,
 ) {
-  const classified = ownershipMaterials.map((material) => ({
-    kind: classifyOwnershipProjectProofName(
+  const classified: Array<{
+    kind: "jianying" | "juchuang" | "unknown";
+    material: Awaited<ReturnType<typeof listLocalOwnershipMaterials>>[number];
+  }> = [];
+  for (const material of ownershipMaterials) {
+    const namedKind = classifyOwnershipProjectProofName(
       `${path.basename(path.dirname(material.file))}/${material.name}`,
-    ),
-    material,
-  }));
+    );
+    classified.push({
+      kind: namedKind ?? (classifyUnknown ? await classifyUnknown(material) : "unknown"),
+      material,
+    });
+    if (classified.filter((item) => item.kind === "jianying").length >= count) break;
+  }
   const selectedMaterials = classified
     .filter((item) => item.kind === "jianying")
     .map((item) => item.material)
@@ -150,7 +238,7 @@ export function selectDouyinJianyingProjectScreenshots(
   if (selectedMaterials.length < count) {
     const juchuangCount = classified.filter((item) => item.kind === "juchuang").length;
     const unknown = classified
-      .filter((item) => item.kind === undefined)
+      .filter((item) => item.kind === "unknown")
       .map((item) => item.material.name)
       .slice(0, 8);
     throw new Error(
@@ -233,9 +321,17 @@ export async function prepareDouyinDramaResources(
   }
   // 抖音要求的是当前剧目的剪映工程截图。即使接口或 mock 误传了通用
   // 图片，也必须由百度网盘下载目录重新选择，避免把占位图/封面传上去。
-  task.playlet.projectScreenshotFiles = selectDouyinJianyingProjectScreenshots(
+  const aiClient = options.aiClientFactory?.();
+  task.playlet.projectScreenshotFiles = await selectDouyinJianyingProjectScreenshots(
     ownershipMaterials,
     4,
+    aiClient
+      ? (material) => classifyOwnershipProjectProof(
+          material.file,
+          material.name,
+          aiClient as Parameters<typeof classifyOwnershipProjectProof>[2],
+        )
+      : undefined,
   );
   log(options, "[douyin-drama] 已从百度网盘权属目录选择 4 张剪映工程截图。", {
     accountTaskId: task.accountTaskId,
@@ -254,7 +350,7 @@ export async function prepareDouyinDramaResources(
       "cost-configuration",
       task,
       options,
-      douyinImageMaterialExtensions,
+      douyinDocumentMaterialExtensions,
     ),
     prepareMaterialReferences(task.playlet.payCommitmentFiles, "pay-commitment", task, options),
     prepareMaterialReferences(task.playlet.ownershipProofFiles, "ownership-proof", task, options),
@@ -263,7 +359,7 @@ export async function prepareDouyinDramaResources(
       "non-infringement-commitment",
       task,
       options,
-      douyinImageMaterialExtensions,
+      douyinDocumentMaterialExtensions,
     ),
     prepareMaterialReferences(
       task.playlet.projectScreenshotFiles,
@@ -332,16 +428,11 @@ export async function prepareDouyinDramaResources(
       task,
       options,
     );
-    const dimensions = await readImageDimensions(sourceRolePhoto);
-    const preparedRolePhoto = await prepareStretchedImageVariant({
-      inputFile: sourceRolePhoto,
-      outputFile: path.join(rolePhotoOutputDir, `role-${index + 1}.jpg`),
-      width: dimensions.width,
-      height: dimensions.height,
-      jpegQuality: 92,
-      maxFileBytes: 4_700_000,
-      onLog: onResizeLog,
-    });
+    const preparedRolePhoto = await prepareDouyinRolePhoto(
+      sourceRolePhoto,
+      path.join(rolePhotoOutputDir, `role-${index + 1}.jpg`),
+      onResizeLog,
+    );
     role.photoFile = preparedRolePhoto.file;
   }
 

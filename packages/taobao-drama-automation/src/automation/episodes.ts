@@ -1,10 +1,10 @@
 import path from "node:path";
 import type { Frame, Locator, Page } from "playwright";
 import {
-  TAOBAO_DRAMA_BATCH_PUBLISH_URL,
+  TAOBAO_DRAMA_EPISODE_UPLOAD_RETRY_ATTEMPTS,
   TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH,
   TAOBAO_DRAMA_MIN_SETTLE_MS,
-  taobaoEpisodeBatchRanges,
+  taobaoEpisodeBatchPagePlan,
 } from "../shared/constants.js";
 import { findTaobaoEpisodeVideos, validateTaobaoEpisodeVideos } from "../shared/local-materials.js";
 import { log } from "../shared/logger.js";
@@ -21,10 +21,10 @@ import {
 } from "./browser-session.js";
 
 export const TAOBAO_MAX_FILES_PER_SELECTION = TAOBAO_DRAMA_MAX_VIDEOS_PER_BATCH;
-export const TAOBAO_DROPDOWN_END_SETTLE_MS = 8_000;
+export const TAOBAO_DROPDOWN_END_SETTLE_MS = 12_000;
 export const TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS = 120_000;
-export const TAOBAO_PUBLISH_PRECLICK_MIN_MS = 4_000;
-export const TAOBAO_PUBLISH_PRECLICK_MAX_MS = 6_000;
+export const TAOBAO_PUBLISH_PRECLICK_MIN_MS = 3_000;
+export const TAOBAO_PUBLISH_PRECLICK_MAX_MS = 4_500;
 type TaobaoDomScope = Page | Frame;
 
 export interface TaobaoDropdownSearchState {
@@ -59,7 +59,7 @@ function ownerPage(scope: TaobaoDomScope): Page {
     : scope as Page;
 }
 
-async function paceTaobaoForm(page: Page, minimumMs = 700, maximumMs = 1_300) {
+async function paceTaobaoForm(page: Page, minimumMs = 500, maximumMs = 900) {
   const duration = minimumMs + Math.floor(Math.random() * (maximumMs - minimumMs + 1));
   await page.waitForTimeout(duration);
 }
@@ -149,6 +149,9 @@ export type TaobaoBatchItemState = {
   status: string;
 };
 
+const taobaoUploadSuccessPattern = /^(?:已上传|上传完成|上传成功|处理完成|处理成功)$/;
+const taobaoUploadFailurePattern = /上传失败|上传异常|解析失败|转码失败|重新上传/;
+
 export function summarizeTaobaoBatchItems(
   items: TaobaoBatchItemState[],
   fileNames: string[],
@@ -162,12 +165,19 @@ export function summarizeTaobaoBatchItems(
     .map((file) => ({ file, status: byTitle.get(file) }))
     .filter((item): item is { file: string; status: string } => item.status !== undefined);
   const completedFileCount = matchedItems.filter((item) =>
-    /^(?:已上传|上传完成|上传成功|处理完成|处理成功)$/.test(item.status)
+    taobaoUploadSuccessPattern.test(item.status)
   ).length;
+  const failedFileNames = matchedItems
+    .filter((item) => taobaoUploadFailurePattern.test(item.status))
+    .map((item) => item.file);
+  const terminalFileCount = completedFileCount + failedFileNames.length;
   return {
     matchedFileCount: matchedItems.length,
     completedFileCount,
-    failed: matchedItems.some((item) => /上传失败|上传异常|解析失败|转码失败|重新上传/.test(item.status)),
+    terminalFileCount,
+    failedFileNames,
+    failed: failedFileNames.length > 0,
+    settled: expected.length > 0 && terminalFileCount === expected.length,
     complete: expected.length > 0 && completedFileCount === expected.length,
   };
 }
@@ -234,8 +244,8 @@ export function isTaobaoUploadReady(input: {
     input.matchedFileCount >= input.expectedFileCount;
 }
 
-async function videoInput(page: Page): Promise<Locator> {
-  const inputs = page.locator("input[type='file']:not([disabled])");
+async function videoInput(scope: TaobaoDomScope): Promise<Locator> {
+  const inputs = scope.locator("input[type='file']:not([disabled])");
   const count = await inputs.count();
   for (let index = 0; index < count; index += 1) {
     const input = inputs.nth(index);
@@ -284,6 +294,7 @@ async function waitForUploadComplete(
   page: Page,
   files: string[],
   options: TaobaoDramaRuntimeOptions,
+  allowFailedTerminalState = false,
 ) {
   const timeoutMs = Math.max(1, options.episodeUploadWaitTimeoutMinutes ?? 120) * 60_000;
   let deadline = Date.now() + timeoutMs;
@@ -327,19 +338,30 @@ async function waitForUploadComplete(
     uploadEvidence ||= matchedFileCount > 0 || Boolean(summary.progressText) || summary.pending;
     const line = `${matchedFileCount}/${files.length} 文件已显示` +
       `，${completedFileCount}/${files.length} 文件完成` +
+      `，${itemSummary.terminalFileCount}/${files.length} 文件已结束` +
       `${summary.progressText ? `，页面进度=${summary.progressText}` : ""}` +
       `，上传中=${summary.pending ? "是" : "否"}，完成信号=${summary.complete ? "是" : "否"}`;
     if (line !== lastLine) {
       log(options, `[taobao-drama] 剧集上传进度：${line}`);
       lastLine = line;
     }
-    if (summary.failed || itemSummary.failed) {
-      throw new Error("TAOBAO_DRAMA_VIDEO_UPLOAD_FAILED: 页面检测到上传失败或重新上传提示");
+    if (itemSummary.settled && itemSummary.failed) {
+      if (allowFailedTerminalState) {
+        log(
+          options,
+          `[taobao-drama] 本批全部 ${files.length} 集均已结束上传，` +
+            `${itemSummary.failedFileNames.length} 集失败，开始统一逐集重试`,
+        );
+        return { scope: uploadScope, failedFileNames: itemSummary.failedFileNames };
+      }
+      throw new Error(
+        `TAOBAO_DRAMA_VIDEO_UPLOAD_FAILED: files=${itemSummary.failedFileNames.join("|")}`,
+      );
     }
 
     if (itemSummary.complete) {
       log(options, `[taobao-drama] ${files.length} 个剧集视频状态均为“已上传”`);
-      return uploadScope;
+      return { scope: uploadScope, failedFileNames: [] as string[] };
     }
 
     const publishButton = await batchPublishButton(uploadScope);
@@ -353,11 +375,81 @@ async function waitForUploadComplete(
     });
     if (ready) {
       log(options, `[taobao-drama] ${files.length} 个剧集视频已全部上传完成`);
-      return uploadScope;
+      return { scope: uploadScope, failedFileNames: [] as string[] };
     }
     await ownerPage(uploadScope).waitForTimeout(1_000);
   }
   throw new Error(`TAOBAO_DRAMA_VIDEO_UPLOAD_TIMEOUT: expected=${files.length}`);
+}
+
+async function deleteFailedTaobaoEpisode(
+  scope: TaobaoDomScope,
+  fileName: string,
+) {
+  const item = scope.locator("#publish-container .batchItemWrap").filter({
+    has: scope.getByText(fileName, { exact: true }),
+  }).first();
+  await item.waitFor({ state: "visible", timeout: 30_000 });
+  const deleteControl = item.locator(".batchItemTop > i.next-icon").last();
+  await deleteControl.waitFor({ state: "visible", timeout: 10_000 }).catch(() => {
+    throw new Error(`TAOBAO_DRAMA_EPISODE_DELETE_CONTROL_NOT_FOUND: file=${fileName}`);
+  });
+  await deleteControl.click({ timeout: 10_000 });
+
+  const dialog = scope
+    .locator(".next-dialog:visible, [role='dialog']:visible")
+    .filter({ hasText: /删除|移除/ })
+    .last();
+  if (await dialog.isVisible({ timeout: 500 }).catch(() => false)) {
+    await dialog
+      .getByRole("button", { name: /确定|确认|删除|移除/ })
+      .filter({ visible: true })
+      .last()
+      .click({ timeout: 10_000 });
+  }
+  await item.waitFor({ state: "detached", timeout: 10_000 }).catch(() => {
+    throw new Error(`TAOBAO_DRAMA_EPISODE_DELETE_NOT_CONFIRMED: file=${fileName}`);
+  });
+}
+
+async function retryFailedTaobaoEpisodes(
+  page: Page,
+  files: string[],
+  failedFileNames: string[],
+  options: TaobaoDramaRuntimeOptions,
+) {
+  const sourceByName = new Map(files.map((file) => [path.basename(file), file]));
+  for (const fileName of failedFileNames) {
+    const sourceFile = sourceByName.get(fileName);
+    if (!sourceFile) {
+      throw new Error(`TAOBAO_DRAMA_EPISODE_REUPLOAD_SOURCE_NOT_FOUND: file=${fileName}`);
+    }
+
+    let succeeded = false;
+    for (let attempt = 1; attempt <= TAOBAO_DRAMA_EPISODE_UPLOAD_RETRY_ATTEMPTS; attempt += 1) {
+      const scope = await findLiveTaobaoBatchScope(page, fileName);
+      await deleteFailedTaobaoEpisode(scope, fileName);
+      const input = await videoInput(scope);
+      await input.setInputFiles([sourceFile], { timeout: 120_000 });
+      log(
+        options,
+        `[taobao-drama] 正在逐集重传 ${fileName}：` +
+          `第${attempt}/${TAOBAO_DRAMA_EPISODE_UPLOAD_RETRY_ATTEMPTS}次`,
+      );
+      const result = await waitForUploadComplete(page, [sourceFile], options, true);
+      if (result.failedFileNames.length === 0) {
+        succeeded = true;
+        log(options, `[taobao-drama] 逐集重传成功：${fileName}`);
+        break;
+      }
+    }
+    if (!succeeded) {
+      throw new Error(
+        `TAOBAO_DRAMA_EPISODE_UPLOAD_RETRIES_EXHAUSTED: file=${fileName}; ` +
+          `maximum=${TAOBAO_DRAMA_EPISODE_UPLOAD_RETRY_ATTEMPTS}`,
+      );
+    }
+  }
 }
 
 async function publishSucceeded(scope: TaobaoDomScope, urlBeforeSubmit: string) {
@@ -644,6 +736,13 @@ export function normalizeTaobaoDropdownText(value: string) {
   return value.replace(/\s+/g, "").trim();
 }
 
+export function taobaoDropdownOptionIndex(optionTexts: string[], expected: string) {
+  const normalizedExpected = normalizeTaobaoDropdownText(expected);
+  return optionTexts.findIndex(
+    (text) => normalizeTaobaoDropdownText(text) === normalizedExpected,
+  );
+}
+
 async function findAndClickDropdownOption(
   popup: Locator,
   label: string,
@@ -654,34 +753,25 @@ async function findAndClickDropdownOption(
   const deadline = Date.now() + timeoutMs;
   const seenOptions = new Set<string>();
   let searchState: TaobaoDropdownSearchState = {};
-
-  await popup.evaluate((root) => {
-    const candidates = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-      .filter((element): element is HTMLElement => element instanceof HTMLElement)
-      .filter((element) => element.scrollHeight > element.clientHeight + 2);
-    const scroller = candidates.sort(
-      (left, right) =>
-        (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight),
-    )[0];
-    if (!scroller || scroller.scrollTop <= 0) return;
-    scroller.scrollTop = 0;
-    scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
+  const menu = popup.locator(".next-select-menu:visible").first();
+  await menu.waitFor({ state: "visible", timeout: 5_000 });
+  await menu.evaluate((element) => {
+    element.scrollTop = 0;
+    element.dispatchEvent(new Event("scroll", { bubbles: true }));
   });
-  await page.waitForTimeout(100);
+  await page.waitForTimeout(50);
 
   while (Date.now() < deadline) {
     const options = popup.locator("[role='option']");
-    const count = await options.count();
-    const visibleOptions: string[] = [];
-    for (let index = 0; index < count; index += 1) {
-      const option = options.nth(index);
-      const title = await option.getAttribute("title").catch(() => "");
-      const text = title || await option.innerText().catch(() => "");
-      const trimmedText = text.trim();
-      visibleOptions.push(trimmedText);
-      if (trimmedText) seenOptions.add(trimmedText);
-      if (normalizeTaobaoDropdownText(text) !== expected) continue;
-
+    const optionTexts = await options.evaluateAll((elements) => elements.map((element) =>
+      (element.getAttribute("title") || element.textContent || "").trim()
+    ));
+    for (const text of optionTexts) {
+      if (text) seenOptions.add(text);
+    }
+    const matchingIndex = taobaoDropdownOptionIndex(optionTexts, expected);
+    if (matchingIndex >= 0) {
+      const option = options.nth(matchingIndex);
       await option.scrollIntoViewIfNeeded({ timeout: 5_000 }).catch(() => undefined);
       await option.click({ timeout: 10_000 }).catch(async () => {
         await option.click({ force: true, timeout: 5_000 });
@@ -689,55 +779,62 @@ async function findAndClickDropdownOption(
       return { option, available: [...seenOptions] };
     }
 
-    const scroll = await popup.evaluate((root) => {
-      const candidates = [root, ...Array.from(root.querySelectorAll<HTMLElement>("*"))]
-        .filter((element): element is HTMLElement => element instanceof HTMLElement)
-        .filter((element) => element.scrollHeight > element.clientHeight + 2);
-      const scroller = candidates.sort(
-        (left, right) =>
-          (right.scrollHeight - right.clientHeight) - (left.scrollHeight - left.clientHeight),
-      )[0];
-      const loading = Array.from(root.querySelectorAll<HTMLElement>(
-        ".next-loading, [aria-busy='true'], [class*='loading']",
-      )).some((element) => element.getClientRects().length > 0);
-      if (!scroller) {
-        return { moved: false, atEnd: true, loading, scrollHeight: 0, clientHeight: 0 };
-      }
+    const beforeScroll = await menu.evaluate((element) => ({
+      scrollTop: element.scrollTop,
+      scrollHeight: element.scrollHeight,
+      clientHeight: element.clientHeight,
+    }));
+    await menu.hover({ timeout: 5_000 });
+    await page.mouse.wheel(
+      0,
+      Math.max(720, Math.floor(beforeScroll.clientHeight * 2.5)),
+    );
+    await page.waitForTimeout(150);
 
-      const maximum = Math.max(0, scroller.scrollHeight - scroller.clientHeight);
-      const before = scroller.scrollTop;
-      const next = before > 0 && before >= maximum - 2
-        ? maximum
-        : Math.min(maximum, before + Math.max(120, Math.floor(scroller.clientHeight * 0.8)));
-      scroller.scrollTop = next;
-      scroller.dispatchEvent(new Event("scroll", { bubbles: true }));
-      if (next >= maximum - 2) {
-        scroller.dispatchEvent(new WheelEvent("wheel", {
-          bubbles: true,
-          cancelable: true,
-          deltaY: Math.max(120, Math.floor(scroller.clientHeight * 0.8)),
-        }));
-      }
+    let scroll = await menu.evaluate((element, previousScrollTop) => {
+      const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
       return {
-        moved: Math.abs(scroller.scrollTop - before) > 1,
-        atEnd: scroller.scrollTop >= maximum - 2,
-        loading,
-        scrollHeight: scroller.scrollHeight,
-        clientHeight: scroller.clientHeight,
+        moved: Math.abs(element.scrollTop - previousScrollTop) > 1,
+        atEnd: element.scrollTop >= maximum - 2,
+        scrollTop: element.scrollTop,
+        scrollHeight: element.scrollHeight,
+        clientHeight: element.clientHeight,
       };
-    });
+    }, beforeScroll.scrollTop);
+
+    if (!scroll.moved && !scroll.atEnd) {
+      scroll = await menu.evaluate((element) => {
+        const before = element.scrollTop;
+        const maximum = Math.max(0, element.scrollHeight - element.clientHeight);
+        element.scrollTop = Math.min(
+          maximum,
+          before + Math.max(720, Math.floor(element.clientHeight * 2.5)),
+        );
+        element.dispatchEvent(new Event("scroll", { bubbles: true }));
+        return {
+          moved: Math.abs(element.scrollTop - before) > 1,
+          atEnd: element.scrollTop >= maximum - 2,
+          scrollTop: element.scrollTop,
+          scrollHeight: element.scrollHeight,
+          clientHeight: element.clientHeight,
+        };
+      });
+    }
+
+    const loading = await popup.locator(
+      ".next-loading:visible, [aria-busy='true']:visible, [class*='loading']:visible",
+    ).count() > 0;
 
     const advanced = advanceTaobaoDropdownSearchState(searchState, {
       atEnd: scroll.atEnd,
       moved: scroll.moved,
-      loading: scroll.loading,
-      signature: `${scroll.scrollHeight}:${scroll.clientHeight}:${visibleOptions
-        .map(normalizeTaobaoDropdownText)
-        .join("\u0001")}`,
+      loading,
+      signature: `${scroll.scrollHeight}:${scroll.clientHeight}:${optionTexts.length}:` +
+        `${normalizeTaobaoDropdownText(optionTexts[optionTexts.length - 1] ?? "")}`,
     }, Date.now());
     searchState = advanced.state;
     if (advanced.shouldStop) break;
-    await page.waitForTimeout(scroll.atEnd ? 300 : 200);
+    if (loading) await page.waitForTimeout(100);
   }
 
   return { option: undefined, available: [...seenOptions] };
@@ -935,13 +1032,13 @@ async function fillEpisodeMetadata(
         options,
         `[taobao-drama] 已完整填写第 ${episode.index} 集，并将标签、AI声明和合集应用至全部视频`,
       );
-      continue;
+    } else {
+      await runWithTaobaoVerificationRetry(page, options, () =>
+        selectMatchingCollectionEpisode(scope, episode.index));
+      log(options, `[taobao-drama] 第 ${episode.index} 集检查点：合集集数已完成`);
+      log(options, `[taobao-drama] 已更新第 ${episode.index} 集描述及合集集数`);
     }
 
-    await runWithTaobaoVerificationRetry(page, options, () =>
-      selectMatchingCollectionEpisode(scope, episode.index));
-    log(options, `[taobao-drama] 第 ${episode.index} 集检查点：合集集数已完成`);
-    log(options, `[taobao-drama] 已更新第 ${episode.index} 集描述及合集集数`);
   }
 }
 
@@ -953,21 +1050,25 @@ export async function uploadAndPublishTaobaoEpisodes(
 ) {
   await validateTaobaoEpisodeVideos(task, options);
   const episodes = await findTaobaoEpisodeVideos(task, options);
-  const ranges = taobaoEpisodeBatchRanges(episodes.length);
+  const ranges = taobaoEpisodeBatchPagePlan(episodes.length);
   log(
     options,
     `[taobao-drama] 准备上传 ${episodes.length} 个剧集视频，共 ${ranges.length} 个发布批次`,
   );
 
+  let batchPage = page;
   for (const [batchIndex, range] of ranges.entries()) {
-    if (batchIndex > 0) {
-      await page.goto(TAOBAO_DRAMA_BATCH_PUBLISH_URL, {
-        waitUntil: "domcontentloaded",
-        timeout: 60_000,
-      });
-      await waitForTaobaoPage(page, "batch", options);
+    let previousBatchPage: Page | undefined;
+    if (range.openNewPage) {
+      previousBatchPage = batchPage;
+      batchPage = await page.context().newPage();
+      await waitForTaobaoPage(batchPage, "batch", options);
+      log(
+        options,
+        `[taobao-drama] 已打开新标签页，准备上传第${range.start}-${range.end}集`,
+      );
     }
-    await waitForTaobaoHumanVerification(page, options);
+    await waitForTaobaoHumanVerification(batchPage, options);
     const batchEpisodes = episodes.filter(
       (episode) => episode.index >= range.start && episode.index <= range.end,
     );
@@ -978,25 +1079,45 @@ export async function uploadAndPublishTaobaoEpisodes(
       );
     }
     const batch = batchEpisodes.map((episode) => episode.file);
-    const input = await videoInput(page);
+    const input = await videoInput(batchPage);
     await input.setInputFiles(batch, { timeout: 120_000 });
     log(
       options,
       `[taobao-drama] 已选择发布批次 ${batchIndex + 1}/${ranges.length}：` +
         `第${range.start}-${range.end}集，共 ${batch.length} 个视频`,
     );
-    await waitForTaobaoHumanVerification(page, options);
-    await page.waitForTimeout(500);
+    if (
+      range.closePreviousPageAfterSelection &&
+      previousBatchPage &&
+      !previousBatchPage.isClosed()
+    ) {
+      await previousBatchPage.close();
+      log(
+        options,
+        `[taobao-drama] 后续批次已开始上传，已关闭上一批次标签页`,
+      );
+    }
+    await waitForTaobaoHumanVerification(batchPage, options);
+    await batchPage.waitForTimeout(500);
     // Taobao internally queues up to 100 selected videos. Selecting them in small
     // follow-up batches can leave later files permanently stuck at “等待上传中”.
-    await waitForUploadComplete(page, batch, options);
-    await fillEpisodeMetadata(page, batchEpisodes, metadata, task, options);
+    const uploadResult = await waitForUploadComplete(batchPage, batch, options, true);
+    if (uploadResult.failedFileNames.length > 0) {
+      await retryFailedTaobaoEpisodes(
+        batchPage,
+        batch,
+        uploadResult.failedFileNames,
+        options,
+      );
+      await waitForUploadComplete(batchPage, batch, options);
+    }
+    await fillEpisodeMetadata(batchPage, batchEpisodes, metadata, task, options);
     const publishScope = await findLiveTaobaoBatchScope(
-      page,
+      batchPage,
       path.basename(batch[batch.length - 1] ?? batch[0] ?? ""),
     );
     await runWithTaobaoVerificationRetry(
-      page,
+      batchPage,
       options,
       () => clickBatchPublish(publishScope, options),
     );

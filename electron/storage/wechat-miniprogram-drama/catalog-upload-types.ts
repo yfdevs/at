@@ -22,6 +22,12 @@ export type WechatMiniProgramCatalogUploadTask = {
   dramaName: string
   episodeCount: number
   baiduNetdiskUrl?: string
+  hasFirstFourEpisodes: boolean
+  lifecycleStatus?: string
+  auditStatus?: number
+  expectedPublishStatus?: string
+  actualPublishStatus?: string
+  operationStatus?: string
   state: WechatMiniProgramCatalogUploadState
   targetEpisodeCount: number
   uploadedEpisodeCount: number
@@ -37,10 +43,18 @@ export type WechatMiniProgramCatalogUploadTask = {
 
 export type WechatMiniProgramCatalogUploadTaskRow = Omit<
   WechatMiniProgramCatalogUploadTask,
-  "wxDramaId" | "baiduNetdiskUrl" | "episodeStatuses" | "localPath" | "error" | "startedAt" | "finishedAt"
+  "wxDramaId" | "baiduNetdiskUrl" | "hasFirstFourEpisodes" | "lifecycleStatus" |
+  "auditStatus" | "expectedPublishStatus" | "actualPublishStatus" | "operationStatus" |
+  "episodeStatuses" | "localPath" | "error" | "startedAt" | "finishedAt"
 > & {
   wxDramaId: number | null
   baiduNetdiskUrl: string | null
+  hasFirstFourEpisodes: number
+  lifecycleStatus: string | null
+  auditStatus: number | null
+  expectedPublishStatus: string | null
+  actualPublishStatus: string | null
+  operationStatus: string | null
   episodeStatusesJson: string
   localPath: string | null
   error: string | null

@@ -8,6 +8,7 @@ export type TaobaoTaskStatus = "pending" | "downloading" | "uploading" | "succee
 
 export type TaobaoDramaConfig = {
   accountProfileName: string
+  browserExecutablePath: string
   headless: string
   operationDelaySeconds: string
   baiduNetdiskDownloadRetryAttempts: string
@@ -104,6 +105,11 @@ export const taobaoDramaService = {
   getConfig: () => invoke<TaobaoDramaConfigResult>("taobao-drama:config:get"),
   saveConfig: (config: TaobaoDramaConfig) =>
     invoke<TaobaoDramaConfigResult>("taobao-drama:config:save", config),
+  testBrowserPath: (executablePath: string) =>
+    invoke<{ ok: boolean; message: string }>(
+      "taobao-drama:config:test-browser-path",
+      executablePath,
+    ),
   status: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:status"),
   start: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:start"),
   stop: () => invoke<TaobaoDramaServiceStatus>("taobao-drama:service:stop"),

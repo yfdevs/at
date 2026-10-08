@@ -23,6 +23,10 @@
     "noUnusedParameters": true,
     "noFallthroughCasesInSwitch": true
   },
-  "include": ["src", "electron"],
+  "include": [
+    "src",
+    "electron",
+    "packages/douyin-drama-automation/src/pdf-lib-esm.d.ts"
+  ],
   "references": [{ "path": "./tsconfig.node.json" }]
 }

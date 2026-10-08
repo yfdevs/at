@@ -46,7 +46,7 @@ export type TaobaoDramaRuntimeOptions = {
   episodeUploadWaitTimeoutMinutes?: number;
   taskPollIntervalMs?: number;
   closeFailedTaskPages?: boolean;
-  config?: { browser?: { headless?: boolean; slowMo?: number } };
+  config?: { browser?: { executablePath?: string; headless?: boolean; slowMo?: number } };
   onLog?: (message: string) => void;
   onHumanVerificationRequired?: (details: { pages: string[] }) => Promise<void> | void;
   claimNextTask?: () => Promise<TaobaoBatchUploadTask | null>;

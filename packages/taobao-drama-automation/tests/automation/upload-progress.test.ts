@@ -1,12 +1,16 @@
 import assert from "node:assert/strict";
 import test from "node:test";
-import { taobaoEpisodeBatchRanges } from "../../src/shared/constants.js";
+import {
+  taobaoEpisodeBatchPagePlan,
+  taobaoEpisodeBatchRanges,
+} from "../../src/shared/constants.js";
 
 import {
   advanceTaobaoDropdownSearchState,
   isTaobaoUploadReady,
   isTaobaoVideoInputCandidate,
   normalizeTaobaoDropdownText,
+  taobaoDropdownOptionIndex,
   scoreTaobaoContentTagMatch,
   summarizeTaobaoBatchItems,
   summarizeTaobaoUploadText,
@@ -21,11 +25,37 @@ test("selects the complete Taobao task in one upload operation", () => {
   assert.equal(TAOBAO_MAX_FILES_PER_SELECTION, 100);
 });
 
-test("splits a Taobao task over 100 episodes into sequential publish batches", () => {
+test("splits a Taobao task over 100 episodes into 100-episode publish batches", () => {
   assert.deepEqual(taobaoEpisodeBatchRanges(235), [
     { start: 1, end: 100 },
     { start: 101, end: 200 },
     { start: 201, end: 235 },
+  ]);
+});
+
+test("uses one tab for up to 100 episodes", () => {
+  assert.deepEqual(taobaoEpisodeBatchPagePlan(100), [{
+    start: 1,
+    end: 100,
+    openNewPage: false,
+    closePreviousPageAfterSelection: false,
+  }]);
+});
+
+test("opens a new tab for episodes after 100 and closes the previous tab after selection", () => {
+  assert.deepEqual(taobaoEpisodeBatchPagePlan(101), [
+    {
+      start: 1,
+      end: 100,
+      openNewPage: false,
+      closePreviousPageAfterSelection: false,
+    },
+    {
+      start: 101,
+      end: 101,
+      openNewPage: true,
+      closePreviousPageAfterSelection: true,
+    },
   ]);
 });
 
@@ -47,8 +77,8 @@ test("never treats a partial 20-item Taobao queue as a complete larger task", ()
 });
 
 test("paces the final Taobao publish action more slowly than normal form actions", () => {
-  assert.equal(TAOBAO_PUBLISH_PRECLICK_MIN_MS, 4_000);
-  assert.equal(TAOBAO_PUBLISH_PRECLICK_MAX_MS, 6_000);
+  assert.equal(TAOBAO_PUBLISH_PRECLICK_MIN_MS, 3_000);
+  assert.equal(TAOBAO_PUBLISH_PRECLICK_MAX_MS, 4_500);
 });
 
 test("recognizes Taobao batch items whose status is already uploaded", () => {
@@ -60,8 +90,49 @@ test("recognizes Taobao batch items whose status is already uploaded", () => {
       "D:\\episodes\\烟火里的圆满 - 第1集.mp4",
       "D:\\episodes\\烟火里的圆满 - 第2集.mp4",
     ]),
-    { matchedFileCount: 2, completedFileCount: 2, failed: false, complete: true },
+    {
+      matchedFileCount: 2,
+      completedFileCount: 2,
+      terminalFileCount: 2,
+      failedFileNames: [],
+      failed: false,
+      settled: true,
+      complete: true,
+    },
   );
+});
+
+test("waits for every Taobao item to settle before handling failed uploads", () => {
+  assert.deepEqual(
+    summarizeTaobaoBatchItems([
+      { title: "测试剧 - 第1集.mp4", status: "上传失败" },
+      { title: "测试剧 - 第2集.mp4", status: "上传中" },
+      { title: "测试剧 - 第3集.mp4", status: "已上传" },
+    ], [
+      "D:\\episodes\\测试剧 - 第1集.mp4",
+      "D:\\episodes\\测试剧 - 第2集.mp4",
+      "D:\\episodes\\测试剧 - 第3集.mp4",
+    ]),
+    {
+      matchedFileCount: 3,
+      completedFileCount: 1,
+      terminalFileCount: 2,
+      failedFileNames: ["测试剧 - 第1集.mp4"],
+      failed: true,
+      settled: false,
+      complete: false,
+    },
+  );
+
+  assert.equal(summarizeTaobaoBatchItems([
+    { title: "测试剧 - 第1集.mp4", status: "上传失败" },
+    { title: "测试剧 - 第2集.mp4", status: "上传成功" },
+    { title: "测试剧 - 第3集.mp4", status: "已上传" },
+  ], [
+    "D:\\episodes\\测试剧 - 第1集.mp4",
+    "D:\\episodes\\测试剧 - 第2集.mp4",
+    "D:\\episodes\\测试剧 - 第3集.mp4",
+  ]).settled, true);
 });
 
 test("matches Taobao content tags case-insensitively with an approximate fallback", () => {
@@ -122,8 +193,17 @@ test("waits for a stable true end while a virtual collection list loads more opt
   assert.equal(state.shouldStop, true);
 });
 
+test("finds a collection from one batch of dropdown option texts", () => {
+  assert.equal(taobaoDropdownOptionIndex([
+    "合集一",
+    " 你不就是带个孩子吗 ",
+    "合集三",
+  ], "你不就是带个孩子吗"), 1);
+  assert.equal(taobaoDropdownOptionIndex(["合集一", "合集二"], "目标合集"), -1);
+});
+
 test("gives collection virtual scrolling enough time without waiting forever", () => {
-  assert.equal(TAOBAO_DROPDOWN_END_SETTLE_MS, 8_000);
+  assert.equal(TAOBAO_DROPDOWN_END_SETTLE_MS, 12_000);
   assert.equal(TAOBAO_DROPDOWN_SEARCH_TIMEOUT_MS, 120_000);
 });
 

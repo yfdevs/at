@@ -1,25 +1,40 @@
 import assert from "node:assert/strict";
+import { mkdtemp, readFile, rm, stat, writeFile } from "node:fs/promises";
+import os from "node:os";
+import path from "node:path";
 import { fileURLToPath } from "node:url";
 import test from "node:test";
+import { PDFDocument, rgb } from "pdf-lib";
 import { chromium } from "playwright";
+import sharp from "sharp";
 import {
   assertNoDouyinFormError,
   DOUYIN_DRAMA_VIDEO_TOPICS,
   fillDouyinEpisodeBatchEdit,
   fillNearestDouyinCompletionPromiseDateTime,
   fillDouyinPublishDateTime,
+  hasInvalidDouyinEpisodeDuration,
+  hasTooShortDouyinEpisodeDuration,
   installDouyinPageMessageCapture,
   isTransientDouyinUploadMessage,
   normalizeDouyinPublishDateTime,
   resolveDouyinScheduledPublishDateTime,
   resetRestoredDouyinFormIfPresent,
+  reuploadFailedDouyinEpisodeAfterDelete,
+  readDouyinUploadPdfPageCount,
+  sanitizeDouyinDescriptionText,
   selectDouyinChargeEpisodes,
   selectDropdownValues,
   selectFirstDropdownByPlaceholder,
+  selectRequiredDropdownByContractName,
+  selectRequiredDropdownByStableId,
   selectSearchableDropdownByPlaceholder,
   uploadFormFiles,
 } from "../../src/automation/form-controls.js";
-import { enterSalesConfiguration } from "../../src/automation/publish-runner.js";
+import {
+  enterSalesConfiguration,
+  waitForDouyinSubmitSuccess,
+} from "../../src/automation/publish-runner.js";
 import { createDouyinDramaDropdownRecorder } from "../../src/shared/dropdown-options.js";
 
 function launchTestBrowser() {
@@ -29,6 +44,165 @@ function launchTestBrowser() {
   ));
   return chromium.launch({ executablePath, headless: true });
 }
+
+test("cleans unsupported punctuation from Douyin descriptions", () => {
+  const source = "母亲终于明白：做母亲是她的身份, 但不是她的全部…（完）";
+  const cleaned = sanitizeDouyinDescriptionText(source);
+  assert.equal(cleaned, "母亲终于明白，做母亲是她的身份，但不是她的全部（完）");
+  assert.doesNotMatch(cleaned, /[:：,…\s]/u);
+});
+
+test("reads every page from a PDF before converting upload images", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "douyin-upload-pdf-"));
+  try {
+    const file = path.join(directory, "two-pages.pdf");
+    const document = await PDFDocument.create();
+    document.addPage([595, 842]);
+    document.addPage([595, 842]);
+    await writeFile(file, await document.save());
+    assert.equal(await readDouyinUploadPdfPageCount(file), 2);
+  } finally {
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("deletes failed episode items and reuploads the original file with a retry limit", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div id="panel" class="edit-page-video-upload-shortplay-container">
+        <div class="uploaded_list_item">
+          <div class="file-name">测试剧-第1集.mp4</div>
+          <span class="file-status-text file-status-text-error">上传失败</span>
+          <div class="uploaded_list_item-ops"><button type="button">
+            <svg class="serial-icon-general_delete"></svg>
+          </button></div>
+        </div>
+        <input id="upload-picker" type="file" multiple accept=".mp4" style="display:none">
+      </div>
+      <script>
+        const panel = document.querySelector('#panel');
+        const picker = document.querySelector('#upload-picker');
+        document.querySelector('button').addEventListener('click', () => {
+          document.querySelector('.uploaded_list_item').remove();
+        });
+        picker.addEventListener('change', () => {
+          panel.insertAdjacentHTML('afterbegin',
+            '<div class="uploaded_list_item">' +
+            '<div class="file-name">测试剧-第1集.mp4</div>' +
+            '<span class="file-status-text file-status-text-error">上传失败</span>' +
+            '<div class="uploaded_list_item-ops"><button type="button" ' +
+            'onclick="this.closest(\'.uploaded_list_item\').remove()">' +
+            '<svg class="serial-icon-general_delete"></svg></button></div></div>');
+          picker.value = '';
+        });
+      </script>
+    `);
+    const panel = page.locator("#panel");
+    const attempts = new Map<string, number>();
+    const sourceFile = fileURLToPath(import.meta.url);
+    const uploadInput = page.locator("#upload-picker");
+    assert.deepEqual(await reuploadFailedDouyinEpisodeAfterDelete(panel, uploadInput, [sourceFile], 2, attempts), [
+      { attempt: 1, fileName: "测试剧-第1集.mp4" },
+    ]);
+    assert.deepEqual(await reuploadFailedDouyinEpisodeAfterDelete(panel, uploadInput, [sourceFile], 2, attempts), [
+      { attempt: 2, fileName: "测试剧-第1集.mp4" },
+    ]);
+    await assert.rejects(
+      reuploadFailedDouyinEpisodeAfterDelete(panel, uploadInput, [sourceFile], 2, attempts),
+      /DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOADS_EXHAUSTED/u,
+    );
+    assert.equal(attempts.get("测试剧-第1集.mp4"), 2);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("deletes and reuploads an item marked complete when its duration is malformed", async () => {
+  assert.equal(hasInvalidDouyinEpisodeDuration("上传完成 时长：00:00:60"), false);
+  assert.equal(hasInvalidDouyinEpisodeDuration("上传完成 时长：00:01:00"), false);
+  assert.equal(hasInvalidDouyinEpisodeDuration("上传完成 时长：00:00:61"), true);
+  assert.equal(hasTooShortDouyinEpisodeDuration("上传完成 时长：00:00:29"), true);
+  assert.equal(hasTooShortDouyinEpisodeDuration("上传完成 时长：00:00:30"), false);
+  assert.equal(hasTooShortDouyinEpisodeDuration("上传完成 时长：00:00:60"), false);
+
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div id="panel">
+        <div class="uploaded_list_item">
+          <div class="file-name">测试剧-第2集.mp4</div>
+          <span class="file-status-text file-status-text-success">上传完成</span>
+          <span class="file-status-text">时长：00:00:61</span>
+          <div class="uploaded_list_item-ops"><button type="button">
+            <svg class="serial-icon-general_delete"></svg>
+          </button></div>
+        </div>
+        <input id="upload-picker" type="file" multiple accept=".mp4" style="display:none">
+      </div>
+      <script>
+        document.querySelector('button').addEventListener('click', () => {
+          document.querySelector('.uploaded_list_item').remove();
+        });
+      </script>
+    `);
+    const sourceFile = fileURLToPath(import.meta.url);
+    assert.deepEqual(
+      await reuploadFailedDouyinEpisodeAfterDelete(
+        page.locator("#panel"),
+        page.locator("#upload-picker"),
+        [sourceFile],
+        5,
+        new Map<string, number>(),
+      ),
+      [{ attempt: 1, fileName: "测试剧-第2集.mp4" }],
+    );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("fails a video shorter than 30 seconds without deleting or reuploading it", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div id="panel">
+        <div class="uploaded_list_item">
+          <div class="file-name">测试剧-第3集.mp4</div>
+          <span class="file-status-text file-status-text-success">上传完成</span>
+          <span class="file-status-text">时长：00:00:29</span>
+          <div class="uploaded_list_item-ops"><button type="button">
+            <svg class="serial-icon-general_delete"></svg>
+          </button></div>
+        </div>
+        <input id="upload-picker" type="file" multiple accept=".mp4" style="display:none">
+      </div>
+      <script>
+        document.querySelector('button').addEventListener('click', () => {
+          document.querySelector('.uploaded_list_item').remove();
+        });
+      </script>
+    `);
+    const attempts = new Map<string, number>();
+    await assert.rejects(
+      reuploadFailedDouyinEpisodeAfterDelete(
+        page.locator("#panel"),
+        page.locator("#upload-picker"),
+        [fileURLToPath(import.meta.url)],
+        5,
+        attempts,
+      ),
+      /DOUYIN_DRAMA_EPISODE_DURATION_TOO_SHORT/u,
+    );
+    assert.equal(await page.locator(".uploaded_list_item").count(), 1);
+    assert.equal(attempts.size, 0);
+  } finally {
+    await browser.close();
+  }
+});
 
 test("treats the platform upload-in-progress notice as transient", () => {
   assert.equal(isTransientDouyinUploadMessage("资源上传中请等待"), true);
@@ -130,6 +304,7 @@ test("normalizes and fills the publish time returned by the task API", async () 
           </ul></div>
           <div class="arco-timepicker-list"><ul>
             <li class="arco-timepicker-cell"><span>00</span></li>
+            <li class="arco-timepicker-cell"><span>04</span></li>
           </ul></div>
         </div>
         <button class="arco-picker-btn-confirm" type="button" disabled>确定</button>
@@ -181,9 +356,18 @@ test("normalizes and fills the publish time returned by the task API", async () 
         });
       </script>
     `);
+    const beforeScheduledTime = new Date("2026-09-19T06:00:00.000Z");
     assert.equal(
-      await fillDouyinPublishDateTime(page, "2026-09-22 18:30"),
+      await fillDouyinPublishDateTime(page, "2026-09-22 18:30", beforeScheduledTime),
       "2026-09-22 18:30:00",
+    );
+    assert.equal(
+      await page.locator("#hong_guo_app_publish_time input").inputValue(),
+      "2026-09-22 18:30",
+    );
+    assert.equal(
+      await fillDouyinPublishDateTime(page, "2026-09-22 18:30:04", beforeScheduledTime),
+      "2026-09-22 18:30:04",
     );
     assert.equal(
       await page.locator("#hong_guo_app_publish_time input").inputValue(),
@@ -202,20 +386,40 @@ test("normalizes and fills the publish time returned by the task API", async () 
   }
 });
 
-test("keeps the user publish time and rolls an expired time forward by whole days", () => {
+test("keeps the user publish time while rolling it beyond Douyin's 72-hour minimum", () => {
   const now = new Date("2026-09-20T06:00:00.000Z"); // 2026-09-20 14:00 in Shanghai
   assert.equal(
     resolveDouyinScheduledPublishDateTime("2026-09-20 15:30:00", now),
-    "2026-09-20 15:30:00",
+    "2026-09-23 15:30:00",
   );
   assert.equal(
     resolveDouyinScheduledPublishDateTime("2026-09-20 13:30:00", now),
-    "2026-09-21 13:30:00",
+    "2026-09-24 13:30:00",
   );
   assert.equal(
     resolveDouyinScheduledPublishDateTime("2026-09-18 13:30:00", now),
-    "2026-09-21 13:30:00",
+    "2026-09-24 13:30:00",
   );
+  assert.equal(
+    resolveDouyinScheduledPublishDateTime(
+      "2026-10-03 18:30:00",
+      new Date("2026-10-01T03:00:00.000Z"),
+    ),
+    "2026-10-04 18:30:00",
+  );
+});
+
+test("reports submit success after an error-free settle window without requiring a toast", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent("<main>提交处理中</main>");
+    const startedAt = Date.now();
+    await waitForDouyinSubmitSuccess(page, startedAt, { settleMs: 300, timeoutMs: 2_000 });
+    assert.ok(Date.now() - startedAt >= 300);
+  } finally {
+    await browser.close();
+  }
 });
 
 test("selects every paid episode from the configured starting episode", async () => {
@@ -252,6 +456,47 @@ test("selects every paid episode from the configured starting episode", async ()
       () => selectDouyinChargeEpisodes(page, 6, 5),
       /DOUYIN_DRAMA_PAID_EPISODE_RANGE_INVALID/u,
     );
+  } finally {
+    await browser.close();
+  }
+});
+
+test("expands collapsed paid episodes before selecting the hidden range", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div class="arco-form-item">
+        <label>售卖集数</label>
+        <div class="wrap-test">
+          <div class="item-test">2</div>
+          <div class="item-test">3</div>
+          <div id="collapsed-episodes" style="display:none">
+            <div class="item-test">4</div>
+            <div class="item-test">5</div>
+          </div>
+          <div class="expand-giQk7I"><span>展开</span></div>
+        </div>
+      </div>
+      <script>
+        document.querySelector('.expand-giQk7I').addEventListener('click', (event) => {
+          document.querySelector('#collapsed-episodes').style.display = 'block';
+          event.currentTarget.querySelector('span').textContent = '收起';
+        });
+        document.querySelectorAll('.item-test').forEach((item) => {
+          item.addEventListener('click', () => item.classList.add('selected-item-test'));
+        });
+      </script>
+    `);
+
+    await selectDouyinChargeEpisodes(page, 3, 5);
+    assert.equal(await page.getByText("展开", { exact: true }).count(), 0);
+    for (const episode of [3, 4, 5]) {
+      assert.match(
+        await page.getByText(String(episode), { exact: true }).getAttribute("class") ?? "",
+        /selected-item-test/u,
+      );
+    }
   } finally {
     await browser.close();
   }
@@ -406,18 +651,31 @@ test("captures a transient Arco error message after it disappears", async () => 
   }
 });
 
-test("resets the form when Douyin restores the previous draft", async () => {
+test("dismisses the onboarding guide before resetting the restored draft", async () => {
   const browser = await launchTestBrowser();
   const page = await browser.newPage();
   try {
     await page.setContent(`
+      <style>
+        .guide-popup-content-mask { position: fixed; inset: 0; z-index: 10; }
+        .guide-popup-content { position: fixed; left: 20px; top: 20px; z-index: 11; }
+      </style>
       <input id="book_name_input" value="上次填写的剧名">
       <div class="arco-upload-list"><div class="arco-upload-list-item">旧附件.png</div></div>
       <div class="arco-message arco-message-success" role="alert">
         <span>已同步上次填写内容</span>
         <button type="button" id="reset">点此重置为空</button>
       </div>
+      <div class="guide-popup-content-mask"></div>
+      <div class="guide-popup-content">
+        <div>新增日收益展示功能</div>
+        <button type="button" id="dismiss-guide">我知道了</button>
+      </div>
       <script>
+        document.querySelector('#dismiss-guide').addEventListener('click', () => {
+          document.querySelector('.guide-popup-content-mask').remove();
+          document.querySelector('.guide-popup-content').remove();
+        });
         document.querySelector('#reset').addEventListener('click', () => {
           document.querySelector('#book_name_input').value = '';
           document.querySelector('.arco-upload-list').replaceChildren();
@@ -427,6 +685,7 @@ test("resets the form when Douyin restores the previous draft", async () => {
     `);
 
     assert.equal(await resetRestoredDouyinFormIfPresent(page, 1_000), true);
+    assert.equal(await page.locator(".guide-popup-content-mask").count(), 0);
     assert.equal(await page.locator("#book_name_input").inputValue(), "");
     assert.equal(await page.locator(".arco-upload-list-item").count(), 0);
   } finally {
@@ -482,6 +741,135 @@ test("confirms selections from control state and closes persistent dropdown popu
     );
     assert.match(selected, /^CT20260521191189/u);
     assert.equal(await page.locator("#contract-popup").isVisible(), false);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("selects only the required contract id and reports missing or disabled contracts", async () => {
+  const browser = await launchTestBrowser();
+  const recorder = createDouyinDramaDropdownRecorder({});
+  const placeholder = "请选择（温馨提示：合同绑定错误会影响结算）";
+  const render = async (options: string) => {
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div id="contract" role="combobox" class="arco-select" style="width:320px;height:32px">
+        <input placeholder="${placeholder}" value=""><span class="value"></span>
+      </div>
+      <div id="contract-popup" class="arco-select-popup" role="listbox" style="display:none">${options}</div>
+      <script>
+        const trigger = document.querySelector('#contract');
+        const popup = document.querySelector('#contract-popup');
+        trigger.addEventListener('click', () => { popup.style.display = 'block'; });
+        popup.querySelectorAll('[role=option]:not(.arco-select-option-disabled)').forEach((option) => {
+          option.addEventListener('click', () => {
+            option.setAttribute('aria-selected', 'true');
+            trigger.querySelector('.value').textContent = option.textContent;
+          });
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') popup.style.display = 'none';
+        });
+      </script>
+    `);
+    return page;
+  };
+  try {
+    const page = await render(`
+      <div role="option" class="arco-select-option">CT00000000000000 其他合同</div>
+      <div role="option" class="arco-select-option">CT20260521191189 【明星说】漫剧合作协议（框架）</div>
+    `);
+    const selected = await selectRequiredDropdownByStableId(
+      page,
+      placeholder,
+      "contract",
+      "CT20260521191189",
+      recorder,
+    );
+    assert.match(selected, /^CT20260521191189/u);
+    await page.close();
+
+    const missingPage = await render(`
+      <div role="option" class="arco-select-option">CT00000000000000 其他合同</div>
+    `);
+    await assert.rejects(
+      selectRequiredDropdownByStableId(
+        missingPage,
+        placeholder,
+        "contract",
+        "CT20260521191189",
+        recorder,
+      ),
+      /DOUYIN_DRAMA_REQUIRED_CONTRACT_NOT_FOUND/u,
+    );
+    await missingPage.close();
+
+    const disabledPage = await render(`
+      <div role="option" aria-disabled="true" class="arco-select-option arco-select-option-disabled">CT20260521191189 【明星说】漫剧合作协议（框架）</div>
+    `);
+    await assert.rejects(
+      selectRequiredDropdownByStableId(
+        disabledPage,
+        placeholder,
+        "contract",
+        "CT20260521191189",
+        recorder,
+      ),
+      /DOUYIN_DRAMA_REQUIRED_CONTRACT_DISABLED/u,
+    );
+    await disabledPage.close();
+  } finally {
+    await browser.close();
+  }
+});
+
+test("selects the ordinary authorization contract by exact name without depending on its id", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  const recorder = createDouyinDramaDropdownRecorder({});
+  const placeholder = "请选择（温馨提示：合同绑定错误会影响结算）";
+  const contractName =
+    "动态漫授权合作协议(对公签约-付免一体-普通授权-纯分成）- 主协议-明星说北京科技有限公司";
+  try {
+    await page.setContent(`
+      <div id="contract" role="combobox" class="arco-select" style="width:320px;height:32px">
+        <input placeholder="${placeholder}" value=""><span class="value"></span>
+      </div>
+      <div id="contract-popup" class="arco-select-popup" role="listbox" style="display:none">
+        <div role="option" class="arco-select-option arco-select-option-disabled" aria-disabled="true">
+          CT20260928151015 漫剧合作协议（对公签约-番茄 IP 改编）-明星说北京科技有限公司
+        </div>
+        <div role="option" class="arco-select-option">
+          CT20251231125707 动态漫IP授权合作协议(对公签约-纯分成-动态漫版权共有) - 主协议-明星说北京科技有限公司
+        </div>
+        <div role="option" class="arco-select-option">CT20251230112335 ${contractName}</div>
+        <div role="option" class="arco-select-option">CT20251127121461 ${contractName}</div>
+      </div>
+      <script>
+        const trigger = document.querySelector('#contract');
+        const popup = document.querySelector('#contract-popup');
+        trigger.addEventListener('click', () => { popup.style.display = 'block'; });
+        popup.querySelectorAll('[role=option]:not(.arco-select-option-disabled)').forEach((option) => {
+          option.addEventListener('click', () => {
+            option.setAttribute('aria-selected', 'true');
+            trigger.querySelector('.value').textContent = option.textContent.trim();
+          });
+        });
+        document.addEventListener('keydown', (event) => {
+          if (event.key === 'Escape') popup.style.display = 'none';
+        });
+      </script>
+    `);
+
+    const selected = await selectRequiredDropdownByContractName(
+      page,
+      placeholder,
+      "contract",
+      contractName,
+      recorder,
+    );
+    assert.match(selected, /^CT20251230112335/u);
+    assert.doesNotMatch(selected, /版权共有/u);
   } finally {
     await browser.close();
   }
@@ -628,6 +1016,167 @@ test("uses the chooser opened by copyright drag uploaders", async () => {
     assert.equal(await page.locator(".file-status-text-success").innerText(), "上传完成");
   } finally {
     await browser.close();
+  }
+});
+
+test("confirms a custom uploader from its bound URL when the result card is outside the form item", async () => {
+  const browser = await launchTestBrowser();
+  const page = await browser.newPage();
+  try {
+    await page.setContent(`
+      <div class="arco-form-item">
+        <label>不侵权承诺函</label>
+        <div id="non_infringement_letter_url_input" class="arco-upload">
+          <input id="uploaded-url" type="hidden" value="">
+          <section class="file-picker-box">
+            <input id="commitment-picker-input" type="file" style="display: none">
+            <span>点击或拖拽文件到此上传</span>
+          </section>
+        </div>
+      </div>
+      <div id="upload-result-portal"></div>
+      <script>
+        const picker = document.querySelector('#commitment-picker-input');
+        document.querySelector('.file-picker-box').addEventListener('click', () => picker.click());
+        picker.addEventListener('change', (event) => {
+          const file = event.currentTarget.files[0];
+          document.querySelector('#uploaded-url').value = 'https://upload.example/' + file.name;
+          document.querySelector('#upload-result-portal').innerHTML =
+            '<div class="arco-upload-list-item"><span class="file-name" title="' + file.name + '">' +
+            file.name + '</span><span>上传完成</span></div>';
+        });
+      </script>
+    `);
+
+    await uploadFormFiles(
+      page,
+      "不侵权承诺函",
+      [fileURLToPath(import.meta.url)],
+      5_000,
+      "non_infringement_letter_url_input",
+    );
+    assert.match(await page.locator("#uploaded-url").inputValue(), /^https:\/\/upload\.example\//u);
+  } finally {
+    await browser.close();
+  }
+});
+
+test("merges every commitment PDF page into one image for a single-file control", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "douyin-multipage-upload-"));
+  const browser = await launchTestBrowser();
+  const context = await browser.newContext();
+  const runtimeProcess = process as unknown as {
+    getBuiltinModule?: (id: string) => unknown;
+  };
+  const originalGetBuiltinModule = runtimeProcess.getBuiltinModule;
+  runtimeProcess.getBuiltinModule = undefined;
+  try {
+    const pdfFile = path.join(directory, "commitment.pdf");
+    const document = await PDFDocument.create();
+    document.addPage([595, 842]).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842,
+      color: rgb(1, 0, 0),
+    });
+    document.addPage([595, 842]).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842,
+      color: rgb(0, 0, 1),
+    });
+    await writeFile(pdfFile, await document.save());
+
+    const page = await context.newPage();
+    await page.setContent(`
+      <div class="arco-form-item">
+        <label>不侵权承诺函</label>
+        <div id="non_infringement_letter_url_input" class="arco-upload">
+          <section class="file-picker-box">
+            <input id="pdf-pages-picker" type="file" style="display:none">
+            <span>点击或拖拽文件到此上传</span>
+          </section>
+        </div>
+      </div>
+      <script>
+        const picker = document.querySelector('#pdf-pages-picker');
+        document.querySelector('.file-picker-box').addEventListener('click', () => picker.click());
+        picker.addEventListener('change', (event) => {
+          for (const file of event.currentTarget.files) {
+            const item = document.createElement('div');
+            item.className = 'uploaded_list_item';
+            item.innerHTML = '<span class="file-name">' + file.name + '</span>' +
+              '<span class="file-status-text file-status-text-success">上传完成</span>';
+            document.querySelector('.arco-form-item').append(item);
+          }
+        });
+      </script>
+    `);
+    await uploadFormFiles(
+      page,
+      "不侵权承诺函",
+      [pdfFile],
+      30_000,
+      "non_infringement_letter_url_input",
+    );
+    const uploadedNames = await page.locator(".file-name").allTextContents();
+    assert.deepEqual(uploadedNames, ["commitment-upload-v4-all-pages.jpg"]);
+    const merged = await sharp(path.join(directory, uploadedNames[0]!)).metadata();
+    assert.ok((merged.height ?? 0) > (merged.width ?? 0) * 2);
+  } finally {
+    runtimeProcess.getBuiltinModule = originalGetBuiltinModule;
+    await context.close();
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
+  }
+});
+
+test("uploads only the first PDF page for the single-file cost configuration control", async () => {
+  const directory = await mkdtemp(path.join(os.tmpdir(), "douyin-cost-upload-"));
+  const browser = await launchTestBrowser();
+  try {
+    const pdfFile = path.join(directory, "cost.pdf");
+    const document = await PDFDocument.create();
+    document.addPage([595, 842]).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842,
+      color: rgb(1, 0, 0),
+    });
+    document.addPage([595, 842]).drawRectangle({
+      x: 0,
+      y: 0,
+      width: 595,
+      height: 842,
+      color: rgb(0, 0, 1),
+    });
+    await writeFile(pdfFile, await document.save());
+
+    const page = await browser.newPage();
+    await page.setContent(`
+      <div class="arco-form-item">
+        <label>成本配置情况</label>
+        <input id="cost-picker" type="file">
+        <div class="arco-upload-list"></div>
+      </div>
+      <script>
+        document.querySelector('#cost-picker').addEventListener('change', (event) => {
+          const file = event.currentTarget.files[0];
+          document.querySelector('.arco-upload-list').innerHTML =
+            '<div class="arco-upload-list-item"><span class="file-name">' + file.name +
+            '</span><span>上传完成</span></div>';
+        });
+      </script>
+    `);
+    await uploadFormFiles(page, "成本配置情况", [pdfFile], 30_000);
+    assert.equal(await page.locator(".file-name").textContent(), "cost-upload-v3-page-1.jpg");
+    assert.equal(await stat(path.join(directory, "cost-upload-v3-page-2.jpg")).catch(() => undefined), undefined);
+  } finally {
+    await browser.close();
+    await rm(directory, { recursive: true, force: true });
   }
 });
 

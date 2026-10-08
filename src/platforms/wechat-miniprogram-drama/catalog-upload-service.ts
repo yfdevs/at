@@ -24,6 +24,12 @@ export type WechatMiniProgramCatalogUploadTask = {
   dramaName: string
   episodeCount: number
   baiduNetdiskUrl?: string
+  hasFirstFourEpisodes: boolean
+  lifecycleStatus?: string
+  auditStatus?: number
+  expectedPublishStatus?: string
+  actualPublishStatus?: string
+  operationStatus?: string
   state: WechatMiniProgramCatalogUploadState
   targetEpisodeCount: number
   uploadedEpisodeCount: number
@@ -41,8 +47,16 @@ export type WechatMiniProgramCatalogUploadWorkspace = {
   queue: {
     running: boolean
     activeTaskId?: string
+    processedCount: number
+    totalCount: number
+    error?: string
+  }
+  sync: {
+    running: boolean
     currentPage: number
     totalPages?: number
+    syncedCount: number
+    lastSyncedAt?: string
     error?: string
   }
   tasks: WechatMiniProgramCatalogUploadTask[]
@@ -61,6 +75,7 @@ function invoke(channel: string, ...args: unknown[]) {
 export const wechatMiniProgramCatalogUploadService = {
   openWindow: () => invoke("wechat-miniprogram-drama:catalog-upload:window:open"),
   workspace: () => invoke("wechat-miniprogram-drama:catalog-upload:workspace:get"),
+  syncCatalog: () => invoke("wechat-miniprogram-drama:catalog-upload:catalog:sync"),
   startQueue: () => invoke("wechat-miniprogram-drama:catalog-upload:queue:start"),
   pauseQueue: () => invoke("wechat-miniprogram-drama:catalog-upload:queue:pause"),
   cancelActiveTask: () => invoke("wechat-miniprogram-drama:catalog-upload:task:cancel-active"),

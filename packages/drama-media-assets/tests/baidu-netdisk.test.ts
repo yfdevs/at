@@ -256,13 +256,14 @@ test("keeps the exact episode directory separate from sibling assets and preserv
   }
 });
 
-test("downloads and preserves a sibling synopsis directory for Douyin metadata", async () => {
+test("downloads and preserves a nested wrapped synopsis directory for Douyin metadata", async () => {
   const root = await mkdtemp(path.join(tmpdir(), "drama-baidu-metadata-"));
   const resourceName = "货车被当免费拉货站，我收车";
   const batch = path.join(root, "download-batch");
   const resourceDir = path.join(batch, resourceName);
   const posterDir = path.join(batch, "海报");
-  const metadataDir = path.join(batch, "简介");
+  const wrapperName = `A刘晓-${resourceName}`;
+  const metadataDir = path.join(batch, wrapperName, "简介");
   const targetRoot = path.join(root, "standardized");
   let requestedMetadataTextFiles = 0;
   try {
@@ -299,13 +300,13 @@ test("downloads and preserves a sibling synopsis directory for Douyin metadata",
           expectedMetadataFiles: 2,
           remoteMetadata: {
             files: [
-              { name: "剧情及角色介绍.txt", path: `/分享/${resourceName}/简介/剧情及角色介绍.txt` },
-              { name: "刘晓-角色头像.png", path: `/分享/${resourceName}/简介/刘晓-角色头像.png` },
+              { name: "剧情及角色介绍.txt", path: `/分享/${wrapperName}/简介/剧情及角色介绍.txt` },
+              { name: "刘晓-角色头像.png", path: `/分享/${wrapperName}/简介/刘晓-角色头像.png` },
             ],
             textFiles: [
-              { name: "剧情及角色介绍.txt", path: `/分享/${resourceName}/简介/剧情及角色介绍.txt` },
+              { name: "剧情及角色介绍.txt", path: `/分享/${wrapperName}/简介/剧情及角色介绍.txt` },
             ],
-            roots: [{ path: `/分享/${resourceName}/简介`, fsId: 1 }],
+            roots: [{ path: `/分享/${wrapperName}/简介`, fsId: 1 }],
           },
           completed: true,
           skippedExisting: false,

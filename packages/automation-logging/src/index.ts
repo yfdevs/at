@@ -260,6 +260,8 @@ function translateErrorMessage(message: string): string {
       .replace(code, "")
       .replace(/^[\s:：;；,-]+/, "")
       .trim();
+    const actionableMessage = translateActionableError(code, detail);
+    if (actionableMessage) return actionableMessage;
     const description = describeErrorCode(code);
     if (description) {
       return detail ? `${description}：${translateTechnicalDetail(detail)}` : description;
@@ -275,6 +277,53 @@ function translateErrorMessage(message: string): string {
 
   const translated = translateTechnicalDetail(message);
   return translated.startsWith("技术信息：") ? `任务执行失败，${translated}` : translated;
+}
+
+function translateActionableError(code: string, detail: string): string | undefined {
+  if (code === "DOUYIN_DRAMA_EPISODE_DURATION_TOO_SHORT") {
+    const file = detail.match(/\bfile=(?:"([^"]+)"|([^;]+))/u)?.slice(1).find(Boolean)?.trim();
+    const duration = detail.match(/\bduration=([^;\s]+)/u)?.[1];
+    const episode = file?.match(/第\s*(\d+)\s*集/u)?.[1];
+    const target = episode ? `第 ${episode} 集视频` : "剧集视频";
+    return `${target}${file ? `“${file}”` : ""}时长${duration ? `为 ${duration}，` : ""}不足 30 秒。` +
+      "该视频不会自动删除或重传，请更换符合平台时长要求的源视频后重新执行任务";
+  }
+
+  if (
+    code === "DOUYIN_DRAMA_EPISODE_UPLOAD_REUPLOADS_EXHAUSTED"
+    || code === "DOUYIN_DRAMA_EPISODE_UPLOAD_REPLACEMENTS_EXHAUSTED"
+  ) {
+    const file = detail.match(/\bfile=(?:"([^"]+)"|([^;]+))/u)?.slice(1).find(Boolean)?.trim();
+    const attempts = detail.match(/\breuploadAttempts=(\d+)/u)?.[1]
+      ?? detail.match(/\breplaceAttempts=(\d+)/u)?.[1]
+      ?? detail.match(/\bmaximum=(\d+)/u)?.[1]
+      ?? "多";
+    const episode = file?.match(/第\s*(\d+)\s*集/u)?.[1];
+    const target = episode
+      ? `第 ${episode} 集视频${file ? `“${file}”` : ""}`
+      : file
+        ? `剧集视频“${file}”`
+        : "剧集视频";
+    return `${target}连续上传失败，系统已自动删除并重新上传 ${attempts} 次仍未成功。` +
+      "请检查该集源视频能否正常播放、文件是否损坏或格式异常，处理后重新执行任务";
+  }
+
+  if (code === "DOUYIN_DRAMA_SCHEDULED_PUBLISH_TIME_DISABLED") {
+    const column = Number(detail.match(/\bcolumn=(\d+)/u)?.[1]);
+    const value = detail.match(/\bvalue=([^;\s]+)/u)?.[1];
+    const unit = column === 0 ? "小时" : column === 1 ? "分钟" : column === 2 ? "秒钟" : "时间";
+    const selected = value ? `“${value}”` : "目标值";
+    return `平台当前不允许选择定时发布${unit}${selected}。` +
+      "该时间可能已过、距离当前时间太近，或超出平台允许的预约范围，请调整发布时间后重新执行任务";
+  }
+
+  if (code === "DOUYIN_DRAMA_SCHEDULED_PUBLISH_DATE_DISABLED") {
+    const date = detail.match(/\d{4}-\d{2}-\d{2}/u)?.[0];
+    return `平台当前不允许选择定时发布日期${date ? `“${date}”` : ""}。` +
+      "抖音要求发布时间至少晚于当前时间 72 小时，系统会将过近日期按整天顺延后重试";
+  }
+
+  return undefined;
 }
 
 function describeErrorCode(code: string): string | undefined {

@@ -8,20 +8,15 @@ import { ensureBaiduNetdiskShareDownloaded } from "../baidu-netdisk"
 import { createElectronPlatformLogger } from "../../platform-logger"
 import { resolveFromAppRoot } from "../shared"
 import { WechatMiniProgramCatalogUploadTaskRepository } from "../../storage/wechat-miniprogram-drama/catalog-upload-repository"
-import type {
-  WechatMiniProgramCatalogEpisodeStatus,
-  WechatMiniProgramCatalogUploadTask,
-} from "../../storage/wechat-miniprogram-drama/catalog-upload-types"
+import type { WechatMiniProgramCatalogUploadTask } from "../../storage/wechat-miniprogram-drama/catalog-upload-types"
 
 const __dirname = path.dirname(fileURLToPath(import.meta.url))
 const windowMode = "wechat-miniprogram-catalog-upload"
-const pageSize = 10
+const pageSize = 100
 const requestedEpisodeCount = 4
 
 type Settings = {
   catalogApiBaseUrl: string
-  materialUploadApiBaseUrl: string
-  catalogAuthorizationToken: string
   localEpisodeVideoRoot: string
   runDataDir: string
   logRetentionDays?: string
@@ -33,6 +28,12 @@ type CatalogDrama = {
   name: string
   episodeCount: number
   baiduNetdiskUrl?: string | null
+  hasFirstFourEpisodes?: boolean
+  lifecycleStatus?: string | null
+  auditStatus?: number | null
+  expectedPublishStatus?: string | null
+  actualPublishStatus?: string | null
+  operationStatus?: string | null
 }
 
 type MaterialView = {
@@ -61,8 +62,16 @@ export type WechatMiniProgramCatalogUploadWorkspace = {
   queue: {
     running: boolean
     activeTaskId?: string
+    processedCount: number
+    totalCount: number
+    error?: string
+  }
+  sync: {
+    running: boolean
     currentPage: number
     totalPages?: number
+    syncedCount: number
+    lastSyncedAt?: string
     error?: string
   }
   tasks: WechatMiniProgramCatalogUploadTask[]
@@ -71,11 +80,6 @@ export type WechatMiniProgramCatalogUploadWorkspace = {
 
 function readableError(error: unknown): string {
   return error instanceof Error ? error.message : String(error)
-}
-
-function authorizationValue(token: string): string {
-  const trimmed = token.trim()
-  return /^Bearer\s+/i.test(trimmed) ? trimmed : `Bearer ${trimmed}`
 }
 
 function apiUrl(baseUrl: string, pathname: string): URL {
@@ -97,8 +101,15 @@ export class WechatMiniProgramCatalogUploadCoordinator {
   private queueRunning = false
   private queueError: string | undefined
   private activeTaskId: string | undefined
-  private currentPage = 0
-  private totalPages: number | undefined
+  private processedCount = 0
+  private totalCount = 0
+  private syncing = false
+  private syncCurrentPage = 0
+  private syncTotalPages: number | undefined
+  private syncedCount = 0
+  private lastSyncedAt: string | undefined
+  private syncError: string | undefined
+  private syncPromise: Promise<void> | null = null
   private workerPromise: Promise<void> | null = null
   private abortController: AbortController | null = null
   private window: BrowserWindow | null = null
@@ -118,6 +129,10 @@ export class WechatMiniProgramCatalogUploadCoordinator {
     )
     ipcMain.handle("wechat-miniprogram-drama:catalog-upload:queue:start", () => {
       this.startQueue()
+      return this.workspace()
+    })
+    ipcMain.handle("wechat-miniprogram-drama:catalog-upload:catalog:sync", async () => {
+      await this.syncCatalog()
       return this.workspace()
     })
     ipcMain.handle("wechat-miniprogram-drama:catalog-upload:queue:pause", () => {
@@ -147,9 +162,17 @@ export class WechatMiniProgramCatalogUploadCoordinator {
       queue: {
         running: this.queueRunning,
         activeTaskId: this.activeTaskId,
-        currentPage: this.currentPage,
-        totalPages: this.totalPages,
+        processedCount: this.processedCount,
+        totalCount: this.totalCount,
         error: this.queueError,
+      },
+      sync: {
+        running: this.syncing,
+        currentPage: this.syncCurrentPage,
+        totalPages: this.syncTotalPages,
+        syncedCount: this.syncedCount,
+        lastSyncedAt: this.lastSyncedAt,
+        error: this.syncError,
       },
       tasks: this.repository.list(),
       databasePath: this.repository.databasePath,
@@ -157,7 +180,7 @@ export class WechatMiniProgramCatalogUploadCoordinator {
   }
 
   isActive(): boolean {
-    return this.queueRunning || Boolean(this.activeTaskId)
+    return this.queueRunning || Boolean(this.activeTaskId) || this.syncing
   }
 
   async stop(): Promise<void> {
@@ -173,14 +196,18 @@ export class WechatMiniProgramCatalogUploadCoordinator {
     if (!settings.localEpisodeVideoRoot.trim()) {
       throw new Error("请先在微信小程序配置中设置剧集视频根目录。")
     }
-    if (!settings.catalogAuthorizationToken.trim()) {
-      throw new Error("请先在微信小程序配置中填写管理端访问令牌。")
-    }
+    if (this.syncing) throw new Error("正在获取全部剧目，请等待同步完成后再开始处理。")
     if (this.queueRunning) return
+    const queuedTasks = this.repository.list().filter(
+      (task) => task.state === "discovered" && !task.hasFirstFourEpisodes,
+    )
+    if (queuedTasks.length === 0) {
+      throw new Error("没有等待处理的剧目，请先点击“获取全部剧目”。")
+    }
     this.queueRunning = true
     this.queueError = undefined
-    this.currentPage = 0
-    this.totalPages = undefined
+    this.processedCount = 0
+    this.totalCount = queuedTasks.length
     this.broadcast()
     if (!this.workerPromise) {
       this.workerPromise = this.runQueue().finally(() => {
@@ -194,41 +221,23 @@ export class WechatMiniProgramCatalogUploadCoordinator {
 
   private async runQueue(): Promise<void> {
     try {
-      for (let page = 0; this.queueRunning; page += 1) {
-        this.currentPage = page
-        const result = await this.fetchDramaPage(page)
-        this.totalPages = result.totalPages
-        this.broadcast()
-
-        for (const drama of result.items) {
-          if (!this.queueRunning) break
-          const targetEpisodeCount = Math.min(
-            requestedEpisodeCount,
-            Math.max(0, Math.floor(Number(drama.episodeCount) || 0)),
-          )
-          const task = this.repository.upsertDiscovered({
-            dramaId: drama.id,
-            wxDramaId: drama.wxDramaId ?? undefined,
-            dramaName: drama.name,
-            episodeCount: drama.episodeCount,
-            baiduNetdiskUrl: drama.baiduNetdiskUrl?.trim() || undefined,
-            targetEpisodeCount,
+      const tasks = this.repository.list().filter(
+        (task) => task.state === "discovered" && !task.hasFirstFourEpisodes,
+      )
+      this.totalCount = tasks.length
+      for (const task of tasks) {
+        if (!this.queueRunning) break
+        if (task.targetEpisodeCount <= 0) {
+          this.repository.update(task.id, {
+            state: "failed",
+            error: "剧列表中的总集数无效。",
+            finishedAt: new Date().toISOString(),
           })
-          this.broadcast()
-          if (task.state !== "discovered") continue
-          if (targetEpisodeCount <= 0) {
-            this.repository.update(task.id, {
-              state: "failed",
-              error: "剧列表中的总集数无效。",
-              finishedAt: new Date().toISOString(),
-            })
-            this.broadcast()
-            continue
-          }
+        } else {
           await this.processTask(task)
         }
-
-        if (page + 1 >= result.totalPages) break
+        this.processedCount += 1
+        this.broadcast()
       }
     } catch (error) {
       const message = readableError(error)
@@ -237,6 +246,65 @@ export class WechatMiniProgramCatalogUploadCoordinator {
         this.logger().error("Catalog upload queue stopped", { errorMessage: message })
       }
     }
+  }
+
+  private async syncCatalog(): Promise<void> {
+    if (this.queueRunning || this.activeTaskId) {
+      throw new Error("前四集队列正在处理，请暂停并等待当前剧目结束后再获取全部剧目。")
+    }
+    if (this.syncPromise) return this.syncPromise
+    this.syncing = true
+    this.syncError = undefined
+    this.syncCurrentPage = 0
+    this.syncTotalPages = undefined
+    this.syncedCount = 0
+    this.broadcast()
+    this.syncPromise = (async () => {
+      try {
+        const firstPage = await this.fetchDramaPage(0)
+        this.syncTotalPages = Math.max(1, firstPage.totalPages)
+        const dramas = [...firstPage.items]
+        this.syncedCount = dramas.length
+        this.broadcast()
+        for (let page = 1; page < this.syncTotalPages; page += 1) {
+          this.syncCurrentPage = page
+          const result = await this.fetchDramaPage(page)
+          dramas.push(...result.items)
+          this.syncedCount = dramas.length
+          this.broadcast()
+        }
+        this.repository.upsertDiscoveredBatch(dramas.map((drama) => ({
+          dramaId: drama.id,
+          wxDramaId: drama.wxDramaId ?? undefined,
+          dramaName: drama.name,
+          episodeCount: drama.episodeCount,
+          baiduNetdiskUrl: drama.baiduNetdiskUrl?.trim() || undefined,
+          hasFirstFourEpisodes: Boolean(drama.hasFirstFourEpisodes),
+          lifecycleStatus: drama.lifecycleStatus ?? undefined,
+          auditStatus: drama.auditStatus ?? undefined,
+          expectedPublishStatus: drama.expectedPublishStatus ?? undefined,
+          actualPublishStatus: drama.actualPublishStatus ?? undefined,
+          operationStatus: drama.operationStatus ?? undefined,
+          targetEpisodeCount: Math.min(
+            requestedEpisodeCount,
+            Math.max(0, Math.floor(Number(drama.episodeCount) || 0)),
+          ),
+        })))
+        this.lastSyncedAt = new Date().toISOString()
+        this.logger().info("All catalog dramas synchronized", {
+          dramaCount: dramas.length,
+          pageCount: this.syncTotalPages,
+        })
+      } catch (error) {
+        this.syncError = readableError(error)
+        throw error
+      } finally {
+        this.syncing = false
+        this.syncPromise = null
+        this.broadcast()
+      }
+    })()
+    return this.syncPromise
   }
 
   private async processTask(task: WechatMiniProgramCatalogUploadTask): Promise<void> {
@@ -287,7 +355,13 @@ export class WechatMiniProgramCatalogUploadCoordinator {
         )
       }
 
-      let statuses = await this.readExistingEpisodeStatuses(task, controller.signal)
+      let statuses = task.episodeStatuses
+        .filter((status) =>
+          (status.state === "uploaded" || status.state === "existing")
+          && status.episodeNo >= 1
+          && status.episodeNo <= targetEpisodeCount,
+        )
+        .sort((left, right) => left.episodeNo - right.episodeNo)
       let uploadedEpisodeCount = statuses.filter(
         (status) => status.state === "uploaded" || status.state === "existing",
       ).length
@@ -301,10 +375,11 @@ export class WechatMiniProgramCatalogUploadCoordinator {
 
       for (const episode of episodeVideos) {
         controller.signal.throwIfAborted()
-        const existing = statuses.find(
-          (status) => status.episodeNo === episode.index && status.state === "existing",
+        const alreadyUploaded = statuses.find(
+          (status) => status.episodeNo === episode.index
+            && (status.state === "uploaded" || status.state === "existing"),
         )
-        if (existing) continue
+        if (alreadyUploaded) continue
         try {
           const uploaded = await this.uploadEpisode(
             task.dramaId,
@@ -344,6 +419,7 @@ export class WechatMiniProgramCatalogUploadCoordinator {
 
       this.repository.update(task.id, {
         state: "completed",
+        hasFirstFourEpisodes: true,
         uploadedEpisodeCount: targetEpisodeCount,
         episodeStatuses: statuses,
         error: undefined,
@@ -379,43 +455,10 @@ export class WechatMiniProgramCatalogUploadCoordinator {
     const response = await fetch(url, {
       headers: {
         accept: "application/json, text/plain, */*",
-        authorization: authorizationValue(settings.catalogAuthorizationToken),
         "x-operator": "",
       },
     })
     return this.readApiResponse<DramaPage>(response, "读取剧列表失败")
-  }
-
-  private async readExistingEpisodeStatuses(
-    task: WechatMiniProgramCatalogUploadTask,
-    signal: AbortSignal,
-  ): Promise<WechatMiniProgramCatalogEpisodeStatus[]> {
-    const settings = this.options.getSettings()
-    const url = apiUrl(
-      settings.materialUploadApiBaseUrl,
-      `/admin/v1/dramas/${task.dramaId}/materials`,
-    )
-    url.searchParams.set("materialType", "EPISODE_VIDEO")
-    const response = await fetch(url, {
-      signal,
-      headers: {
-        accept: "application/json",
-        authorization: authorizationValue(settings.catalogAuthorizationToken),
-      },
-    })
-    const materials = await this.readApiResponse<MaterialView[]>(response, "读取已上传素材失败")
-    const statuses = materials
-      .filter((material) => Number.isInteger(material.episodeNo)
-        && Number(material.episodeNo) >= 1
-        && Number(material.episodeNo) <= task.targetEpisodeCount)
-      .map((material) => ({
-        episodeNo: Number(material.episodeNo),
-        state: "existing" as const,
-        materialId: material.materialId,
-        fileName: material.fileName,
-      }))
-      .sort((left, right) => left.episodeNo - right.episodeNo)
-    return [...new Map(statuses.map((status) => [status.episodeNo, status])).values()]
   }
 
   private async uploadEpisode(
@@ -426,7 +469,7 @@ export class WechatMiniProgramCatalogUploadCoordinator {
   ): Promise<MaterialView> {
     const settings = this.options.getSettings()
     const url = apiUrl(
-      settings.materialUploadApiBaseUrl,
+      settings.catalogApiBaseUrl,
       `/admin/v1/dramas/${dramaId}/materials`,
     )
     url.searchParams.set("materialType", "EPISODE_VIDEO")
@@ -436,7 +479,6 @@ export class WechatMiniProgramCatalogUploadCoordinator {
     const response = await fetch(url, {
       method: "POST",
       signal,
-      headers: { authorization: authorizationValue(settings.catalogAuthorizationToken) },
       body: form,
     })
     return this.readApiResponse<MaterialView>(response, `第${episodeNo}集上传失败`)

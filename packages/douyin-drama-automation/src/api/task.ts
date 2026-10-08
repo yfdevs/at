@@ -16,8 +16,6 @@ import {
 } from "../shared/types.js";
 import { log, warn } from "../shared/logger.js";
 import { createDouyinDramaHttpClient, type DouyinDramaHttpClient } from "./http-client.js";
-import { isMockDouyinDramaAccountId } from "./mock-account.js";
-import { createMockDouyinNetdiskTestTask } from "./mock-task.js";
 
 export type DouyinDramaTaskApiEndpoints = {
   accountTaskPage: string;
@@ -55,6 +53,11 @@ const accountTaskPageResponseSchema = apiResponseBaseSchema.extend({
     data: z.array(readyTaskSchema),
   }).nullish(),
 });
+const douyinContractFileSchema = z.object({
+  fileType: z.enum(["CONTRACT", "AUTHORIZATION", "COST_REPORT", "COMMITMENT"]),
+  fileUrl: z.string().trim().url(),
+  tosKey: z.string().trim().nullish(),
+});
 const douyinDramaClaimDataSchema = z.object({
   accountTaskId: z.coerce.number().int().positive(),
   originalTitle: nullableText,
@@ -73,37 +76,6 @@ export const douyinDramaReportResponseSchema = apiResponseBaseSchema.extend({
 });
 
 type ReadyTask = z.infer<typeof readyTaskSchema>;
-const claimedMockAccountIds = new Set<string>();
-const mockAccountTaskIds = new Set<number>();
-
-export function resetMockDouyinDramaTaskApi(accountId?: string) {
-  if (accountId) claimedMockAccountIds.delete(accountId.trim());
-  else claimedMockAccountIds.clear();
-  mockAccountTaskIds.clear();
-}
-
-function claimNextMockDouyinDramaTask(
-  accountId: string,
-  runtimeOptions: DouyinDramaRuntimeOptions | undefined,
-) {
-  if (claimedMockAccountIds.has(accountId)) return null;
-  const task = createMockDouyinNetdiskTestTask({
-    accountId,
-    accountName: runtimeOptions?.douyinAccountName ?? accountId,
-    paidEpisodeStart: runtimeOptions?.paidEpisodeStart,
-    unitPriceYuan: runtimeOptions?.unitPriceYuan,
-    submit: false,
-  });
-  claimedMockAccountIds.add(accountId);
-  mockAccountTaskIds.add(task.accountTaskId);
-  log(
-    runtimeOptions ?? {},
-    `[douyin-drama] 使用本地假任务：taskId=${task.accountTaskId}，剧名=${task.originalTitle}。`,
-    { accountId, accountTaskId: task.accountTaskId, title: task.originalTitle },
-    "polling",
-  );
-  return task;
-}
 
 function taskClient(options: DouyinDramaTaskApiOptions) {
   if (options.client) return options.client;
@@ -144,6 +116,21 @@ function numberValue(value: unknown) {
   return undefined;
 }
 
+function stringArray(value: unknown) {
+  const result = z.array(z.string().trim().min(1)).safeParse(value);
+  return result.success ? result.data : [];
+}
+
+function uniqueStrings(values: string[]) {
+  return [...new Set(values)];
+}
+
+function contractFileUrls(payload: Record<string, unknown>, fileType: string) {
+  const result = z.array(douyinContractFileSchema).safeParse(payload.douyinContractFiles);
+  if (!result.success) return [];
+  return result.data.filter((file) => file.fileType === fileType).map((file) => file.fileUrl);
+}
+
 export function normalizeClaimedDouyinDramaTask(
   input: z.input<typeof douyinDramaClaimDataSchema>,
   listedTask?: ReadyTask,
@@ -160,8 +147,23 @@ export function normalizeClaimedDouyinDramaTask(
   }
 
   const payload = parsePayloadJson(claimed.payloadJson);
+  const accountConfig = recordValue(claimed.accountConfigJson);
+  const accountPlaylet = recordValue(accountConfig.douyinPlaylet);
   const platformPayload = recordValue(payload.douyinPlaylet);
-  const playlet = Object.keys(platformPayload).length > 0 ? platformPayload : payload;
+  const playlet = {
+    ...accountConfig,
+    ...accountPlaylet,
+    ...payload,
+    ...platformPayload,
+  };
+  const copyright = {
+    ...recordValue(playlet.copyright),
+    ...recordValue(payload.copyright),
+  };
+  const productionCost = {
+    ...recordValue(playlet.productionCost),
+    ...recordValue(payload.productionCost),
+  };
   const result = claimedDouyinDramaTaskSchema.safeParse({
     accountTaskId: claimed.accountTaskId,
     dramaId: listedTask?.dramaId,
@@ -190,6 +192,25 @@ export function normalizeClaimedDouyinDramaTask(
       screenwriters: [],
       productionCostRange: DOUYIN_DRAMA_PRODUCTION_COST_RANGE,
       productionCostWan: 1,
+      contractName: stringValue(playlet.contractName),
+      costConfigurationFiles: uniqueStrings([
+        ...stringArray(playlet.costConfigurationFiles),
+        ...stringArray(productionCost.proofFiles),
+        ...contractFileUrls(payload, "COST_REPORT"),
+      ]),
+      ownershipProofFiles: uniqueStrings([
+        ...stringArray(playlet.ownershipProofFiles),
+        ...stringArray(copyright.productionProofFiles),
+        ...stringArray(copyright.licenseProofFiles),
+        ...contractFileUrls(payload, "CONTRACT"),
+        ...contractFileUrls(payload, "AUTHORIZATION"),
+      ]),
+      nonInfringementCommitmentFiles: uniqueStrings([
+        ...stringArray(playlet.nonInfringementCommitmentFiles),
+        ...stringArray(payload.commitmentFiles),
+        ...contractFileUrls(payload, "COMMITMENT"),
+      ]),
+      submit: true,
     },
   });
   if (result.success) return result.data;
@@ -256,9 +277,6 @@ export async function claimNextDouyinDramaTaskApi(
 ): Promise<ClaimedDouyinDramaTask | null> {
   const accountId = options.runtimeOptions?.douyinAccountId?.trim();
   if (!accountId) throw new Error("DOUYIN_DRAMA_ACCOUNT_ID_REQUIRED");
-  if (isMockDouyinDramaAccountId(accountId)) {
-    return claimNextMockDouyinDramaTask(accountId, options.runtimeOptions);
-  }
   const pagePayload = accountTaskPageResponseSchema.parse(
     await taskClient(options).post(taskEndpoints(options).accountTaskPage, {
       page: 1,
@@ -303,16 +321,12 @@ export async function reportDouyinDramaTaskSuccessApi(
     resultJson?: Record<string, unknown>;
   },
 ): Promise<void> {
-  if (mockAccountTaskIds.has(options.accountTaskId)) {
-    log(
-      options.runtimeOptions ?? {},
-      `[douyin-drama] 假任务成功结果仅记录在本地：taskId=${options.accountTaskId}。`,
-      { accountTaskId: options.accountTaskId, resultJson: options.resultJson },
-      "task",
-    );
-    return;
-  }
-  await report({ ...options, taskId: options.accountTaskId, success: true });
+  await report({
+    ...options,
+    taskId: options.accountTaskId,
+    success: true,
+    resultJson: options.resultJson,
+  });
 }
 
 export async function reportDouyinDramaTaskErrorApi(
@@ -326,19 +340,6 @@ export async function reportDouyinDramaTaskErrorApi(
   const errorMessage = formatAutomationErrorReport(options.errorMessage, {
     fallbackMessage: "抖音任务提交失败，未获取到具体错误原因",
   });
-  if (mockAccountTaskIds.has(options.accountTaskId)) {
-    log(
-      options.runtimeOptions ?? {},
-      `[douyin-drama] 假任务失败结果仅记录在本地：taskId=${options.accountTaskId}。`,
-      {
-        accountTaskId: options.accountTaskId,
-        failStage: options.failStage,
-        errorMessage,
-      },
-      "task",
-    );
-    return;
-  }
   await report({
     ...options,
     taskId: options.accountTaskId,

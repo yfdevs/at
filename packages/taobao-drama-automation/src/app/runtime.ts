@@ -21,6 +21,7 @@ import type {
 import {
   launchTaobaoBrowserContext,
   saveTaobaoCredentialState,
+  isTaobaoTargetUrl,
   taobaoLoginStateFromUrl,
   waitForTaobaoPage,
 } from "../automation/browser-session.js";
@@ -28,6 +29,18 @@ import { runTaobaoPublishTask } from "../automation/publish-runner.js";
 
 function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
+}
+
+type ReusableTaobaoPage = Pick<Page, "isClosed" | "url">;
+
+export function selectReusableTaobaoTaskPage<T extends ReusableTaobaoPage>(
+  pages: T[],
+  current?: T,
+) {
+  if (current && !current.isClosed()) return current;
+  const openPages = pages.filter((page) => !page.isClosed());
+  return openPages.find((page) => isTaobaoTargetUrl(page.url(), "batch")) ??
+    openPages[openPages.length - 1];
 }
 
 function failStage(error: unknown): TaobaoDramaTaskFailStage {
@@ -134,7 +147,8 @@ export async function startTaobaoDramaRuntime(
   let wake: (() => void) | null = null;
   let emptyQueueLogged = false;
   const context = await launchTaobaoBrowserContext(options.userDataDir, options);
-  let taskPage: Page | undefined = context.pages()[0] ?? await context.newPage();
+  let taskPage: Page | undefined = selectReusableTaobaoTaskPage(context.pages()) ??
+    await context.newPage();
   context.on("close", () => {
     running = false;
     wake?.();
@@ -162,10 +176,9 @@ export async function startTaobaoDramaRuntime(
           }
         } else {
           emptyQueueLogged = false;
-          if (!taskPage || taskPage.isClosed()) {
-            taskPage = await context.newPage();
-          }
-          const currentTaskPage = taskPage;
+          const currentTaskPage: Page = selectReusableTaobaoTaskPage(context.pages(), taskPage) ??
+            await context.newPage();
+          taskPage = currentTaskPage;
           let failed = false;
           try {
             await runTask(currentTaskPage, context, task, options, (value) => { lastTask = value; });
@@ -176,13 +189,14 @@ export async function startTaobaoDramaRuntime(
             if (failed && !currentTaskPage.isClosed()) {
               if (options.closeFailedTaskPages === true) {
                 await currentTaskPage.close().catch(() => undefined);
+                taskPage = undefined;
               } else {
-                log(options, "[taobao-drama] 已保留失败任务页面供排查", {
+                taskPage = currentTaskPage;
+                log(options, "[taobao-drama] 已保留并继续复用失败任务页面", {
                   activeUrl: currentTaskPage.url(),
                   title: task.originalTitle,
                 });
               }
-              taskPage = undefined;
             } else if (currentTaskPage.isClosed()) {
               taskPage = undefined;
             } else {

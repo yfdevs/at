@@ -44,6 +44,31 @@ function errorMessage(error: unknown) {
   return error instanceof Error ? error.message : String(error);
 }
 
+export function isBaiduInformationConfirmNotClosedError(error: unknown) {
+  return errorMessage(error).includes("BAIDU_DRAMA_INFORMATION_CONFIRM_NOT_CLOSED");
+}
+
+async function runPublishTaskWithInformationConfirmRetry(
+  page: Page,
+  task: ClaimedBaiduDramaTask,
+  options: BaiduDramaRuntimeOptions,
+) {
+  try {
+    await runBaiduDramaPublishTask(page, task, options);
+  } catch (error) {
+    if (!isBaiduInformationConfirmNotClosedError(error) || page.isClosed()) throw error;
+
+    warn(
+      options,
+      "[baidu-drama] 短剧信息确认弹窗未关闭，刷新任务页面并从头重试一次。",
+      { accountTaskId: task.accountTaskId, error },
+      "task",
+    );
+    await page.reload({ waitUntil: "domcontentloaded", timeout: 60_000 });
+    await runBaiduDramaPublishTask(page, task, options);
+  }
+}
+
 function failStage(error: unknown): BaiduDramaTaskFailStage {
   const message = errorMessage(error);
   if (/LOGIN/i.test(message)) return "LOGIN";
@@ -129,7 +154,7 @@ async function runTask(
       },
       "task",
     );
-    await runBaiduDramaPublishTask(taskPage, task, options);
+    await runPublishTaskWithInformationConfirmRetry(taskPage, task, options);
     await reportBaiduDramaTaskSuccessApi({
       runtimeOptions: options,
       apiConfig: options.apiConfig,

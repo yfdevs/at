@@ -16,6 +16,7 @@ import { ensureBaiduNetdiskShareDownloaded } from "./baidu-netdisk";
 import {
   assertGlobalDirectoriesConfigured,
   createConfiguredAiClient,
+  getConfiguredAiImageModel,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
 import { registerRuntimeAssetCleanupRoot } from "../runtime-asset-cleanup";
@@ -67,6 +68,9 @@ export type DouyinDramaConfig = {
   apiBaseUrl: string;
   localEpisodeVideoRoot: string;
   baiduNetdiskDownloadRetryAttempts: string;
+  episodeUploadReplaceAttempts: string;
+  episodeUploadBatchSize: string;
+  episodeUploadRetryAttempts?: string;
   episodeUploadWaitTimeoutMinutes: string;
   unitPriceYuan: string;
   paidEpisodeStart: string;
@@ -95,6 +99,8 @@ const defaultConfig: DouyinDramaConfig = {
   apiBaseUrl: "http://180.184.76.232:19090",
   localEpisodeVideoRoot: "",
   baiduNetdiskDownloadRetryAttempts: "3",
+  episodeUploadReplaceAttempts: "5",
+  episodeUploadBatchSize: "3",
   episodeUploadWaitTimeoutMinutes: "120",
   unitPriceYuan: "0.5",
   paidEpisodeStart: "10",
@@ -141,6 +147,20 @@ function normalizeConfig(config: Partial<DouyinDramaConfig>): DouyinDramaConfig 
       config.baiduNetdiskDownloadRetryAttempts,
       defaultConfig.baiduNetdiskDownloadRetryAttempts,
       0,
+    ),
+    episodeUploadReplaceAttempts: numberText(
+      config.episodeUploadReplaceAttempts ?? config.episodeUploadRetryAttempts,
+      defaultConfig.episodeUploadReplaceAttempts,
+      0,
+      20,
+      true,
+    ),
+    episodeUploadBatchSize: numberText(
+      config.episodeUploadBatchSize,
+      defaultConfig.episodeUploadBatchSize,
+      1,
+      50,
+      true,
     ),
     episodeUploadWaitTimeoutMinutes: numberText(
       config.episodeUploadWaitTimeoutMinutes,
@@ -271,22 +291,13 @@ async function startRuntime() {
     throw new Error(`抖音短剧剧集视频根目录不存在或不是文件夹：${localEpisodeVideoRoot}`);
   }
   const {
-    createMockDouyinDramaAccounts,
     fetchDouyinDramaAccounts,
     startDouyinDramaRuntime,
   } = await import("@drama/douyin-drama-automation") as {
-    createMockDouyinDramaAccounts: () => DouyinDramaAccount[];
     fetchDouyinDramaAccounts: (apiBaseUrl: string) => Promise<DouyinDramaAccount[]>;
     startDouyinDramaRuntime: (options: Record<string, unknown>) => Promise<DouyinDramaAccountRuntime>;
   };
-  let accounts: DouyinDramaAccount[];
-  try {
-    accounts = await fetchDouyinDramaAccounts(config.apiBaseUrl);
-  } catch (error) {
-    const message = error instanceof Error ? error.message : String(error);
-    if (!message.startsWith("DOUYIN_DRAMA_ACCOUNT_CONFIG_")) throw error;
-    accounts = createMockDouyinDramaAccounts();
-  }
+  const accounts = await fetchDouyinDramaAccounts(config.apiBaseUrl);
   if (accounts.length === 0) throw new Error("DOUYIN_DRAMA_ENABLED_ACCOUNT_NOT_FOUND");
 
   const runtimes: Array<{ account: DouyinDramaAccount; runtime: DouyinDramaAccountRuntime }> = [];
@@ -311,11 +322,14 @@ async function startRuntime() {
           config.baiduNetdiskDownloadRetryAttempts,
           10,
         ),
+        episodeUploadReplaceAttempts: Number.parseInt(config.episodeUploadReplaceAttempts, 10),
+        episodeUploadBatchSize: Number.parseInt(config.episodeUploadBatchSize, 10),
         episodeUploadWaitTimeoutMinutes: Number.parseFloat(config.episodeUploadWaitTimeoutMinutes),
         unitPriceYuan: Number.parseFloat(config.unitPriceYuan),
         paidEpisodeStart: Number.parseInt(config.paidEpisodeStart, 10),
         taskPollIntervalMs: Number.parseFloat(config.taskPollIntervalSeconds) * 1_000,
         aiClientFactory: createConfiguredAiClient,
+        aiImageModelFactory: getConfiguredAiImageModel,
         ensureBaiduNetdiskResource: (request: Parameters<typeof ensureBaiduNetdiskShareDownloaded>[0]) => ensureBaiduNetdiskShareDownloaded({
           ...request,
           requesterPlatform: "douyin-drama",

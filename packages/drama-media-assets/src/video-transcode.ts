@@ -1,5 +1,6 @@
 import { spawn } from "node:child_process";
 import { createHash } from "node:crypto";
+import { existsSync } from "node:fs";
 import { copyFile, mkdir, open, rename, rm, stat } from "node:fs/promises";
 import path from "node:path";
 import ffmpegPath from "ffmpeg-static";
@@ -37,6 +38,21 @@ export type VideoTranscodeQueueOptions = {
   onLog?: (message: string) => void;
 };
 
+export type VideoPlaybackSpeedRequest = {
+  inputFile: string;
+  speed: number;
+  sourceDurationSeconds?: number;
+  signal?: AbortSignal;
+  onLog?: (message: string) => void;
+};
+
+export type AdjustedVideoPlaybackSpeed = {
+  file: string;
+  speed: number;
+  sourceDurationSeconds: number;
+  outputDurationSeconds: number;
+};
+
 const defaultAudioBitrateKbps = 128;
 const minimumVideoBitrateKbps = 100;
 const durationPattern = /Duration:\s*(\d{2}):(\d{2}):(\d{2}(?:\.\d+)?)/;
@@ -54,12 +70,20 @@ function assertPolicy(policy: VideoSizePolicy) {
   }
 }
 
-function resolveFfmpegPath() {
+export function resolveFfmpegExecutablePath() {
   const executablePath = ffmpegPath as unknown as string | null;
-  if (!executablePath) {
-    throw new Error("[video-transcode-failed] ffmpeg-static did not provide an executable path.");
-  }
-  return executablePath.replace("app.asar", "app.asar.unpacked");
+  const executableName = process.platform === "win32" ? "ffmpeg.exe" : "ffmpeg";
+  const candidates = [
+    executablePath?.replace("app.asar", "app.asar.unpacked"),
+    path.resolve(process.cwd(), ".cache", "ffmpeg-static", executableName),
+  ].filter((value): value is string => Boolean(value));
+  const existing = candidates.find((candidate) => existsSync(candidate));
+  if (existing) return existing;
+  if (executablePath && !path.isAbsolute(executablePath)) return executablePath;
+  if (process.env.PATH) return executableName;
+  throw new Error(
+    `[video-transcode-failed] 找不到 FFmpeg 可执行文件: candidates=${candidates.join(",")}`,
+  );
 }
 
 function secondsFromDurationMatch(match: RegExpExecArray) {
@@ -75,7 +99,7 @@ function runFfmpeg(
   } = {},
 ): Promise<{ stderr: string }> {
   return new Promise((resolve, reject) => {
-    const child = spawn(resolveFfmpegPath(), args, {
+    const child = spawn(resolveFfmpegExecutablePath(), args, {
       windowsHide: true,
       stdio: ["ignore", "pipe", "pipe"],
     });
@@ -131,6 +155,91 @@ export async function readVideoDurationSeconds(inputFile: string, signal?: Abort
     throw new Error(`[video-transcode-failed] 视频时长无效: ${inputFile}`);
   }
   return durationSeconds;
+}
+
+async function videoHasAudioStream(inputFile: string, signal?: AbortSignal) {
+  const result = await runFfmpeg(
+    ["-hide_banner", "-i", inputFile],
+    { signal, acceptExitCode: (code) => code === 1 },
+  );
+  return /Stream #\d+:\d+(?:\([^)]*\))?: Audio:/u.test(result.stderr);
+}
+
+export async function adjustVideoPlaybackSpeed(
+  request: VideoPlaybackSpeedRequest,
+): Promise<AdjustedVideoPlaybackSpeed> {
+  if (!Number.isFinite(request.speed) || request.speed < 0.5 || request.speed > 2) {
+    throw new Error(`[video-speed-invalid] 播放速度必须在 0.5 至 2 之间: ${request.speed}`);
+  }
+  const sourceDurationSeconds = request.sourceDurationSeconds
+    ?? await readVideoDurationSeconds(request.inputFile, request.signal);
+  const hasAudio = await videoHasAudioStream(request.inputFile, request.signal);
+  const temporaryOutput = path.join(
+    path.dirname(request.inputFile),
+    `.${path.basename(request.inputFile)}.${process.pid}-${Date.now()}.speed.tmp.mp4`,
+  );
+  await rm(temporaryOutput, { force: true }).catch(() => undefined);
+  request.onLog?.(
+    `[video-speed] 开始处理 ${path.basename(request.inputFile)}: `
+      + `${sourceDurationSeconds.toFixed(2)}秒 speed=${request.speed}`,
+  );
+  try {
+    const args = [
+      "-y",
+      "-hide_banner",
+      "-i", request.inputFile,
+      "-map", "0:v:0",
+      "-filter:v", `setpts=PTS/${request.speed}`,
+      "-c:v", "libx264",
+      "-preset", "veryfast",
+      "-crf", "18",
+      "-threads", "2",
+    ];
+    if (hasAudio) {
+      args.push(
+        "-map", "0:a:0?",
+        "-filter:a", `atempo=${request.speed}`,
+        "-c:a", "aac",
+        "-b:a", "128k",
+      );
+    } else {
+      args.push("-an");
+    }
+    args.push("-movflags", "+faststart", temporaryOutput);
+    await runFfmpeg(args, { signal: request.signal });
+
+    const outputStat = await stat(temporaryOutput);
+    if (!outputStat.isFile() || outputStat.size <= 0) {
+      throw new Error(`[video-speed-failed] FFmpeg 未生成有效视频: ${request.inputFile}`);
+    }
+    const outputDurationSeconds = await readVideoDurationSeconds(temporaryOutput, request.signal);
+    const expectedDurationSeconds = sourceDurationSeconds / request.speed;
+    const toleranceSeconds = Math.max(1, expectedDurationSeconds * 0.03);
+    if (Math.abs(outputDurationSeconds - expectedDurationSeconds) > toleranceSeconds) {
+      throw new Error(
+        `[video-speed-failed] 调速后时长不符合预期: source=${sourceDurationSeconds.toFixed(2)} `
+          + `expected=${expectedDurationSeconds.toFixed(2)} actual=${outputDurationSeconds.toFixed(2)} `
+          + `file=${request.inputFile}`,
+      );
+    }
+    await replaceSourceFile({
+      sourceFile: request.inputFile,
+      transcodedFile: temporaryOutput,
+      expectedSize: outputStat.size,
+    });
+    request.onLog?.(
+      `[video-speed] 处理完成 ${path.basename(request.inputFile)}: `
+        + `${sourceDurationSeconds.toFixed(2)}秒 -> ${outputDurationSeconds.toFixed(2)}秒`,
+    );
+    return {
+      file: request.inputFile,
+      speed: request.speed,
+      sourceDurationSeconds,
+      outputDurationSeconds,
+    };
+  } finally {
+    await rm(temporaryOutput, { force: true }).catch(() => undefined);
+  }
 }
 
 async function cacheKeyFor(inputFile: string, policy: VideoSizePolicy) {
