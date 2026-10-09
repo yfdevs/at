@@ -23,7 +23,7 @@ import {
   isAiPosterFallbackEnabled,
   resolveGlobalPlatformDirectories,
 } from "../global-app-config";
-import { resolveFromAppRoot } from "./shared";
+import { resolveFromAppRoot, selectDirectory } from "./shared";
 import { createElectronPlatformLogger } from "../platform-logger";
 import { runRuntimeAssetCleanup } from "../runtime-asset-cleanup";
 
@@ -1497,6 +1497,24 @@ export function registerBaiduNetdiskPlatformHandlers() {
       path: configPath(),
     }),
   );
+
+  ipcMain.handle("baidu-netdisk:config:select-executable", async (event) => {
+    const currentConfig = readConfig();
+    const selectedPath = await selectDirectory(event, {
+      title: "选择百度网盘启动文件",
+      defaultPath: currentConfig.executablePath || undefined,
+      properties: ["openFile"],
+      filters: [{ name: "百度网盘启动文件", extensions: ["exe"] }],
+    });
+
+    if (!selectedPath) return null;
+    const config = normalizeConfig({
+      ...currentConfig,
+      executablePath: selectedPath,
+    });
+    writeConfig(config);
+    return { config, path: configPath() } satisfies BaiduNetdiskConfigResult;
+  });
 
   ipcMain.handle("baidu-netdisk:config:save", (_event, config: Partial<BaiduNetdiskConfig>) => {
     const nextConfig = normalizeConfig({

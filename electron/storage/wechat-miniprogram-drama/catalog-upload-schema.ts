@@ -75,4 +75,11 @@ export function migrateWechatMiniProgramCatalogUploadTasks(database: Database.Da
       database.exec(`ALTER TABLE wechat_miniprogram_catalog_upload_tasks ADD COLUMN ${definition}`)
     }
   }
+
+  // Older app versions persisted dramas regardless of their audit result. Keep
+  // the local queue aligned with the current eligibility rule during upgrade.
+  database.prepare(`
+    DELETE FROM wechat_miniprogram_catalog_upload_tasks
+    WHERE audit_status IS NULL OR audit_status <> 3
+  `).run()
 }

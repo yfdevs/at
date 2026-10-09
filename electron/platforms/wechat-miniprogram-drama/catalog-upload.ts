@@ -277,7 +277,12 @@ export class WechatMiniProgramCatalogUploadCoordinator {
           this.syncedCount = dramas.length
           this.broadcast()
         }
-        this.repository.upsertDiscoveredBatch(dramas.map((drama) => ({
+        const approvedDramas = dramas.filter((drama) => drama.auditStatus === 3)
+        const rejectedDramaIds = dramas
+          .filter((drama) => drama.auditStatus !== 3)
+          .map((drama) => drama.id)
+        const deletedCount = this.repository.deleteByDramaIds(rejectedDramaIds)
+        this.repository.upsertDiscoveredBatch(approvedDramas.map((drama) => ({
           dramaId: drama.id,
           wxDramaId: drama.wxDramaId ?? undefined,
           dramaName: drama.name,
@@ -296,7 +301,9 @@ export class WechatMiniProgramCatalogUploadCoordinator {
         })))
         this.lastSyncedAt = new Date().toISOString()
         this.logger().info("All catalog dramas synchronized", {
-          dramaCount: dramas.length,
+          dramaCount: approvedDramas.length,
+          filteredDramaCount: dramas.length - approvedDramas.length,
+          deletedLegacyDramaCount: deletedCount,
           pageCount: this.syncTotalPages,
         })
       } catch (error) {

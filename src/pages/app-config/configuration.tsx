@@ -21,6 +21,7 @@ const emptyConfig: GlobalAppConfig = {
   aiCoverGenerationRetryAttempts: "3",
   aiPosterFallbackEnabled: true,
   baiduNetdiskDownloadTimeoutMinutes: "60",
+  jianyingEpisodeCount: "4",
   runDataRoot: "",
   localMaterialRoot: "",
 };
@@ -63,6 +64,21 @@ const sections: ConfigSectionDefinition<GlobalAppConfig>[] = [
         description: "根据剧名和简介自动生成封面。",
         activeLabel: "已开启",
         inactiveLabel: "已关闭",
+      },
+    ],
+  },
+  {
+    title: "剪映",
+    description: "剧集画面截图设置",
+    fields: [
+      {
+        key: "jianyingEpisodeCount",
+        label: "处理前几集",
+        description: "默认处理前 4 集；多个预设按顺序循环使用。",
+        type: "number",
+        suffix: "集",
+        min: 1,
+        max: 100,
       },
     ],
   },

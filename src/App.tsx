@@ -4,6 +4,7 @@ import { AppRuntimeDock } from "@/components/app-runtime-dock";
 import { AppTitlebarMemory } from "@/components/app-titlebar-memory";
 import { AppTitlebarPlatformNav } from "@/components/app-titlebar-platform-nav";
 import { BaiduNetdiskDialogProvider } from "@/platforms/baidu-netdisk/dialog";
+import { JianyingDialogProvider } from "@/platforms/jianying/dialog";
 import { Toaster } from "@/components/ui/sonner";
 import { TooltipProvider } from "@/components/ui/tooltip";
 import { AppRoutes } from "@/routes/app-routes";
@@ -60,15 +61,17 @@ function AppContent() {
   return (
     <TooltipProvider delay={120} closeDelay={0} timeout={250}>
       <BaiduNetdiskDialogProvider>
-        <div className="flex h-full min-h-0 flex-col bg-transparent">
-          <AppTitlebarMemory />
-          <AppTitlebarPlatformNav />
-          <div className="min-h-0 flex-1 overflow-auto bg-transparent">
-            <AppRoutes />
+        <JianyingDialogProvider>
+          <div className="flex h-full min-h-0 flex-col bg-transparent">
+            <AppTitlebarMemory />
+            <AppTitlebarPlatformNav />
+            <div className="min-h-0 flex-1 overflow-auto bg-transparent">
+              <AppRoutes />
+            </div>
+            <AppRuntimeDock />
+            <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
           </div>
-          <AppRuntimeDock />
-          <Toaster position="bottom-right" closeButton={true} theme="dark" richColors />
-        </div>
+        </JianyingDialogProvider>
       </BaiduNetdiskDialogProvider>
     </TooltipProvider>
   );

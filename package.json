@@ -31,6 +31,7 @@
     "@drama/douyin-drama-automation": "workspace:*",
     "@drama/drama-media-assets": "workspace:*",
     "@drama/iqiyi-drama-automation": "workspace:*",
+    "@drama/jianying-automation": "workspace:*",
     "@drama/kuaishou-drama-automation": "workspace:*",
     "@drama/meituan-drama-automation": "workspace:*",
     "@drama/pinduoduo-drama-automation": "workspace:*",

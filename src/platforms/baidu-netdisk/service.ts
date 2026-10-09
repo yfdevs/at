@@ -183,6 +183,12 @@ export async function saveBaiduNetdiskConfig(config: Partial<BaiduNetdiskConfig>
   ) as Promise<BaiduNetdiskConfigResult>;
 }
 
+export async function selectBaiduNetdiskExecutable() {
+  return requireIpcRenderer("选择百度网盘启动文件").invoke(
+    "baidu-netdisk:config:select-executable",
+  ) as Promise<BaiduNetdiskConfigResult | null>;
+}
+
 export async function controlBaiduNetdiskCdp(restart: boolean) {
   return requireIpcRenderer("百度网盘 CDP 控制").invoke(
     restart ? "baidu-netdisk:service:restart-cdp" : "baidu-netdisk:service:start-cdp",

@@ -3,6 +3,7 @@ import type { UserConfig } from "vite-plus";
 const packageBuildInputs = () => [
   "src/**",
   "scripts/**",
+  "native/**",
   "tests/**",
   "*.json",
   "*.ts",
@@ -132,6 +133,15 @@ export const runConfig = {
       input: packageBuildInputs(),
       output: ["packages/baidu-netdisk-automation/dist/**"],
     },
+    "pkg:jianying:build": {
+      command: "pnpm run build",
+      cwd: "packages/jianying-automation",
+      input: packageBuildInputs(),
+      output: [
+        "packages/jianying-automation/dist/**",
+        "packages/jianying-automation/native/bin/JianyingUia.exe",
+      ],
+    },
     "packages:build": {
       command: "node -e \"console.log('workspace packages built')\"",
       dependsOn: [
@@ -149,6 +159,7 @@ export const runConfig = {
         "pkg:tiktok:build",
         "pkg:douyin:build",
         "pkg:baidu:build",
+        "pkg:jianying:build",
       ],
       output: [],
     },
@@ -200,6 +211,11 @@ export const runConfig = {
     "pkg:baidu:check": {
       command: "tsc --noEmit",
       cwd: "packages/baidu-netdisk-automation",
+      output: [],
+    },
+    "pkg:jianying:check": {
+      command: "tsc --noEmit",
+      cwd: "packages/jianying-automation",
       output: [],
     },
     "pkg:qq:check": {

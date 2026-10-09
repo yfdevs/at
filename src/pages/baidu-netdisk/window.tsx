@@ -1,12 +1,19 @@
 import { useEffect, useState } from "react";
+import { Folder } from "@mynaui/icons-react";
 
 import { Button } from "@/components/ui/button";
-import { Input } from "@/components/ui/input";
+import {
+  InputGroup,
+  InputGroupAddon,
+  InputGroupButton,
+  InputGroupInput,
+} from "@/components/ui/input-group";
 import {
   controlBaiduNetdiskCdp,
   getBaiduNetdiskConfig,
   getBaiduNetdiskStatus,
   saveBaiduNetdiskConfig,
+  selectBaiduNetdiskExecutable,
   type BaiduNetdiskCdpStatus,
 } from "@/platforms/baidu-netdisk/service";
 
@@ -31,15 +38,12 @@ export function BaiduNetdiskPanel() {
   const [statusRefreshing, setStatusRefreshing] = useState(false);
   const [actionPending, setActionPending] = useState<BaiduAction | null>(null);
   const [installPath, setInstallPath] = useState("");
-  const [savedInstallPath, setSavedInstallPath] = useState("");
-  const [installPathSaving, setInstallPathSaving] = useState(false);
+  const [installPathPending, setInstallPathPending] = useState<"select" | "reset" | null>(null);
   const [installPathMessage, setInstallPathMessage] = useState<string | null>(null);
   const [installPathError, setInstallPathError] = useState<string | null>(null);
 
   const summary = baiduNetdiskSummary(status, statusError);
   const shouldRestart = Boolean(status?.appRunning);
-  const normalizedInstallPath = installPath.trim();
-  const installPathDirty = normalizedInstallPath !== savedInstallPath;
   const showClientSetup = Boolean(statusError || (status && !status.ready));
 
   const refreshStatus = async () => {
@@ -70,7 +74,6 @@ export function BaiduNetdiskPanel() {
 
         if (!disposed) {
           setInstallPath(nextInstallPath);
-          setSavedInstallPath(nextInstallPath);
           setInstallPathError(null);
         }
       } catch (error) {
@@ -83,26 +86,43 @@ export function BaiduNetdiskPanel() {
     };
   }, []);
 
-  const handleSaveInstallPath = () => {
+  const handleSelectInstallPath = () => {
     void (async () => {
-      setInstallPathSaving(true);
+      setInstallPathPending("select");
       setInstallPathMessage(null);
       setInstallPathError(null);
 
       try {
-        const result = await saveBaiduNetdiskConfig({
-          executablePath: normalizedInstallPath,
-        });
+        const result = await selectBaiduNetdiskExecutable();
+        if (!result) return;
         const nextInstallPath = result.config.executablePath.trim();
 
         setInstallPath(nextInstallPath);
-        setSavedInstallPath(nextInstallPath);
-        setInstallPathMessage(nextInstallPath ? "安装目录已保存。" : "已恢复默认自动查找。");
+        setInstallPathMessage("启动文件已保存。");
         void refreshStatus();
       } catch (error) {
         setInstallPathError(errorMessage(error));
       } finally {
-        setInstallPathSaving(false);
+        setInstallPathPending(null);
+      }
+    })();
+  };
+
+  const handleResetInstallPath = () => {
+    void (async () => {
+      setInstallPathPending("reset");
+      setInstallPathMessage(null);
+      setInstallPathError(null);
+
+      try {
+        const result = await saveBaiduNetdiskConfig({ executablePath: "" });
+        setInstallPath(result.config.executablePath.trim());
+        setInstallPathMessage("已恢复默认自动查找。");
+        void refreshStatus();
+      } catch (error) {
+        setInstallPathError(errorMessage(error));
+      } finally {
+        setInstallPathPending(null);
       }
     })();
   };
@@ -173,30 +193,42 @@ export function BaiduNetdiskPanel() {
         ) : null}
 
         {showClientSetup ? (
-          <div className="grid grid-cols-[minmax(0,1fr)_80px] gap-2 rounded-lg border border-dashed p-2.5">
-            <Input
-              id="baidu-netdisk-install-path"
-              value={installPath}
-              onChange={(event) => {
-                setInstallPath(event.target.value);
-                setInstallPathMessage(null);
-                setInstallPathError(null);
-              }}
-              placeholder="找不到客户端时，填写百度网盘安装目录"
-              className="text-xs"
-            />
-            <Button
-              type="button"
-              size="sm"
-              variant="outline"
-              disabled={installPathSaving || !installPathDirty}
-              onClick={handleSaveInstallPath}
-            >
-              {installPathSaving ? "保存中" : "保存目录"}
-            </Button>
+          <div className="grid gap-1.5">
+            <label htmlFor="baidu-netdisk-install-path" className="text-xs font-medium">
+              百度网盘启动文件
+            </label>
+            <InputGroup>
+              <InputGroupInput
+                id="baidu-netdisk-install-path"
+                value={installPath}
+                readOnly
+                title={installPath || undefined}
+                placeholder="未找到百度网盘启动文件"
+                className="text-xs"
+                aria-invalid={Boolean(installPathError)}
+              />
+              <InputGroupAddon align="inline-end">
+                {installPath ? (
+                  <InputGroupButton
+                    disabled={installPathPending !== null || actionPending !== null}
+                    onClick={handleResetInstallPath}
+                  >
+                    {installPathPending === "reset" ? "恢复中" : "自动查找"}
+                  </InputGroupButton>
+                ) : null}
+                <InputGroupButton
+                  aria-label="选择百度网盘启动文件"
+                  disabled={installPathPending !== null || actionPending !== null}
+                  onClick={handleSelectInstallPath}
+                >
+                  <Folder aria-hidden="true" />
+                  {installPathPending === "select" ? "选择中" : "选择文件"}
+                </InputGroupButton>
+              </InputGroupAddon>
+            </InputGroup>
             {installPathError || installPathMessage ? (
               <p
-                className={`col-span-2 px-1 text-xs ${installPathError ? "text-destructive" : "text-muted-foreground"}`}
+                className={`px-1 text-xs ${installPathError ? "text-destructive" : "text-muted-foreground"}`}
               >
                 {installPathError || installPathMessage}
               </p>

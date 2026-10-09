@@ -171,6 +171,19 @@ export class WechatMiniProgramCatalogUploadTaskRepository {
     return transaction()
   }
 
+  deleteByDramaIds(dramaIds: number[]): number {
+    const uniqueDramaIds = [...new Set(dramaIds)]
+    if (uniqueDramaIds.length === 0) return 0
+    const statement = this.database.prepare(`
+      DELETE FROM wechat_miniprogram_catalog_upload_tasks WHERE drama_id=@dramaId
+    `)
+    const transaction = this.database.transaction(() => uniqueDramaIds.reduce(
+      (deletedCount, dramaId) => deletedCount + statement.run({ dramaId }).changes,
+      0,
+    ))
+    return transaction()
+  }
+
   update(
     id: string,
     patch: Partial<Omit<WechatMiniProgramCatalogUploadTask, "id" | "createdAt">>,

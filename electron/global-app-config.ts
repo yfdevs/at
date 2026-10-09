@@ -23,7 +23,9 @@ const RECOMMENDED_AI_MODEL = "doubao-seed-2-0-pro-260215";
 const RECOMMENDED_AI_IMAGE_MODEL = "doubao-seedream-4-0-250828";
 const DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES = "60";
 const DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS = "3";
+const DEFAULT_JIANYING_EPISODE_COUNT = "4";
 const MAX_AI_COVER_GENERATION_RETRY_ATTEMPTS = 10;
+const MAX_JIANYING_EPISODE_COUNT = 100;
 export const GLOBAL_DIRECTORIES_REQUIRED_ERROR_CODE = "GLOBAL_APP_DIRECTORIES_REQUIRED";
 
 export type GlobalAppConfig = {
@@ -34,6 +36,7 @@ export type GlobalAppConfig = {
   aiCoverGenerationRetryAttempts: string;
   aiPosterFallbackEnabled: boolean;
   baiduNetdiskDownloadTimeoutMinutes: string;
+  jianyingEpisodeCount: string;
   runDataRoot: string;
   localMaterialRoot: string;
 };
@@ -46,6 +49,7 @@ type StoredGlobalAppConfig = {
   aiCoverGenerationRetryAttempts?: string;
   aiPosterFallbackEnabled?: boolean;
   baiduNetdiskDownloadTimeoutMinutes?: string;
+  jianyingEpisodeCount?: string;
   runDataRoot?: string;
   localMaterialRoot?: string;
 };
@@ -62,6 +66,7 @@ const defaultStoredConfig: StoredGlobalAppConfig = {
   aiCoverGenerationRetryAttempts: DEFAULT_AI_COVER_GENERATION_RETRY_ATTEMPTS,
   aiPosterFallbackEnabled: true,
   baiduNetdiskDownloadTimeoutMinutes: DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
+  jianyingEpisodeCount: DEFAULT_JIANYING_EPISODE_COUNT,
   runDataRoot: "",
   localMaterialRoot: "",
 };
@@ -111,6 +116,12 @@ function normalizeAiCoverGenerationRetryAttempts(value: string | undefined) {
   );
 }
 
+function normalizeJianyingEpisodeCount(value: string | undefined) {
+  const parsed = Number(value?.trim());
+  if (!Number.isFinite(parsed)) return DEFAULT_JIANYING_EPISODE_COUNT;
+  return String(Math.min(MAX_JIANYING_EPISODE_COUNT, Math.max(1, Math.floor(parsed))));
+}
+
 function normalizeBoolean(value: unknown, fallback: boolean) {
   if (typeof value === "boolean") return value;
   if (typeof value === "string") {
@@ -157,6 +168,7 @@ function normalizeGlobalAppConfig(config: Partial<GlobalAppConfig>): GlobalAppCo
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
     ),
+    jianyingEpisodeCount: normalizeJianyingEpisodeCount(config.jianyingEpisodeCount),
     runDataRoot: config.runDataRoot?.trim() ?? "",
     localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
@@ -186,6 +198,7 @@ export function readGlobalAppConfig(): GlobalAppConfig {
       config.baiduNetdiskDownloadTimeoutMinutes,
       DEFAULT_BAIDU_NETDISK_DOWNLOAD_TIMEOUT_MINUTES,
     ),
+    jianyingEpisodeCount: normalizeJianyingEpisodeCount(config.jianyingEpisodeCount),
     runDataRoot: config.runDataRoot?.trim() ?? "",
     localMaterialRoot: config.localMaterialRoot?.trim() ?? "",
   };
@@ -203,6 +216,13 @@ export function isAiPosterFallbackEnabled() {
   return normalizeBoolean(getStore().get("config").aiPosterFallbackEnabled, true);
 }
 
+export function getConfiguredJianyingEpisodeCount() {
+  return Number.parseInt(
+    normalizeJianyingEpisodeCount(getStore().get("config").jianyingEpisodeCount),
+    10,
+  );
+}
+
 function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
   const normalized = normalizeGlobalAppConfig(config);
 
@@ -214,6 +234,7 @@ function saveGlobalAppConfig(config: Partial<GlobalAppConfig>) {
     aiCoverGenerationRetryAttempts: normalized.aiCoverGenerationRetryAttempts,
     aiPosterFallbackEnabled: normalized.aiPosterFallbackEnabled,
     baiduNetdiskDownloadTimeoutMinutes: normalized.baiduNetdiskDownloadTimeoutMinutes,
+    jianyingEpisodeCount: normalized.jianyingEpisodeCount,
     runDataRoot: normalized.runDataRoot,
     localMaterialRoot: normalized.localMaterialRoot,
   });
